@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+.Python
+env/
+venv/
+.venv/
+
+# PyTorch / Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+models/*.pt
+models/*.pth
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Videos & large media (add specific videos to track if needed)
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+*.env
+
+# Data (add specific data files to track if needed)
+data/known_db/*.jpg
+data/known_db/*.png
+
+# Temporary files
+tmp_*.txt
+tmp_*/
+*.tmp
+
+# PDF documents (personal/internal docs)
+Important/
+PAPERS/
+*.xlsx
+*.doc
+*.docx
+
+# External repos / datasets
+Multi-camera-People-Tracking-With-Mixture-of-Realistic-and-Synthetic-Knowledge-master/
+insightface-master/
+Wildtrack/
+tmp_wildtrack/
+wildtrack_roi/
