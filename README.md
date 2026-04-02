@@ -14,7 +14,7 @@
 - [Overview](#-overview)
 - [Problem Statement](#-problem-statement)
 - [System Architecture](#-system-architecture)
-- [Pipeline](#-pipeline)
+- [Processing Workflow](#-processing-workflow)
 - [Key Features](#-key-features)
 - [System Inputs](#-system-inputs)
 - [System Outputs](#-system-outputs)
@@ -62,51 +62,41 @@ This leads to **fragmented data**, incorrect appearance counts, and defeats the 
 
 ## 🏗️ System Architecture
 
-```mermaid
-graph TD
-    A[📹 Camera 1<br/>RTSP/HTTP Stream] --> E[Stream Manager]
-    B[📹 Camera 2<br/>RTSP/HTTP Stream] --> E
-    C[📹 Camera 3<br/>RTSP/HTTP Stream] --> E
-    D[📹 Camera 4<br/>RTSP/HTTP Stream] --> E
-    
-    E --> F[Person Detection<br/>YOLOv8]
-    F --> G[Multi-Object Tracking<br/>ByteTrack / DeepSORT]
-    G --> H[Direction Filter<br/>Entering Only]
-    H --> I[Face Detection &<br/>Embedding Extraction]
-    I --> J{Match with<br/>Known DB?}
-    
-    J -->|✅ Match| K[Assign Known_ID]
-    J -->|❌ No Match| L[Stranger Management]
-    
-    L --> M[Cross-Camera<br/>Association Engine]
-    M --> N[Assign / Link<br/>Global Unknown ID]
-    
-    K --> O[Event Logger &<br/>Dashboard]
-    N --> O
-    
-    P[(Known Identity<br/>Database)] --> J
-    Q[🗺️ Shared Spatial Map<br/>& Travel Times] --> M
-```
+The overall system architecture consists of three main layers:
+
+1. **Stream Ingest & Decode Layer** — Connects to 4 real RTSP camera streams
+2. **Per-Camera CV Pipeline** — Each camera runs: Detect → Track → Direction(IN) → Face → Embedding
+3. **Central Identity Association Core** — Known DB matching, unknown profile management, topology + travel-time filtering, face/body similarity, and Global ID decision
+4. **Storage & Dashboard** — Event/media storage and topology/metadata store feed into a Dashboard/API/UI
+
+<p align="center">
+  <img src="docs/images/overall_diagram.png" alt="Overall System Architecture" width="800"/>
+</p>
 
 ---
 
-## ⚙️ Pipeline
+## ⚙️ Processing Workflow
 
-The system follows an **11-step processing pipeline**:
+The per-camera processing workflow follows a detailed flowchart with decision branches:
 
-| Step | Module | Description |
-|------|--------|-------------|
-| 1 | **Stream Manager** | Connects to 4 camera streams, reads frames with `camera_id` and `timestamp` |
-| 2 | **Person Detection** | Runs person detection on each frame to locate all human bounding boxes |
-| 3 | **Intra-Camera Tracking** | Links detections across consecutive frames to form tracks within each camera |
-| 4 | **Direction Analysis** | Filters tracks to only process people **entering** the facility (line crossing / ROI entry) |
-| 5 | **Face Detection & Embedding** | Detects faces, evaluates quality, selects best-shot, extracts face embeddings |
-| 6 | **Known DB Matching** | Compares face embeddings against the known identity database |
-| 7 | **Stranger Profile Creation** | Creates a global profile for first-time strangers with multiple reference frames |
-| 8 | **Next-Camera Prediction** | Uses spatial map to predict which cameras the stranger might appear at next |
-| 9 | **Cross-Camera Matching** | Compares new unknowns against existing stranger profiles using spatio-temporal filtering |
-| 10 | **ID Decision (Link or Create)** | Calculates composite score to merge or create new Global ID |
-| 11 | **Event Logging** | Records security events for dashboard and forensic review |
+<p align="center">
+  <img src="docs/images/workflow.png" alt="Processing Workflow" width="500"/>
+</p>
+
+### Workflow Summary
+
+1. **Frame from camera_i** → Decode + timestamp
+2. **Person Detection** → **Multi-Object Tracking** → **Direction Analysis**
+3. **IN?** → If No: Discard/Ignore. If Yes: continue
+4. **Face Detection + Face Quality Selection**
+5. **Face quality good?** → If No: Fallback to body feature. If Yes: Face Embedding Extraction
+6. **Known DB Matching** → **Matched known?**
+   - ✅ Yes → Assign `Known_ID`
+   - ❌ No → **UNKNOWN** → Spatio-Temporal Candidate Filter
+7. **Compare with unknown profiles** (face similarity, body similarity, shared map, travel time, rule-based score)
+8. **Assign existing `Unknown_Global_ID` or create new `Unknown_Global_ID`**
+9. **Build Event + Save Snapshot/Clip** → **Log / Dashboard / Timeline**
+10. **Output**: `camera_id / time / identity / count / snapshot`
 
 ### Cross-Camera Scoring Formula
 
@@ -249,8 +239,8 @@ Each security event contains:
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/multi-camera-stranger-detection.git
-cd multi-camera-stranger-detection
+git clone https://github.com/TTungMaverix/A-Multi-Camera-System-for-Detecting-and-Tracking-Strangers-Entering-a-Facility.git
+cd A-Multi-Camera-System-for-Detecting-and-Tracking-Strangers-Entering-a-Facility
 
 # Create virtual environment
 python -m venv venv
