@@ -1,0 +1,72 @@
+﻿{
+  "dataset_root": "..\\Wildtrack",
+  "assumed_video_fps": 10,
+  "selected_cameras": ["C3", "C5", "C6", "C7"],
+  "best_shot_window_frames": 80,
+  "line_crossing_distance_threshold": 140,
+  "head_crop": {
+    "top_ratio": 0.02,
+    "bottom_ratio": 0.45,
+    "side_ratio": 0.18
+  },
+  "camera_topology": {
+    "C5": {
+      "C3": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 },
+      "C6": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 25 },
+      "C7": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 }
+    },
+    "C6": {
+      "C3": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 },
+      "C5": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 25 },
+      "C7": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 30 }
+    },
+    "C3": {
+      "C5": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 },
+      "C6": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 },
+      "C7": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 60 }
+    },
+    "C7": {
+      "C3": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 60 },
+      "C5": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 40 },
+      "C6": { "relation": "overlap", "min_frame_gap": 0, "max_frame_gap": 30 }
+    }
+  },
+  "cameras": {
+    "C3": {
+      "view_index": 2,
+      "role": "followup",
+      "description": "Wide follow-up view over the open plaza.",
+      "sample_image": "Image_subsets\\C3\\00001000.png",
+      "crop": { "x": 180, "y": 120, "width": 1620, "height": 860 },
+      "track_roi": [[320, 170], [1450, 140], [1820, 960], [220, 1030]]
+    },
+    "C5": {
+      "view_index": 4,
+      "role": "entry",
+      "description": "Front-facing entry camera near the stairs and door area.",
+      "sample_image": "Image_subsets\\C5\\00001000.png",
+      "crop": { "x": 80, "y": 120, "width": 1770, "height": 620 },
+      "entry_roi": [[240, 170], [1680, 170], [1840, 560], [110, 670]],
+      "entry_line": [[250, 500], [1670, 500]],
+      "in_side_point": [960, 610]
+    },
+    "C6": {
+      "view_index": 5,
+      "role": "entry",
+      "description": "Diagonal entry camera covering the approach to the stairs.",
+      "sample_image": "Image_subsets\\C6\\00001000.png",
+      "crop": { "x": 650, "y": 120, "width": 1270, "height": 660 },
+      "entry_roi": [[980, 160], [1910, 150], [1910, 690], [760, 620]],
+      "entry_line": [[1040, 340], [1910, 285]],
+      "in_side_point": [1660, 560]
+    },
+    "C7": {
+      "view_index": 6,
+      "role": "followup",
+      "description": "Wide follow-up view of the right side of the plaza.",
+      "sample_image": "Image_subsets\\C7\\00001000.png",
+      "crop": { "x": 520, "y": 100, "width": 1400, "height": 920 },
+      "track_roi": [[650, 120], [1830, 120], [1910, 980], [940, 1060]]
+    }
+  }
+}

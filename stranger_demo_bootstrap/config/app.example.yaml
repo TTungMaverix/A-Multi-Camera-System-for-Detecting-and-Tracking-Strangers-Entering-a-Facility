@@ -1,0 +1,87 @@
+app_name: stranger-demo
+mode: thesis-demo
+timezone: Asia/Bangkok
+random_seed: 42
+
+runtime:
+  source_type: video_files
+  max_workers: 4
+  frame_stride: 1
+  preview_resize_width: 1280
+  save_snapshots: true
+  save_debug_video: false
+  emit_events_for_known: true
+  emit_events_for_unknown: true
+
+dataset_profile:
+  name: wildtrack_c3_c5_c6_c7
+  entry_cameras:
+    - cam05
+    - cam06
+  follow_cameras:
+    - cam03
+    - cam07
+
+models:
+  person_detector: yolo11n.pt
+  tracker_type: bytetrack
+  insightface:
+    model_name: buffalo_l
+    model_root: C:/Users/Admin/.insightface
+    providers:
+      - CPUExecutionProvider
+
+thresholds:
+  known_match: 0.45
+  unknown_association: 0.52
+  min_face_quality: 0.35
+  min_track_seconds_for_face: 0.4
+  max_reference_faces_per_stranger: 5
+
+association:
+  weights:
+    face_score: 0.55
+    body_score: 0.15
+    time_score: 0.15
+    topology_score: 0.15
+  fallback_no_face:
+    face_score: 0.00
+    body_score: 0.45
+    time_score: 0.30
+    topology_score: 0.25
+
+storage:
+  sqlite_path: data/db/stranger_demo.sqlite3
+  event_dir: data/outputs/events
+  snapshot_dir: data/outputs/snapshots
+  clip_dir: data/outputs/clips
+  log_dir: data/outputs/logs
+  known_embeddings_csv: data/db/known_face_embeddings.csv
+  known_manifest_csv: data/db/known_face_manifest.csv
+  stranger_profiles_csv: data/db/stranger_profiles.csv
+
+api:
+  host: 127.0.0.1
+  port: 8000
+
+dashboard:
+  host: 127.0.0.1
+  port: 8501
+
+visualization:
+  enabled: true
+  mode: web
+  overlay_fields:
+    - camera_id
+    - local_track_id
+    - global_id
+    - identity_type
+    - direction
+  quad_view_order:
+    - cam05
+    - cam06
+    - cam03
+    - cam07
+  note: >
+    Visualization la lop trinh dien tuy chon cho man hinh 4 camera hoac web.
+    Output chinh van la snapshot, timestamp, camera_id, global_id va stranger history.

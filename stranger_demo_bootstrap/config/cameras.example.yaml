@@ -1,0 +1,44 @@
+cameras:
+  - camera_id: cam03
+    source: data/streams/cam03.mp4
+    enabled: true
+    role: follow
+    entering_rule:
+      type: roi_transition
+      outside_roi: [0, 0, 330, 1080]
+      inside_roi: [331, 0, 1920, 1080]
+    track_roi: [250, 80, 1500, 980]
+    face_region: [260, 80, 1460, 860]
+
+  - camera_id: cam05
+    source: data/streams/cam05.mp4
+    enabled: true
+    role: entry
+    entering_rule:
+      type: line_crossing
+      line: [[470, 285], [1460, 285]]
+      direction: bottom_to_top
+    track_roi: [360, 140, 1640, 1030]
+    face_region: [380, 150, 1500, 860]
+
+  - camera_id: cam06
+    source: data/streams/cam06.mp4
+    enabled: true
+    role: entry
+    entering_rule:
+      type: line_crossing
+      line: [[430, 260], [1510, 260]]
+      direction: bottom_to_top
+    track_roi: [300, 120, 1680, 1020]
+    face_region: [340, 120, 1460, 820]
+
+  - camera_id: cam07
+    source: data/streams/cam07.mp4
+    enabled: true
+    role: follow
+    entering_rule:
+      type: centroid_vector
+      in_vector: [0, -1]
+      min_displacement_px: 35
+    track_roi: [220, 100, 1540, 1000]
+    face_region: [250, 90, 1450, 860]

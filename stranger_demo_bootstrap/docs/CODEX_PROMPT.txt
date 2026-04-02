@@ -1,0 +1,49 @@
+You are implementing a Python thesis demo project for real-time 4-camera stranger detection and identity unification.
+
+Core requirements:
+- Use 4 camera streams.
+- Only process people moving INTO the protected area.
+- Run face matching only after a track is classified as `IN`.
+- Match against known DB first.
+- If no known match exists, assign or reuse a global stranger ID.
+- Keep event logs with `timestamp`, `camera_id`, `local_track_id`, `global_id`, `identity_type`, `snapshot_path`.
+- Use a shared topology map and travel-time windows to predict next camera appearances.
+- Handle overlapping nearby cameras where the same person can appear at the same time.
+
+Important local environment constraints:
+- Prefer Python at `C:\Users\Admin\.platformio\python3\python.exe`
+- Venv name: `.venv_insightface_demo`
+- Use `onnxruntime` CPU by default
+- Use InsightFace model root `C:\Users\Admin\.insightface`
+- Do not depend on `pip install insightface==0.7.3` from PyPI on this machine
+- Use the patched local source flow described in the bootstrap scripts
+
+Presentation layer:
+- Primary output is still files: stranger snapshots, timestamp, camera, global ID, appearance history
+- Also keep optional support for a presentation layer:
+  - 4-camera quad-view screen overlay
+  - or web view via FastAPI + Streamlit
+  - overlay `track_id`, `global_id`, `known/unknown`, `direction`
+
+Please implement the repo following `docs/CODEX_IMPLEMENTATION_BRIEF.md`.
+
+Minimum deliverables:
+1. Runnable Python package under `src/`
+2. `scripts/build_known_db.py`
+3. `scripts/run_demo.py`
+4. FastAPI endpoints for health, events, stranger profiles
+5. Streamlit or simple web dashboard
+6. SQLite or CSV persistence for demo outputs
+7. Clear README with setup and run commands
+8. Unit tests for topology filtering and unknown association
+
+Suggested implementation details:
+- Detector: Ultralytics YOLO
+- Tracker: ByteTrack or BoT-SORT
+- Face embedding: InsightFace
+- Similarity: cosine similarity
+- Unknown association score:
+  `final_score = 0.55 * face_score + 0.15 * body_score + 0.15 * time_score + 0.15 * topology_score`
+- Allow overlapping cameras with `min_travel_sec = 0` and `allow_overlap = true`
+
+Please favor simple, modular, readable code. The target is a stable thesis demo, not a production CCTV platform.

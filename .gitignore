@@ -13,6 +13,7 @@ eggs/
 env/
 venv/
 .venv/
+/.venv_insightface_demo/
 
 # PyTorch / Model weights
 *.pt
@@ -58,6 +59,7 @@ data/known_db/*.png
 tmp_*.txt
 tmp_*/
 *.tmp
+/_tmp_bootstrap_verify/
 
 # PDF documents (personal/internal docs)
 Important/
@@ -72,3 +74,6 @@ insightface-master/
 Wildtrack/
 tmp_wildtrack/
 wildtrack_roi/
+/Dataset/
+/insightface_runtime_src/
+**/__pycache__/

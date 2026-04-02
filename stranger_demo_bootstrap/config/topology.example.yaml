@@ -1,0 +1,59 @@
+graph:
+  nodes:
+    - camera_id: cam03
+      label: Follow Corridor Left
+    - camera_id: cam05
+      label: Entry View Left
+    - camera_id: cam06
+      label: Entry View Right
+    - camera_id: cam07
+      label: Follow Corridor Right
+
+  edges:
+    - from: cam05
+      to: cam06
+      min_travel_sec: 0
+      avg_travel_sec: 1
+      max_travel_sec: 4
+      allow_overlap: true
+      confidence: 0.97
+
+    - from: cam06
+      to: cam05
+      min_travel_sec: 0
+      avg_travel_sec: 1
+      max_travel_sec: 4
+      allow_overlap: true
+      confidence: 0.97
+
+    - from: cam05
+      to: cam03
+      min_travel_sec: 0
+      avg_travel_sec: 3
+      max_travel_sec: 10
+      allow_overlap: true
+      confidence: 0.88
+
+    - from: cam06
+      to: cam07
+      min_travel_sec: 0
+      avg_travel_sec: 3
+      max_travel_sec: 10
+      allow_overlap: true
+      confidence: 0.88
+
+    - from: cam03
+      to: cam07
+      min_travel_sec: 0
+      avg_travel_sec: 2
+      max_travel_sec: 8
+      allow_overlap: true
+      confidence: 0.84
+
+    - from: cam07
+      to: cam03
+      min_travel_sec: 0
+      avg_travel_sec: 2
+      max_travel_sec: 8
+      allow_overlap: true
+      confidence: 0.84

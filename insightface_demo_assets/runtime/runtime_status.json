@@ -1,0 +1,15 @@
+﻿{
+  "face_demo_assets_ready": true,
+  "known_gallery_ready": true,
+  "wildtrack_queue_ready": true,
+  "python_runtime_available": true,
+  "insightface_model_pack_available": true,
+  "python_runtime": "D:\\ĐỒ ÁN TỐT NGHIỆP\\.venv_insightface_demo\\Scripts\\python.exe",
+  "insightface_model_root": "C:\\Users\\Admin\\.insightface",
+  "insightface_model_dir": "C:\\Users\\Admin\\.insightface\\models\\buffalo_l",
+  "notes": [
+    "The demo environment uses a dedicated venv inside the workspace.",
+    "InsightFace runtime dependencies are installed in the venv.",
+    "The buffalo_l model pack is downloaded and available for CPU inference."
+  ]
+}

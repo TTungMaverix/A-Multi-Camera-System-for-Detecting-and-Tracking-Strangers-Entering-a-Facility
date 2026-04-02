@@ -1,0 +1,95 @@
+﻿{
+    "dataset_root":  "D:\\ĐỒ ÁN TỐT NGHIỆP\\Wildtrack",
+    "selected_cameras":  [
+                             "C3",
+                             "C5",
+                             "C6",
+                             "C7"
+                         ],
+    "assumed_video_fps":  10,
+    "filtered_track_rows":  11352,
+    "entry_in_events":  51,
+    "identity_queue_rows":  51,
+    "per_camera_rows":  {
+                            "C3":  5174,
+                            "C5":  2678,
+                            "C6":  1559,
+                            "C7":  1941
+                        },
+    "notes":  [
+                  "This export uses Wildtrack ground-truth annotations to prepare a demo-ready subset.",
+                  "Use best_head_crop and best_body_crop as candidates for known/unknown face matching.",
+                  "Wildtrack cameras overlap strongly, so travel-time logic is represented as overlap-based frame-gap windows instead of corridor travel time.",
+                  "identity_resolution_queue.csv is the handoff file for known/unknown matching in the demo pipeline."
+              ],
+    "topology":  {
+                     "C5":  {
+                                "C3":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       },
+                                "C6":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  25
+                                       },
+                                "C7":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       }
+                            },
+                     "C6":  {
+                                "C3":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       },
+                                "C5":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  25
+                                       },
+                                "C7":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  30
+                                       }
+                            },
+                     "C3":  {
+                                "C5":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       },
+                                "C6":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       },
+                                "C7":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  60
+                                       }
+                            },
+                     "C7":  {
+                                "C3":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  60
+                                       },
+                                "C5":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  40
+                                       },
+                                "C6":  {
+                                           "relation":  "overlap",
+                                           "min_frame_gap":  0,
+                                           "max_frame_gap":  30
+                                       }
+                            }
+                 }
+}

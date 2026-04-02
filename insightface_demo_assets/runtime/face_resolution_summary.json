@@ -1,0 +1,20 @@
+{
+  "queue_events": 51,
+  "resolved_events": 51,
+  "gallery_identities_runtime": 7,
+  "gallery_images_runtime": 8,
+  "auto_enrolled_demo_identities": [
+    "known_demo_gt_0147",
+    "known_demo_gt_0358"
+  ],
+  "known_assignments": 2,
+  "unknown_assignments": 45,
+  "events_with_face_embedding": 41,
+  "stream_timeline_rows": 6936,
+  "stream_unification_basis": "wildtrack_global_gt_id_demo_bridge",
+  "notes": [
+    "This demo uses InsightFace for face detection and embedding on entry-event crops.",
+    "To demonstrate the Known branch, a small authorized gallery is auto-enrolled from a few Wildtrack entry events.",
+    "Cross-stream identity propagation in this demo is bridged by Wildtrack global_gt_id; replace this with body re-id association for a full deployment pipeline."
+  ]
+}
