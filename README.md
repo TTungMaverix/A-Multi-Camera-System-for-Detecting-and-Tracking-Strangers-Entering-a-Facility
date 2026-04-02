@@ -34,10 +34,10 @@
 This project builds a **real-time multi-camera security surveillance system** designed for facilities such as companies, factories, residential complexes, or smart villages. The system processes **4 camera video streams simultaneously**, detects people entering a protected area, identifies them against a known identity database, and — if unrecognized — assigns and maintains a **Global ID for strangers across all cameras**.
 
 The core contribution of this system is a **cross-camera stranger association mechanism** based on:
-- 🗺️ Shared spatial map (camera topology)
-- ⏱️ Expected travel time between camera positions
-- 🧑 Face & body embedding similarity
-- 📊 Rule-based scoring for identity linking
+- Shared spatial map (camera topology)
+- Expected travel time between camera positions
+- Face & body embedding similarity
+- Rule-based scoring for identity linking
 
 ---
 
@@ -110,14 +110,14 @@ If the score exceeds the threshold → **link to existing Global ID**; otherwise
 
 ## ✨ Key Features
 
-- 🔴 **Real-time Processing** — Handles 4 simultaneous camera streams
-- 🚶 **Direction Filtering** — Only processes people entering the facility
-- 🧑‍🤝‍🧑 **Known vs Unknown Classification** — Open-set face recognition against known DB
-- 🆔 **Cross-Camera Global ID** — Maintains consistent stranger identity across all cameras
-- 🗺️ **Spatial-Temporal Reasoning** — Uses camera topology map and travel time estimates
-- 📸 **Multi-Frame Reference** — Stores multiple best-shot frames to reduce recognition errors
-- 🧮 **Rule-Based Scoring** — Combines face, body, time, and topology scores for robust matching
-- 📊 **Event Dashboard** — Logs and visualizes all security events
+- **Real-time Processing** — Handles 4 simultaneous camera streams
+- **Direction Filtering** — Only processes people entering the facility
+- **Known vs Unknown Classification** — Open-set face recognition against known DB
+- **Cross-Camera Global ID** — Maintains consistent stranger identity across all cameras
+- **Spatial-Temporal Reasoning** — Uses camera topology map and travel time estimates
+- **Multi-Frame Reference** — Stores multiple best-shot frames to reduce recognition errors
+- **Rule-Based Scoring** — Combines face, body, time, and topology scores for robust matching
+- **Event Dashboard** — Logs and visualizes all security events
 
 ---
 
@@ -371,6 +371,3 @@ For questions or collaboration, please open an issue on this repository.
 
 ---
 
-<p align="center">
-  <i>Built with ❤️ as a Graduation Project</i>
-</p>
