@@ -2,6 +2,7 @@ from .decision_policy import assign_model_identities, best_known_match, evaluate
 from .gallery_lifecycle import create_unknown_profile, update_unknown_profile
 from .config_loader import DEFAULT_ASSOCIATION_POLICY, load_association_policy
 from .topology_filter import build_topology_index
+from .transition_map_loader import load_camera_transition_map
 from .trace_logging import summarize_decision_logs, write_jsonl
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "create_unknown_profile",
     "evaluate_profile_candidate",
     "load_association_policy",
+    "load_camera_transition_map",
     "summarize_decision_logs",
     "update_unknown_profile",
     "write_jsonl",

@@ -21,6 +21,7 @@ from association_core import (
     create_unknown_profile as core_create_unknown_profile,
     evaluate_profile_candidate as core_evaluate_profile_candidate,
     load_association_policy as core_load_association_policy,
+    load_camera_transition_map as core_load_camera_transition_map,
     summarize_decision_logs as core_summarize_decision_logs,
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
@@ -335,6 +336,58 @@ def build_topology(config):
     return core_build_topology_index(config)
 
 
+def get_camera_zone_config(camera_id, transition_map):
+    return (transition_map.get("cameras", {}) or {}).get(camera_id, {})
+
+
+def default_zone_for_camera(camera_id, transition_map):
+    camera_cfg = get_camera_zone_config(camera_id, transition_map)
+    default_zone_id = camera_cfg.get("default_zone_id", "")
+    zones = camera_cfg.get("zones", []) or []
+    selected_zone = None
+    if default_zone_id:
+        selected_zone = next((zone for zone in zones if zone.get("zone_id") == default_zone_id), None)
+    if selected_zone is None and zones:
+        selected_zone = zones[0]
+    zone_id = selected_zone.get("zone_id", default_zone_id) if selected_zone else default_zone_id
+    zone_type = selected_zone.get("zone_type", "") if selected_zone else ""
+    return {
+        "zone_id": zone_id or "",
+        "zone_type": zone_type,
+        "zone_reason": "camera_default_zone" if zone_id else "zone_unavailable",
+        "zone_fallback_used": bool(zone_id),
+    }
+
+
+def resolve_zone_for_point(camera_id, point_x, point_y, transition_map):
+    camera_cfg = get_camera_zone_config(camera_id, transition_map)
+    zones = camera_cfg.get("zones", []) or []
+    if point_x is None or point_y is None:
+        return default_zone_for_camera(camera_id, transition_map)
+    for zone in zones:
+        polygon = zone.get("polygon", []) or []
+        if polygon and test_point_in_polygon(float(point_x), float(point_y), polygon):
+            return {
+                "zone_id": zone.get("zone_id", ""),
+                "zone_type": zone.get("zone_type", ""),
+                "zone_reason": "point_in_config_zone",
+                "zone_fallback_used": False,
+            }
+    fallback = default_zone_for_camera(camera_id, transition_map)
+    if fallback["zone_id"]:
+        fallback["zone_reason"] = "default_zone_outside_polygon"
+    return fallback
+
+
+def resolve_zone_for_record(record, transition_map):
+    return resolve_zone_for_point(
+        record["camera_id"],
+        record.get("foot_x"),
+        record.get("foot_y"),
+        transition_map,
+    )
+
+
 def enroll_demo_authorized_identities(app, queue_rows, known_root: Path, count=2):
     counts = Counter(row["global_gt_id"] for row in queue_rows)
     ordered_rows = sorted(
@@ -523,7 +576,17 @@ def build_timeline_audit(track_rows, selected_cameras):
     return stage_a, stage_a_rows, by_gt
 
 
-def build_event_from_record(event_id, event_type, record, best_record, dataset_root: Path, crop_root: Path, head_cfg, extra):
+def build_event_from_record(
+    event_id,
+    event_type,
+    record,
+    best_record,
+    dataset_root: Path,
+    crop_root: Path,
+    head_cfg,
+    extra,
+    transition_map,
+):
     image_path = dataset_root / best_record["image_rel_path"]
     image = load_image_unicode(image_path)
     if image is None:
@@ -542,6 +605,7 @@ def build_event_from_record(event_id, event_type, record, best_record, dataset_r
     ok_head, head_message = crop_and_save(image_path, head_rect, head_path)
     if not ok_body or not ok_head:
         return None, f"crop_failure:{body_message}|{head_message}"
+    zone_meta = resolve_zone_for_record(record, transition_map)
     event = {
         "event_id": event_id,
         "event_type": event_type,
@@ -562,6 +626,12 @@ def build_event_from_record(event_id, event_type, record, best_record, dataset_r
         "bbox_width": best_record["width"],
         "bbox_height": best_record["height"],
         "bbox_area": best_record["area"],
+        "foot_x": record.get("foot_x", ""),
+        "foot_y": record.get("foot_y", ""),
+        "zone_id": zone_meta["zone_id"],
+        "zone_type": zone_meta["zone_type"],
+        "zone_reason": zone_meta["zone_reason"],
+        "zone_fallback_used": zone_meta["zone_fallback_used"],
     }
     event.update(extra)
     return event, "ok"
@@ -657,12 +727,12 @@ def build_baseline_stage_b(track_rows, queue_rows, config):
     return rows
 
 
-def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_root: Path):
+def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_root: Path, transition_map):
     selected_cameras = config["selected_cameras"]
     camera_cfgs = config["cameras"]
     line_threshold = float(config["line_crossing_distance_threshold"])
     best_shot_window = int(config["best_shot_window_frames"])
-    topology = build_topology(config)
+    topology = build_topology(transition_map)
     for src_camera, targets in topology.items():
         for dst_camera, info in targets.items():
             info["min_travel_time_frames"] = int(round(info["min_travel_time"] * float(config["assumed_video_fps"])))
@@ -749,6 +819,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     "relation_type": "entry",
                     "same_area_overlap": False,
                 },
+                transition_map,
             )
             if event is None:
                 placeholder_rows.append(
@@ -870,6 +941,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     "max_travel_time": relation["max_travel_time"],
                     "delta_from_anchor_sec": round(best_option["candidate_row"]["relative_sec"] - anchor_event["relative_sec"], 3),
                 },
+                transition_map,
             )
             if event is None:
                 placeholder["drop_reason"] = "low_quality_crop"
@@ -1058,6 +1130,8 @@ def build_unknown_profile_rows(profiles):
                 "event_id": ref["event_id"],
                 "camera_id": ref["camera_id"],
                 "relative_sec": ref["relative_sec"],
+                "zone_id": ref.get("zone_id", ""),
+                "zone_type": ref.get("zone_type", ""),
                 "crop_path": ref["crop_path"],
                 "quality_score": round(ref["quality_score"], 4),
             }
@@ -1068,6 +1142,8 @@ def build_unknown_profile_rows(profiles):
                 "event_id": ref["event_id"],
                 "camera_id": ref["camera_id"],
                 "relative_sec": ref["relative_sec"],
+                "zone_id": ref.get("zone_id", ""),
+                "zone_type": ref.get("zone_type", ""),
                 "crop_path": ref["crop_path"],
                 "quality_score": round(ref["quality_score"], 4),
             }
@@ -1078,8 +1154,10 @@ def build_unknown_profile_rows(profiles):
                 "unknown_global_id": profile["unknown_global_id"],
                 "first_seen_camera": profile["first_seen_camera"],
                 "first_seen_time": round(profile["first_seen_time"], 3),
+                "first_seen_zone": profile.get("first_seen_zone", ""),
                 "latest_seen_camera": profile["latest_seen_camera"],
                 "latest_seen_time": round(profile["latest_seen_time"], 3),
+                "latest_seen_zone": profile.get("latest_seen_zone", ""),
                 "history_cameras": ",".join(sorted(profile["history_cameras"])),
                 "cameras_seen": ",".join(sorted(profile.get("cameras_seen", profile["history_cameras"]))),
                 "zones_seen": ",".join(sorted(profile.get("zones_seen", []))),
@@ -1379,6 +1457,7 @@ def main(config_path: Path):
     config = load_json(config_path)
     base_dir = config_path.parents[1]
     association_policy_config = config.get("association_policy_config", "")
+    camera_transition_map_config = config.get("camera_transition_map_config", "")
     queue_csv = Path(config["wildtrack_identity_queue_csv"])
     wildtrack_config_path = queue_csv.parents[2] / "wildtrack_demo_config.json"
     wildtrack_config = load_json(wildtrack_config_path)
@@ -1412,12 +1491,18 @@ def main(config_path: Path):
     association_decisions_jsonl = association_logs_dir / "association_decisions.jsonl"
     association_summary_json = association_logs_dir / "association_summary.json"
     association_policy_runtime_json = association_logs_dir / "association_policy_runtime.json"
+    camera_transition_map_runtime_json = association_logs_dir / "camera_transition_map_runtime.json"
 
     track_rows = parse_track_rows(read_csv(tracks_csv))
     queue_rows = read_csv(queue_csv)
     base_manifest_rows = read_csv(known_manifest_csv)
     association_policy, association_policy_runtime = load_association_policy(
         config_path=association_policy_config,
+        base_dir=config_path.parent,
+    )
+    camera_transition_map, camera_transition_map_runtime = core_load_camera_transition_map(
+        wildtrack_config,
+        config_path=camera_transition_map_config,
         base_dir=config_path.parent,
     )
 
@@ -1442,6 +1527,7 @@ def main(config_path: Path):
 
     baseline_events = []
     for row in queue_rows:
+        baseline_zone = default_zone_for_camera(row["camera_id"], camera_transition_map)
         baseline_events.append(
             {
                 "event_id": row["event_id"],
@@ -1460,6 +1546,10 @@ def main(config_path: Path):
                 "anchor_relative_sec": as_float(row["relative_sec"]),
                 "relation_type": "entry",
                 "same_area_overlap": False,
+                "zone_id": baseline_zone["zone_id"],
+                "zone_type": baseline_zone["zone_type"],
+                "zone_reason": baseline_zone["zone_reason"],
+                "zone_fallback_used": baseline_zone["zone_fallback_used"],
             }
         )
     analyzed_baseline = analyze_event_crops(app, baseline_events)
@@ -1474,7 +1564,7 @@ def main(config_path: Path):
     baseline_timeline_rows = build_baseline_stream_timeline(track_rows, baseline_assignments)
 
     fixed_events, stage_b_fixed, _, _, topology = build_fixed_candidate_events(
-        track_rows, wildtrack_config, dataset_root, fixed_crop_root
+        track_rows, wildtrack_config, dataset_root, fixed_crop_root, camera_transition_map
     )
     write_csv(fixed_event_csv, fixed_events, fieldnames_for_rows(fixed_events, ["event_id"]))
     analyzed_fixed = analyze_event_crops(app, fixed_events)
@@ -1571,6 +1661,7 @@ def main(config_path: Path):
         {
             "metrics": association_summary,
             "policy_source": association_policy_runtime,
+            "camera_transition_map_source": camera_transition_map_runtime,
             "log_path": str(association_decisions_jsonl),
         },
     )
@@ -1579,6 +1670,13 @@ def main(config_path: Path):
         {
             "policy_runtime": association_policy_runtime,
             "policy": association_policy,
+        },
+    )
+    save_json(
+        camera_transition_map_runtime_json,
+        {
+            "camera_transition_map_runtime": camera_transition_map_runtime,
+            "camera_transition_map": camera_transition_map,
         },
     )
     write_csv(audit_overlap_cases_csv, overlap_rows, fieldnames_for_rows(overlap_rows, ["global_gt_id"]))
@@ -1607,6 +1705,7 @@ def main(config_path: Path):
             "resolved_multicam_gt_count_delta": mode_b_metrics["resolved_multicam_gt_count"] - mode_a_metrics["resolved_multicam_gt_count"],
         },
         "association_policy_runtime": association_policy_runtime,
+        "camera_transition_map_runtime": camera_transition_map_runtime,
     }
     save_json(audit_stage_counts_json, stage_counts)
 
@@ -1617,10 +1716,12 @@ def main(config_path: Path):
         "baseline_stream_unification_basis": "wildtrack_global_gt_id_demo_bridge",
         "mode_b_stream_unification_basis": "per_camera_event_projection_without_gt_crossstream_bridge",
         "association_policy_runtime": association_policy_runtime,
+        "camera_transition_map_runtime": camera_transition_map_runtime,
         "association_logs": {
             "decision_log_jsonl": str(association_decisions_jsonl),
             "summary_json": str(association_summary_json),
             "policy_runtime_json": str(association_policy_runtime_json),
+            "camera_transition_map_runtime_json": str(camera_transition_map_runtime_json),
         },
         "notes": [
             "Mode A reproduces the previous GT-grouped behavior for audit.",
@@ -1632,6 +1733,10 @@ def main(config_path: Path):
     print(
         "ASSOCIATION_POLICY_SOURCE="
         + (association_policy_runtime["source_path"] or "built_in_defaults")
+    )
+    print(
+        "CAMERA_TRANSITION_MAP_SOURCE="
+        + (camera_transition_map_runtime["source_path"] or "built_in_defaults")
     )
     print(f"TOTAL_EVENTS={mode_b_metrics['total_event_count']}")
     print(f"UNKNOWN_EVENTS={mode_b_metrics['unknown_event_count']}")

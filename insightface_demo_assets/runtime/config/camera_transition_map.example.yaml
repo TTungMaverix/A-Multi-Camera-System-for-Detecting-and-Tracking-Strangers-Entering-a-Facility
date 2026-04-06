@@ -1,0 +1,230 @@
+camera_transition_map:
+  cameras:
+    C3:
+      role: followup
+      description: Wide follow-up view over the open plaza.
+      default_zone_id: c3_track_default
+      entry_zones: []
+      exit_zones:
+        - c3_track_default
+      zones:
+        - zone_id: c3_track_default
+          zone_type: transit
+          polygon:
+            - [320, 170]
+            - [1450, 140]
+            - [1820, 960]
+            - [220, 1030]
+          placeholder: false
+          description: Derived from the current Wildtrack follow-up ROI.
+    C5:
+      role: entry
+      description: Front-facing entry camera near the stairs and door area.
+      default_zone_id: c5_entry_main
+      entry_zones:
+        - c5_entry_main
+      exit_zones:
+        - c5_entry_main
+      zones:
+        - zone_id: c5_entry_main
+          zone_type: entry
+          polygon:
+            - [240, 170]
+            - [1680, 170]
+            - [1840, 560]
+            - [110, 670]
+          placeholder: false
+          description: Current entry ROI used for IN-direction event generation.
+    C6:
+      role: entry
+      description: Diagonal entry camera covering the approach to the stairs.
+      default_zone_id: c6_entry_main
+      entry_zones:
+        - c6_entry_main
+      exit_zones:
+        - c6_entry_main
+      zones:
+        - zone_id: c6_entry_main
+          zone_type: entry
+          polygon:
+            - [980, 160]
+            - [1910, 150]
+            - [1910, 690]
+            - [760, 620]
+          placeholder: false
+          description: Current entry ROI used for IN-direction event generation.
+    C7:
+      role: followup
+      description: Wide follow-up view of the right side of the plaza.
+      default_zone_id: c7_track_default
+      entry_zones: []
+      exit_zones:
+        - c7_track_default
+      zones:
+        - zone_id: c7_track_default
+          zone_type: transit
+          polygon:
+            - [650, 120]
+            - [1830, 120]
+            - [1910, 980]
+            - [940, 1060]
+          placeholder: false
+          description: Derived from the current Wildtrack follow-up ROI.
+
+  transitions:
+    - transition_id: C5_to_C3_overlap
+      src_camera_id: C5
+      dst_camera_id: C3
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c5_entry_main]
+      allowed_entry_zones: [c3_track_default]
+      weak_link_support: false
+      description: Entry view C5 overlaps with follow-up view C3 in the plaza.
+    - transition_id: C5_to_C6_overlap
+      src_camera_id: C5
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 1.2
+      max_travel_time_sec: 2.5
+      allowed_exit_zones: [c5_entry_main]
+      allowed_entry_zones: [c6_entry_main]
+      weak_link_support: false
+      description: Entry views C5 and C6 can see the same stranger almost simultaneously.
+    - transition_id: C5_to_C7_overlap
+      src_camera_id: C5
+      dst_camera_id: C7
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c5_entry_main]
+      allowed_entry_zones: [c7_track_default]
+      weak_link_support: false
+      description: Entry view C5 overlaps with follow-up view C7.
+    - transition_id: C6_to_C3_overlap
+      src_camera_id: C6
+      dst_camera_id: C3
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c3_track_default]
+      weak_link_support: false
+      description: Entry view C6 overlaps with follow-up view C3.
+    - transition_id: C6_to_C5_overlap
+      src_camera_id: C6
+      dst_camera_id: C5
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 1.2
+      max_travel_time_sec: 2.5
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c5_entry_main]
+      weak_link_support: false
+      description: Entry views C6 and C5 can see the same stranger almost simultaneously.
+    - transition_id: C6_to_C7_overlap
+      src_camera_id: C6
+      dst_camera_id: C7
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 1.5
+      max_travel_time_sec: 3.0
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c7_track_default]
+      weak_link_support: false
+      description: Entry view C6 overlaps with follow-up view C7.
+    - transition_id: C3_to_C5_overlap
+      src_camera_id: C3
+      dst_camera_id: C5
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c3_track_default]
+      allowed_entry_zones: [c5_entry_main]
+      weak_link_support: false
+      description: Follow-up view C3 overlaps back toward entry view C5.
+    - transition_id: C3_to_C6_overlap
+      src_camera_id: C3
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c3_track_default]
+      allowed_entry_zones: [c6_entry_main]
+      weak_link_support: false
+      description: Follow-up view C3 overlaps back toward entry view C6.
+    - transition_id: C3_to_C7_overlap
+      src_camera_id: C3
+      dst_camera_id: C7
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 3.0
+      max_travel_time_sec: 6.0
+      allowed_exit_zones: [c3_track_default]
+      allowed_entry_zones: [c7_track_default]
+      weak_link_support: false
+      description: Wide follow-up overlap between C3 and C7.
+    - transition_id: C7_to_C3_overlap
+      src_camera_id: C7
+      dst_camera_id: C3
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 3.0
+      max_travel_time_sec: 6.0
+      allowed_exit_zones: [c7_track_default]
+      allowed_entry_zones: [c3_track_default]
+      weak_link_support: false
+      description: Wide follow-up overlap between C7 and C3.
+    - transition_id: C7_to_C5_overlap
+      src_camera_id: C7
+      dst_camera_id: C5
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c7_track_default]
+      allowed_entry_zones: [c5_entry_main]
+      weak_link_support: false
+      description: Follow-up view C7 overlaps back toward entry view C5.
+    - transition_id: C7_to_C6_overlap
+      src_camera_id: C7
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 1.5
+      max_travel_time_sec: 3.0
+      allowed_exit_zones: [c7_track_default]
+      allowed_entry_zones: [c6_entry_main]
+      weak_link_support: false
+      description: Follow-up view C7 overlaps back toward entry view C6.

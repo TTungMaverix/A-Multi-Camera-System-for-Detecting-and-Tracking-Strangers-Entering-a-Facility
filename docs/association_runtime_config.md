@@ -3,6 +3,7 @@
 Association runtime policy is externalized at:
 
 - [association_policy.example.yaml](../insightface_demo_assets/runtime/config/association_policy.example.yaml)
+- [camera_transition_map.example.yaml](../insightface_demo_assets/runtime/config/camera_transition_map.example.yaml)
 
 The loader order is:
 
@@ -10,6 +11,13 @@ The loader order is:
 2. `insightface_demo_assets/runtime/config/association_policy.yaml`
 3. `insightface_demo_assets/runtime/config/association_policy.example.yaml`
 4. built-in defaults from `association_core/config_loader.py`
+
+Camera transition metadata is loaded in this order:
+
+1. `camera_transition_map_config` from [face_demo_config.json](../insightface_demo_assets/runtime/face_demo_config.json), if provided
+2. `insightface_demo_assets/runtime/config/camera_transition_map.yaml`
+3. `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
+4. a fallback map derived from `wildtrack_demo/wildtrack_demo_config.json`
 
 If a config file is missing or only partially filled:
 
@@ -57,3 +65,20 @@ To adapt the same association engine to a new dataset:
 4. tune thresholds and margins there
 
 This keeps the system paper-grounded and avoids re-editing core logic for every dataset.
+
+## Zone / Transition Metadata
+
+`camera_transition_map.example.yaml` externalizes:
+
+- per-camera default zones
+- entry zones and exit zones
+- directed camera-pair transitions
+- `relation_type` per edge
+- `min / avg / max` travel-time priors
+- overlap flags and weak-link support
+
+At runtime, observations can carry `zone_id` and `zone_type`. If a dataset does not provide fine-grained zones yet:
+
+- the runtime falls back to the camera default zone
+- the association logs mark that fallback explicitly
+- the demo command still runs without code edits

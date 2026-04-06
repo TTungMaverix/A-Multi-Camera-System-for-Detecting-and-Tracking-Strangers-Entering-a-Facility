@@ -19,6 +19,8 @@ def summarize_decision_logs(decision_logs):
         "defer_count": 0,
         "quality_gate_reject_count": 0,
         "topology_reject_count": 0,
+        "zone_reject_count": 0,
+        "fallback_without_zone_count": 0,
     }
     for row in decision_logs:
         decision = row.get("decision", "")
@@ -35,4 +37,9 @@ def summarize_decision_logs(decision_logs):
             summary["quality_gate_reject_count"] += 1
         if row.get("candidate_set_before_filter") and not row.get("candidate_set_after_filter"):
             summary["topology_reject_count"] += 1
+        candidate_evaluations = row.get("candidate_evaluations", [])
+        if any(not candidate.get("zone_valid", True) for candidate in candidate_evaluations):
+            summary["zone_reject_count"] += 1
+        if row.get("fallback_without_zone") or any(candidate.get("fallback_without_zone", False) for candidate in candidate_evaluations):
+            summary["fallback_without_zone_count"] += 1
     return summary

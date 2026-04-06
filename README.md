@@ -31,7 +31,7 @@ Association design must follow:
 Association must not fall back to a vague weighted sum if the design note already defines the logic. The required structure is:
 
 1. `quality gate`
-2. `candidate filtering` by topology + travel time + optional zone constraints
+2. `candidate filtering` by topology + travel time + zone constraints when available
 3. `modality-aware appearance evidence` with face and body kept separate
 4. `accept / reject / create / defer`
 5. `gallery lifecycle` with TTL and top-k references
@@ -48,6 +48,7 @@ Additional docs:
 
 - [docs/association_runtime_config.md](docs/association_runtime_config.md)
 - [docs/association_trace_logging.md](docs/association_trace_logging.md)
+- [docs/camera_transition_map_config.md](docs/camera_transition_map_config.md)
 
 ## Phase Status
 
@@ -56,7 +57,9 @@ Current code status:
 - `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the runnable compatibility entrypoint
 - association core logic now lives under `insightface_demo_assets/runtime/association_core/`
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
+- camera-pair transitions and zone metadata are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
 - association decision logs are exported under `insightface_demo_assets/runtime/association_logs/`
+- candidate observations now carry `zone_id` / `zone_type` when available, with safe fallback to camera defaults
 - scenario tests for association core live under `tests/`
 - this phase refactors only the association core
 - ingest, detector, tracker, dashboard, and the demo command are intentionally kept stable in this phase
@@ -103,6 +106,7 @@ Main outputs:
 - `insightface_demo_assets/runtime/audit_report.md`
 - `insightface_demo_assets/runtime/association_logs/association_decisions.jsonl`
 - `insightface_demo_assets/runtime/association_logs/association_summary.json`
+- `insightface_demo_assets/runtime/association_logs/camera_transition_map_runtime.json`
 
 Run the lightweight association tests:
 
@@ -134,9 +138,11 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |     |  |- gallery_lifecycle.py
 |     |  |- decision_policy.py
 |     |  |- config_loader.py
+|     |  |- transition_map_loader.py
 |     |  `- trace_logging.py
 |     |- config/
-|     |  `- association_policy.example.yaml
+|     |  |- association_policy.example.yaml
+|     |  `- camera_transition_map.example.yaml
 |     |- face_demo_config.json
 |     |- run_face_resolution_demo.py
 |     |- audit_*.csv/json/md
@@ -156,6 +162,7 @@ Notes:
 - `run_face_resolution_demo.py` is still the public entrypoint for the demo phase.
 - `association_core/` is the new paper-grounded association package used under that entrypoint.
 - `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
+- `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, and overlap behavior.
 - `runtime/association_logs/` is generated at run time and is intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.

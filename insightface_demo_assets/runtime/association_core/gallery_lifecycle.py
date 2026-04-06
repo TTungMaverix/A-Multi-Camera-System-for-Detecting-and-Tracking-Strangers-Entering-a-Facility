@@ -47,8 +47,12 @@ def create_unknown_profile(unknown_global_id, item, policy=None):
         "unknown_global_id": unknown_global_id,
         "first_seen_camera": event["camera_id"],
         "first_seen_time": float(event["relative_sec"]),
+        "first_seen_zone": event.get("zone_id", ""),
+        "first_seen_zone_type": event.get("zone_type", ""),
         "latest_seen_camera": event["camera_id"],
         "latest_seen_time": float(event["relative_sec"]),
+        "latest_seen_zone": event.get("zone_id", ""),
+        "latest_seen_zone_type": event.get("zone_type", ""),
         "history_cameras": [event["camera_id"]],
         "cameras_seen": [event["camera_id"]],
         "zones_seen": [event["zone_id"]] if event.get("zone_id") else [],
@@ -73,6 +77,8 @@ def update_unknown_profile(profile, item, policy=None):
     event = item["event"]
     profile["latest_seen_camera"] = event["camera_id"]
     profile["latest_seen_time"] = float(event["relative_sec"])
+    profile["latest_seen_zone"] = event.get("zone_id", "")
+    profile["latest_seen_zone_type"] = event.get("zone_type", "")
     profile["expiry_at_sec"] = float(event["relative_sec"]) + float(cfg["ttl_sec"])
     if event["camera_id"] not in profile["history_cameras"]:
         profile["history_cameras"].append(event["camera_id"])
@@ -92,6 +98,8 @@ def update_unknown_profile(profile, item, policy=None):
                 "event_id": event["event_id"],
                 "camera_id": event["camera_id"],
                 "relative_sec": float(event["relative_sec"]),
+                "zone_id": event.get("zone_id", ""),
+                "zone_type": event.get("zone_type", ""),
                 "quality_score": float(item.get("face_det_score") or 0.0)
                 + (float(cfg["face_quality_area_bonus"]) * float(event.get("bbox_area") or 0.0)),
                 "crop_path": item.get("used_face_crop_path", ""),
@@ -106,6 +114,8 @@ def update_unknown_profile(profile, item, policy=None):
                 "event_id": event["event_id"],
                 "camera_id": event["camera_id"],
                 "relative_sec": float(event["relative_sec"]),
+                "zone_id": event.get("zone_id", ""),
+                "zone_type": event.get("zone_type", ""),
                 "quality_score": float(event.get("bbox_area") or 0.0),
                 "crop_path": event.get("best_body_crop", ""),
             },

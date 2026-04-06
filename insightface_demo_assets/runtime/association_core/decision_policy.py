@@ -74,10 +74,14 @@ def _relation_thresholds(policy, relation_type):
 def _candidate_acceptance(candidate, policy):
     if not candidate["quality_gate_pass"]:
         return False, "poor_quality", {}
+    if not candidate.get("topology_valid", candidate["topology_allowed"]):
+        return False, candidate.get("rejection_reason") or candidate["candidate_reason"] or "topology_reject", {}
+    if not candidate.get("time_valid", candidate["topology_allowed"]):
+        return False, candidate.get("time_reason") or candidate.get("rejection_reason") or "time_reject", {}
+    if not candidate.get("zone_valid", candidate["zone_allowed"]):
+        return False, candidate.get("zone_reason") or candidate.get("rejection_reason") or "zone_reject", {}
     if not candidate["topology_allowed"]:
-        return False, candidate["candidate_reason"] or "topology_or_time_reject", {}
-    if not candidate["zone_allowed"]:
-        return False, candidate["candidate_reason"] or "zone_reject", {}
+        return False, candidate.get("rejection_reason") or candidate["candidate_reason"] or "topology_or_time_reject", {}
     if candidate["appearance_primary"] <= 0.0:
         return False, "appearance_missing", {}
 
@@ -145,7 +149,12 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "appearance_secondary_available": appearance["appearance_secondary"]
         > float(merged_policy["appearance_evidence"]["secondary_available_min_score"]),
         "final_total_score": appearance["appearance_primary"],
-        "reason_code": topology_eval["candidate_reason"] if not topology_eval["topology_allowed"] else appearance["evidence_reason"],
+        "reason_code": (
+            topology_eval.get("rejection_reason")
+            or topology_eval["candidate_reason"]
+            if not topology_eval["topology_allowed"]
+            else appearance["evidence_reason"]
+        ),
     }
     return candidate
 
@@ -174,6 +183,10 @@ def _build_resolved_row(event, item, known_match=None, unknown_global_id="", dec
         "anchor_camera_id": event.get("anchor_camera_id", ""),
         "anchor_relative_sec": event.get("anchor_relative_sec", ""),
         "relation_type": event.get("relation_type", ""),
+        "zone_id": event.get("zone_id", ""),
+        "zone_type": event.get("zone_type", ""),
+        "zone_reason": event.get("zone_reason", ""),
+        "zone_fallback_used": event.get("zone_fallback_used", False),
         "best_head_crop": event["best_head_crop"],
         "best_body_crop": event["best_body_crop"],
         "identity_status": identity_status,
@@ -201,6 +214,8 @@ def _build_trace_row(event, candidate, decision_reason, reused_old_id=False, cre
         "event_id": event["event_id"],
         "event_camera_id": event["camera_id"],
         "event_relative_sec": event["relative_sec"],
+        "event_zone_id": event.get("zone_id", ""),
+        "event_zone_type": event.get("zone_type", ""),
         **candidate,
         "reused_old_id": reused_old_id,
         "created_new_id": created_new_id,
@@ -225,7 +240,7 @@ def _build_decision_log(
     candidate_set_after_filter = [
         candidate["candidate_unknown_global_id"]
         for candidate in candidate_scores
-        if candidate["topology_allowed"] and candidate["zone_allowed"]
+        if candidate["topology_allowed"]
     ]
     top_candidate = selected_candidate or (candidate_scores[0] if candidate_scores else None)
     candidate_details = []
@@ -234,6 +249,16 @@ def _build_decision_log(
             {
                 "candidate_unknown_global_id": candidate["candidate_unknown_global_id"],
                 "relation_type": candidate["relation_type"],
+                "transition_rule_used": candidate.get("transition_rule_used", ""),
+                "source_zone_id": candidate.get("source_zone_id", ""),
+                "target_zone_id": candidate.get("target_zone_id", ""),
+                "topology_valid": candidate.get("topology_valid", candidate["topology_allowed"]),
+                "time_valid": candidate.get("time_valid", candidate["topology_allowed"]),
+                "zone_valid": candidate.get("zone_valid", candidate["zone_allowed"]),
+                "zone_reason": candidate.get("zone_reason", ""),
+                "time_reason": candidate.get("time_reason", ""),
+                "rejection_reason": candidate.get("rejection_reason", ""),
+                "fallback_without_zone": candidate.get("fallback_without_zone", False),
                 "topology_allowed": candidate["topology_allowed"],
                 "zone_allowed": candidate["zone_allowed"],
                 "candidate_reason": candidate["candidate_reason"],
@@ -258,24 +283,31 @@ def _build_decision_log(
         "camera_id": event["camera_id"],
         "observation_id": event["event_id"],
         "event_type": event["event_type"],
+        "zone_id": event.get("zone_id", ""),
+        "zone_type": event.get("zone_type", ""),
         "quality_gate_pass": quality["gate_pass"],
         "quality_gate_reason": quality["reason_code"],
         "candidate_set_before_filter": candidate_set_before_filter,
         "candidate_set_after_filter": candidate_set_after_filter,
         "selected_candidate_id": selected_candidate["candidate_unknown_global_id"] if selected_candidate else "",
         "relation_type": top_candidate["relation_type"] if top_candidate else "",
+        "transition_rule_used": top_candidate.get("transition_rule_used", "") if top_candidate else "",
         "topology_metadata": {
             "profile_camera": top_candidate["profile_camera"] if top_candidate else "",
+            "topology_valid": top_candidate.get("topology_valid", False) if top_candidate else False,
             "same_area_overlap": top_candidate["same_area_overlap"] if top_candidate else False,
             "topology_allowed": top_candidate["topology_allowed"] if top_candidate else False,
+            "time_valid": top_candidate.get("time_valid", False) if top_candidate else False,
+            "zone_valid": top_candidate.get("zone_valid", False) if top_candidate else False,
             "zone_allowed": top_candidate["zone_allowed"] if top_candidate else False,
         },
         "time_delta": top_candidate["delta_sec"] if top_candidate else "",
-        "travel_window": {
-            "min_travel_time": top_candidate["min_travel_time"] if top_candidate else "",
-            "avg_travel_time": top_candidate["avg_travel_time"] if top_candidate else "",
-            "max_travel_time": top_candidate["max_travel_time"] if top_candidate else "",
-        },
+        "travel_window": top_candidate.get("travel_window", {}) if top_candidate else {},
+        "source_zone_id": top_candidate.get("source_zone_id", "") if top_candidate else "",
+        "target_zone_id": top_candidate.get("target_zone_id", event.get("zone_id", "")) if top_candidate else event.get("zone_id", ""),
+        "zone_valid": top_candidate.get("zone_valid", False) if top_candidate else False,
+        "zone_reason": top_candidate.get("zone_reason", "") if top_candidate else event.get("zone_reason", ""),
+        "fallback_without_zone": top_candidate.get("fallback_without_zone", False) if top_candidate else bool(event.get("zone_fallback_used", False)),
         "modality_primary": top_candidate["primary_modality"] if top_candidate else quality["primary_modality"],
         "modality_secondary": "body"
         if top_candidate and top_candidate["primary_modality"] == "face"
@@ -333,22 +365,35 @@ def assign_model_identities(
                     "event_id": event["event_id"],
                     "event_camera_id": event["camera_id"],
                     "event_relative_sec": event["relative_sec"],
+                    "event_zone_id": event.get("zone_id", ""),
+                    "event_zone_type": event.get("zone_type", ""),
                     "candidate_unknown_global_id": "",
                     "candidate_latest_camera": "",
                     "candidate_latest_time": "",
                     "profile_camera": "",
                     "profile_time": "",
+                    "source_zone_id": "",
+                    "target_zone_id": event.get("zone_id", ""),
                     "relation_type": "",
                     "same_area_overlap": "",
+                    "transition_rule_used": "",
                     "min_travel_time": "",
                     "avg_travel_time": "",
                     "max_travel_time": "",
+                    "travel_window": {},
                     "delta_sec": "",
+                    "topology_valid": "",
+                    "time_valid": "",
+                    "zone_valid": "",
                     "topology_allowed": "",
                     "zone_allowed": "",
                     "time_score": "",
                     "topology_score": "",
                     "zone_score": "",
+                    "zone_reason": event.get("zone_reason", ""),
+                    "time_reason": "",
+                    "rejection_reason": "",
+                    "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
                     "face_score": round(known_match["score"], 4),
                     "body_score": "",
                     "appearance_primary": round(known_match["score"], 4),
@@ -373,15 +418,23 @@ def assign_model_identities(
                     "camera_id": event["camera_id"],
                     "observation_id": event["event_id"],
                     "event_type": event["event_type"],
+                    "zone_id": event.get("zone_id", ""),
+                    "zone_type": event.get("zone_type", ""),
                     "quality_gate_pass": True,
                     "quality_gate_reason": "quality_gate_pass",
                     "candidate_set_before_filter": [],
                     "candidate_set_after_filter": [],
                     "selected_candidate_id": "",
                     "relation_type": "",
+                    "transition_rule_used": "",
                     "topology_metadata": {},
                     "time_delta": "",
                     "travel_window": {},
+                    "source_zone_id": "",
+                    "target_zone_id": event.get("zone_id", ""),
+                    "zone_valid": bool(event.get("zone_id")),
+                    "zone_reason": event.get("zone_reason", ""),
+                    "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
                     "modality_primary": "face",
                     "modality_secondary": "",
                     "face_score": round(known_match["score"], 4),
@@ -496,22 +549,35 @@ def assign_model_identities(
                         "event_id": event["event_id"],
                         "event_camera_id": event["camera_id"],
                         "event_relative_sec": event["relative_sec"],
+                        "event_zone_id": event.get("zone_id", ""),
+                        "event_zone_type": event.get("zone_type", ""),
                         "candidate_unknown_global_id": "",
                         "candidate_latest_camera": "",
                         "candidate_latest_time": "",
                         "profile_camera": "",
                         "profile_time": "",
+                        "source_zone_id": "",
+                        "target_zone_id": event.get("zone_id", ""),
                         "relation_type": "",
                         "same_area_overlap": "",
+                        "transition_rule_used": "",
                         "min_travel_time": "",
                         "avg_travel_time": "",
                         "max_travel_time": "",
+                        "travel_window": {},
                         "delta_sec": "",
+                        "topology_valid": "",
+                        "time_valid": "",
+                        "zone_valid": "",
                         "topology_allowed": "",
                         "zone_allowed": "",
                         "time_score": "",
                         "topology_score": "",
                         "zone_score": "",
+                        "zone_reason": event.get("zone_reason", ""),
+                        "time_reason": "",
+                        "rejection_reason": "",
+                        "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
                         "face_score": "",
                         "body_score": "",
                         "appearance_primary": "",
@@ -635,22 +701,35 @@ def assign_model_identities(
                     "event_id": event["event_id"],
                     "event_camera_id": event["camera_id"],
                     "event_relative_sec": event["relative_sec"],
+                    "event_zone_id": event.get("zone_id", ""),
+                    "event_zone_type": event.get("zone_type", ""),
                     "candidate_unknown_global_id": "",
                     "candidate_latest_camera": "",
                     "candidate_latest_time": "",
                     "profile_camera": "",
                     "profile_time": "",
+                    "source_zone_id": "",
+                    "target_zone_id": event.get("zone_id", ""),
                     "relation_type": "",
                     "same_area_overlap": "",
+                    "transition_rule_used": "",
                     "min_travel_time": "",
                     "avg_travel_time": "",
                     "max_travel_time": "",
+                    "travel_window": {},
                     "delta_sec": "",
+                    "topology_valid": "",
+                    "time_valid": "",
+                    "zone_valid": "",
                     "topology_allowed": "",
                     "zone_allowed": "",
                     "time_score": "",
                     "topology_score": "",
                     "zone_score": "",
+                    "zone_reason": event.get("zone_reason", ""),
+                    "time_reason": "",
+                    "rejection_reason": "",
+                    "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
                     "face_score": "",
                     "body_score": "",
                     "appearance_primary": "",

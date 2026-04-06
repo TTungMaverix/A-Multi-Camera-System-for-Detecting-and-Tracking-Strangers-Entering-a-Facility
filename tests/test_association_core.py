@@ -35,6 +35,46 @@ def make_topology(relation, min_sec=0.0, max_sec=1.0, avg_sec=None):
     )
 
 
+def make_transition_topology(
+    relation,
+    src_camera="C1",
+    dst_camera="C2",
+    min_sec=0.0,
+    max_sec=1.0,
+    avg_sec=None,
+    allowed_exit_zones=None,
+    allowed_entry_zones=None,
+):
+    avg = avg_sec if avg_sec is not None else (min_sec + max_sec) / 2.0
+    return build_topology_index(
+        {
+            "cameras": {
+                src_camera: {
+                    "default_zone_id": allowed_exit_zones[0] if allowed_exit_zones else "",
+                },
+                dst_camera: {
+                    "default_zone_id": allowed_entry_zones[0] if allowed_entry_zones else "",
+                },
+            },
+            "transitions": [
+                {
+                    "transition_id": f"{src_camera}_to_{dst_camera}_{relation}",
+                    "src_camera_id": src_camera,
+                    "dst_camera_id": dst_camera,
+                    "relation_type": relation,
+                    "allowed_relation_types": [relation],
+                    "same_area_overlap": relation == "overlap",
+                    "min_travel_time_sec": min_sec,
+                    "avg_travel_time_sec": avg,
+                    "max_travel_time_sec": max_sec,
+                    "allowed_exit_zones": allowed_exit_zones or [],
+                    "allowed_entry_zones": allowed_entry_zones or [],
+                }
+            ],
+        }
+    )
+
+
 def make_item(event_id, camera_id, sec, face=None, body=None, bbox_area=4000, gt_id="1", zone_id=""):
     return {
         "event": {
@@ -211,3 +251,133 @@ def test_gallery_lifecycle_ttl_and_top_k_refs():
     active, expired = expire_profiles([profile], current_sec=2.0)
     assert active == []
     assert len(expired) == 1
+
+
+def test_zone_compatible_transition_reuses_same_unknown_id():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="z_entry"),
+    ]
+    topology = make_transition_topology(
+        "overlap",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        min_sec=0.0,
+        max_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["zone_valid"] is True
+    assert debug["decision_logs"][1]["transition_rule_used"] == "C1_to_C2_overlap"
+
+
+def test_zone_mismatch_blocks_reuse_even_with_good_appearance():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="wrong_zone"),
+    ]
+    topology = make_transition_topology(
+        "overlap",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        min_sec=0.0,
+        max_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["candidate_evaluations"][0]["zone_valid"] is False
+    assert debug["decision_logs"][1]["reason_code"] == "zone_entry_reject"
+
+
+def test_zone_match_but_out_of_time_window_does_not_reuse():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
+        make_item("e2", "C2", 4.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_entry"),
+    ]
+    topology = make_transition_topology(
+        "sequential",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        min_sec=1.0,
+        max_sec=2.0,
+        avg_sec=1.5,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["candidate_evaluations"][0]["time_valid"] is False
+    assert debug["decision_logs"][1]["reason_code"] == "sequential_window_reject"
+
+
+def test_weak_link_zone_compatible_reuses_when_appearance_is_strong():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
+        make_item("e2", "C2", 1.0, face=[0.98, 0.02], body=[0.98, 0.02], zone_id="z_entry"),
+    ]
+    topology = make_transition_topology(
+        "weak_link",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        min_sec=0.0,
+        max_sec=2.0,
+        avg_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["relation_type"] == "weak_link"
+
+
+def test_missing_zone_metadata_falls_back_safely():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id=""),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id=""),
+    ]
+    topology = make_transition_topology(
+        "overlap",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        min_sec=0.0,
+        max_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["fallback_without_zone"] is True

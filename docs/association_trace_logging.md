@@ -5,6 +5,7 @@ The demo now writes decision logs to:
 - `insightface_demo_assets/runtime/association_logs/association_decisions.jsonl`
 - `insightface_demo_assets/runtime/association_logs/association_summary.json`
 - `insightface_demo_assets/runtime/association_logs/association_policy_runtime.json`
+- `insightface_demo_assets/runtime/association_logs/camera_transition_map_runtime.json`
 
 These files are runtime outputs and are not intended to be committed.
 
@@ -17,15 +18,23 @@ Each JSONL row corresponds to one observation event and includes:
 - `camera_id`
 - `observation_id`
 - `event_type`
+- `zone_id`
+- `zone_type`
 - `quality_gate_pass`
 - `quality_gate_reason`
 - `candidate_set_before_filter`
 - `candidate_set_after_filter`
 - `selected_candidate_id`
 - `relation_type`
+- `transition_rule_used`
 - `topology_metadata`
 - `time_delta`
 - `travel_window`
+- `source_zone_id`
+- `target_zone_id`
+- `zone_valid`
+- `zone_reason`
+- `fallback_without_zone`
 - `modality_primary`
 - `modality_secondary`
 - `face_score`
@@ -49,6 +58,8 @@ Each JSONL row corresponds to one observation event and includes:
 - `defer_count`
 - `quality_gate_reject_count`
 - `topology_reject_count`
+- `zone_reject_count`
+- `fallback_without_zone_count`
 
 These metrics are also merged into `face_resolution_summary.json` for the mode-B run.
 
@@ -59,3 +70,4 @@ This trace layer is intended for:
 - debugging why a reuse happened or failed
 - explaining decisions during thesis demo and defense
 - supporting later dashboard/storage phases without changing the association core again
+- preserving enough zone-aware metadata for a later timeline/dashboard layer
