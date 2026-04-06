@@ -4,9 +4,9 @@ camera_transition_map:
       role: followup
       description: Wide follow-up view over the open plaza.
       default_zone_id: c3_track_default
-      entry_zones: []
-      exit_zones:
-        - c3_track_default
+      default_subzone_id: c3_overlap_entry
+      entry_zones: [c3_track_default]
+      exit_zones: [c3_track_default]
       zones:
         - zone_id: c3_track_default
           zone_type: transit
@@ -15,16 +15,45 @@ camera_transition_map:
             - [1450, 140]
             - [1820, 960]
             - [220, 1030]
+          priority: 10
           placeholder: false
           description: Derived from the current Wildtrack follow-up ROI.
+      subzones:
+        - subzone_id: c3_overlap_entry
+          parent_zone_id: c3_track_default
+          subzone_type: overlap
+          polygon:
+            - [320, 170]
+            - [1030, 150]
+            - [1110, 650]
+            - [250, 760]
+          priority: 100
+          placeholder: true
+          allowed_transitions:
+            - C5_to_C3_overlap
+            - C6_to_C3_overlap
+            - C7_to_C3_overlap
+          description: Approximate overlap-side subzone where people first become visible from entry cameras.
+        - subzone_id: c3_far_exit
+          parent_zone_id: c3_track_default
+          subzone_type: exit
+          polygon:
+            - [1030, 150]
+            - [1450, 140]
+            - [1820, 960]
+            - [1110, 930]
+          priority: 80
+          placeholder: true
+          allowed_transitions:
+            - C3_to_C7_overlap
+          description: Approximate far-side follow-up / exit subzone.
     C5:
       role: entry
       description: Front-facing entry camera near the stairs and door area.
       default_zone_id: c5_entry_main
-      entry_zones:
-        - c5_entry_main
-      exit_zones:
-        - c5_entry_main
+      default_subzone_id: c5_inner_exit
+      entry_zones: [c5_entry_main]
+      exit_zones: [c5_entry_main]
       zones:
         - zone_id: c5_entry_main
           zone_type: entry
@@ -33,16 +62,44 @@ camera_transition_map:
             - [1680, 170]
             - [1840, 560]
             - [110, 670]
+          priority: 10
           placeholder: false
           description: Current entry ROI used for IN-direction event generation.
+      subzones:
+        - subzone_id: c5_outer_entry
+          parent_zone_id: c5_entry_main
+          subzone_type: entry
+          polygon:
+            - [250, 180]
+            - [1670, 180]
+            - [1750, 420]
+            - [180, 450]
+          priority: 100
+          placeholder: false
+          allowed_transitions: []
+          description: Outside/approach band before the inward crossing line.
+        - subzone_id: c5_inner_exit
+          parent_zone_id: c5_entry_main
+          subzone_type: exit
+          polygon:
+            - [180, 430]
+            - [1750, 420]
+            - [1840, 560]
+            - [110, 670]
+          priority: 110
+          placeholder: false
+          allowed_transitions:
+            - C5_to_C3_overlap
+            - C5_to_C6_overlap
+            - C5_to_C7_overlap
+          description: Interior band after entry crossing, used as the main outgoing subzone.
     C6:
       role: entry
       description: Diagonal entry camera covering the approach to the stairs.
       default_zone_id: c6_entry_main
-      entry_zones:
-        - c6_entry_main
-      exit_zones:
-        - c6_entry_main
+      default_subzone_id: c6_inner_exit
+      entry_zones: [c6_entry_main]
+      exit_zones: [c6_entry_main]
       zones:
         - zone_id: c6_entry_main
           zone_type: entry
@@ -51,15 +108,44 @@ camera_transition_map:
             - [1910, 150]
             - [1910, 690]
             - [760, 620]
+          priority: 10
           placeholder: false
           description: Current entry ROI used for IN-direction event generation.
+      subzones:
+        - subzone_id: c6_outer_entry
+          parent_zone_id: c6_entry_main
+          subzone_type: entry
+          polygon:
+            - [980, 160]
+            - [1910, 150]
+            - [1910, 360]
+            - [900, 390]
+          priority: 100
+          placeholder: false
+          allowed_transitions: []
+          description: Outside/approach band before the inward crossing line.
+        - subzone_id: c6_inner_exit
+          parent_zone_id: c6_entry_main
+          subzone_type: exit
+          polygon:
+            - [900, 390]
+            - [1910, 360]
+            - [1910, 690]
+            - [760, 620]
+          priority: 110
+          placeholder: false
+          allowed_transitions:
+            - C6_to_C3_overlap
+            - C6_to_C5_overlap
+            - C6_to_C7_overlap
+          description: Interior band after entry crossing, used as the main outgoing subzone.
     C7:
       role: followup
       description: Wide follow-up view of the right side of the plaza.
       default_zone_id: c7_track_default
-      entry_zones: []
-      exit_zones:
-        - c7_track_default
+      default_subzone_id: c7_overlap_entry
+      entry_zones: [c7_track_default]
+      exit_zones: [c7_track_default]
       zones:
         - zone_id: c7_track_default
           zone_type: transit
@@ -68,8 +154,38 @@ camera_transition_map:
             - [1830, 120]
             - [1910, 980]
             - [940, 1060]
+          priority: 10
           placeholder: false
           description: Derived from the current Wildtrack follow-up ROI.
+      subzones:
+        - subzone_id: c7_overlap_entry
+          parent_zone_id: c7_track_default
+          subzone_type: overlap
+          polygon:
+            - [760, 140]
+            - [1520, 130]
+            - [1600, 680]
+            - [980, 760]
+          priority: 100
+          placeholder: true
+          allowed_transitions:
+            - C5_to_C7_overlap
+            - C6_to_C7_overlap
+            - C3_to_C7_overlap
+          description: Approximate overlap-side subzone receiving people from entry cameras.
+        - subzone_id: c7_far_exit
+          parent_zone_id: c7_track_default
+          subzone_type: exit
+          polygon:
+            - [1520, 130]
+            - [1830, 120]
+            - [1910, 980]
+            - [1600, 930]
+          priority: 80
+          placeholder: true
+          allowed_transitions:
+            - C7_to_C3_overlap
+          description: Approximate far-side follow-up / exit subzone.
 
   transitions:
     - transition_id: C5_to_C3_overlap
@@ -83,6 +199,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c5_entry_main]
       allowed_entry_zones: [c3_track_default]
+      allowed_exit_subzones: [c5_inner_exit]
+      allowed_entry_subzones: [c3_overlap_entry]
       weak_link_support: false
       description: Entry view C5 overlaps with follow-up view C3 in the plaza.
     - transition_id: C5_to_C6_overlap
@@ -96,6 +214,8 @@ camera_transition_map:
       max_travel_time_sec: 2.5
       allowed_exit_zones: [c5_entry_main]
       allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c5_inner_exit]
+      allowed_entry_subzones: [c6_inner_exit]
       weak_link_support: false
       description: Entry views C5 and C6 can see the same stranger almost simultaneously.
     - transition_id: C5_to_C7_overlap
@@ -109,6 +229,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c5_entry_main]
       allowed_entry_zones: [c7_track_default]
+      allowed_exit_subzones: [c5_inner_exit]
+      allowed_entry_subzones: [c7_overlap_entry]
       weak_link_support: false
       description: Entry view C5 overlaps with follow-up view C7.
     - transition_id: C6_to_C3_overlap
@@ -122,6 +244,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c3_track_default]
+      allowed_exit_subzones: [c6_inner_exit]
+      allowed_entry_subzones: [c3_overlap_entry]
       weak_link_support: false
       description: Entry view C6 overlaps with follow-up view C3.
     - transition_id: C6_to_C5_overlap
@@ -135,6 +259,8 @@ camera_transition_map:
       max_travel_time_sec: 2.5
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c5_entry_main]
+      allowed_exit_subzones: [c6_inner_exit]
+      allowed_entry_subzones: [c5_inner_exit]
       weak_link_support: false
       description: Entry views C6 and C5 can see the same stranger almost simultaneously.
     - transition_id: C6_to_C7_overlap
@@ -148,6 +274,8 @@ camera_transition_map:
       max_travel_time_sec: 3.0
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c7_track_default]
+      allowed_exit_subzones: [c6_inner_exit]
+      allowed_entry_subzones: [c7_overlap_entry]
       weak_link_support: false
       description: Entry view C6 overlaps with follow-up view C7.
     - transition_id: C3_to_C5_overlap
@@ -161,6 +289,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c3_track_default]
       allowed_entry_zones: [c5_entry_main]
+      allowed_exit_subzones: [c3_overlap_entry]
+      allowed_entry_subzones: [c5_inner_exit]
       weak_link_support: false
       description: Follow-up view C3 overlaps back toward entry view C5.
     - transition_id: C3_to_C6_overlap
@@ -174,6 +304,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c3_track_default]
       allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c3_overlap_entry]
+      allowed_entry_subzones: [c6_inner_exit]
       weak_link_support: false
       description: Follow-up view C3 overlaps back toward entry view C6.
     - transition_id: C3_to_C7_overlap
@@ -187,6 +319,8 @@ camera_transition_map:
       max_travel_time_sec: 6.0
       allowed_exit_zones: [c3_track_default]
       allowed_entry_zones: [c7_track_default]
+      allowed_exit_subzones: [c3_far_exit, c3_overlap_entry]
+      allowed_entry_subzones: [c7_overlap_entry]
       weak_link_support: false
       description: Wide follow-up overlap between C3 and C7.
     - transition_id: C7_to_C3_overlap
@@ -200,6 +334,8 @@ camera_transition_map:
       max_travel_time_sec: 6.0
       allowed_exit_zones: [c7_track_default]
       allowed_entry_zones: [c3_track_default]
+      allowed_exit_subzones: [c7_far_exit, c7_overlap_entry]
+      allowed_entry_subzones: [c3_overlap_entry]
       weak_link_support: false
       description: Wide follow-up overlap between C7 and C3.
     - transition_id: C7_to_C5_overlap
@@ -213,6 +349,8 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c7_track_default]
       allowed_entry_zones: [c5_entry_main]
+      allowed_exit_subzones: [c7_overlap_entry]
+      allowed_entry_subzones: [c5_inner_exit]
       weak_link_support: false
       description: Follow-up view C7 overlaps back toward entry view C5.
     - transition_id: C7_to_C6_overlap
@@ -226,5 +364,7 @@ camera_transition_map:
       max_travel_time_sec: 3.0
       allowed_exit_zones: [c7_track_default]
       allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c7_overlap_entry]
+      allowed_entry_subzones: [c6_inner_exit]
       weak_link_support: false
       description: Follow-up view C7 overlaps back toward entry view C6.

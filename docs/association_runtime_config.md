@@ -34,6 +34,7 @@ If a config file is missing or only partially filled:
 - relation priors
 - overlap/sequential/weak-link travel-time tolerance
 - zone fallback behavior
+- subzone fallback behavior
 
 `appearance_evidence`
 - face-vs-body modality preference
@@ -71,14 +72,18 @@ This keeps the system paper-grounded and avoids re-editing core logic for every 
 `camera_transition_map.example.yaml` externalizes:
 
 - per-camera default zones
+- per-camera default subzones
 - entry zones and exit zones
+- entry/exit/transit/overlap subzones
 - directed camera-pair transitions
 - `relation_type` per edge
 - `min / avg / max` travel-time priors
 - overlap flags and weak-link support
+- optional allowed entry/exit subzones per transition
 
-At runtime, observations can carry `zone_id` and `zone_type`. If a dataset does not provide fine-grained zones yet:
+At runtime, observations can carry `zone_id`, `zone_type`, `subzone_id`, and `subzone_type`. If a dataset does not provide fine-grained subzones yet:
 
 - the runtime falls back to the camera default zone
+- then falls back to the camera default subzone
 - the association logs mark that fallback explicitly
 - the demo command still runs without code edits

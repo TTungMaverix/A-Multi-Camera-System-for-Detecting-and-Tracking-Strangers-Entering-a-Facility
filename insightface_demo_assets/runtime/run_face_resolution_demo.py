@@ -18,10 +18,14 @@ from association_core import (
     assign_model_identities as core_assign_model_identities,
     best_known_match as core_best_known_match,
     build_topology_index as core_build_topology_index,
+    build_event_assignment_audit_row as core_build_event_assignment_audit_row,
     create_unknown_profile as core_create_unknown_profile,
+    default_subzone_for_camera as core_default_subzone_for_camera,
+    default_zone_for_camera as core_default_zone_for_camera,
     evaluate_profile_candidate as core_evaluate_profile_candidate,
     load_association_policy as core_load_association_policy,
     load_camera_transition_map as core_load_camera_transition_map,
+    resolve_spatial_context as core_resolve_spatial_context,
     summarize_decision_logs as core_summarize_decision_logs,
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
@@ -341,46 +345,19 @@ def get_camera_zone_config(camera_id, transition_map):
 
 
 def default_zone_for_camera(camera_id, transition_map):
-    camera_cfg = get_camera_zone_config(camera_id, transition_map)
-    default_zone_id = camera_cfg.get("default_zone_id", "")
-    zones = camera_cfg.get("zones", []) or []
-    selected_zone = None
-    if default_zone_id:
-        selected_zone = next((zone for zone in zones if zone.get("zone_id") == default_zone_id), None)
-    if selected_zone is None and zones:
-        selected_zone = zones[0]
-    zone_id = selected_zone.get("zone_id", default_zone_id) if selected_zone else default_zone_id
-    zone_type = selected_zone.get("zone_type", "") if selected_zone else ""
-    return {
-        "zone_id": zone_id or "",
-        "zone_type": zone_type,
-        "zone_reason": "camera_default_zone" if zone_id else "zone_unavailable",
-        "zone_fallback_used": bool(zone_id),
-    }
+    return core_default_zone_for_camera(camera_id, transition_map)
+
+
+def default_subzone_for_camera(camera_id, transition_map, zone_id=""):
+    return core_default_subzone_for_camera(camera_id, transition_map, zone_id=zone_id)
 
 
 def resolve_zone_for_point(camera_id, point_x, point_y, transition_map):
-    camera_cfg = get_camera_zone_config(camera_id, transition_map)
-    zones = camera_cfg.get("zones", []) or []
-    if point_x is None or point_y is None:
-        return default_zone_for_camera(camera_id, transition_map)
-    for zone in zones:
-        polygon = zone.get("polygon", []) or []
-        if polygon and test_point_in_polygon(float(point_x), float(point_y), polygon):
-            return {
-                "zone_id": zone.get("zone_id", ""),
-                "zone_type": zone.get("zone_type", ""),
-                "zone_reason": "point_in_config_zone",
-                "zone_fallback_used": False,
-            }
-    fallback = default_zone_for_camera(camera_id, transition_map)
-    if fallback["zone_id"]:
-        fallback["zone_reason"] = "default_zone_outside_polygon"
-    return fallback
+    return core_resolve_spatial_context(camera_id, point_x, point_y, transition_map)
 
 
 def resolve_zone_for_record(record, transition_map):
-    return resolve_zone_for_point(
+    return core_resolve_spatial_context(
         record["camera_id"],
         record.get("foot_x"),
         record.get("foot_y"),
@@ -605,7 +582,7 @@ def build_event_from_record(
     ok_head, head_message = crop_and_save(image_path, head_rect, head_path)
     if not ok_body or not ok_head:
         return None, f"crop_failure:{body_message}|{head_message}"
-    zone_meta = resolve_zone_for_record(record, transition_map)
+    spatial_meta = resolve_zone_for_record(record, transition_map)
     event = {
         "event_id": event_id,
         "event_type": event_type,
@@ -628,10 +605,18 @@ def build_event_from_record(
         "bbox_area": best_record["area"],
         "foot_x": record.get("foot_x", ""),
         "foot_y": record.get("foot_y", ""),
-        "zone_id": zone_meta["zone_id"],
-        "zone_type": zone_meta["zone_type"],
-        "zone_reason": zone_meta["zone_reason"],
-        "zone_fallback_used": zone_meta["zone_fallback_used"],
+        "zone_id": spatial_meta["zone_id"],
+        "zone_type": spatial_meta["zone_type"],
+        "zone_reason": spatial_meta["zone_reason"],
+        "zone_fallback_used": spatial_meta["zone_fallback_used"],
+        "subzone_id": spatial_meta["subzone_id"],
+        "subzone_type": spatial_meta["subzone_type"],
+        "subzone_reason": spatial_meta["subzone_reason"],
+        "subzone_fallback_used": spatial_meta["subzone_fallback_used"],
+        "matched_zone_region_id": spatial_meta["matched_zone_region_id"],
+        "matched_subzone_region_id": spatial_meta["matched_subzone_region_id"],
+        "assignment_point_x": spatial_meta["assignment_point_x"],
+        "assignment_point_y": spatial_meta["assignment_point_y"],
     }
     event.update(extra)
     return event, "ok"
@@ -1031,6 +1016,14 @@ def build_resolved_rows_from_gt_assignments(analyzed_events, assignments, run_mo
                 "anchor_camera_id": event.get("anchor_camera_id", ""),
                 "anchor_relative_sec": event.get("anchor_relative_sec", ""),
                 "relation_type": event.get("relation_type", ""),
+                "zone_id": event.get("zone_id", ""),
+                "zone_type": event.get("zone_type", ""),
+                "zone_reason": event.get("zone_reason", ""),
+                "zone_fallback_used": event.get("zone_fallback_used", False),
+                "subzone_id": event.get("subzone_id", ""),
+                "subzone_type": event.get("subzone_type", ""),
+                "subzone_reason": event.get("subzone_reason", ""),
+                "subzone_fallback_used": event.get("subzone_fallback_used", False),
                 "best_head_crop": event["best_head_crop"],
                 "best_body_crop": event["best_body_crop"],
                 "identity_status": assignment["identity_status"],
@@ -1132,6 +1125,8 @@ def build_unknown_profile_rows(profiles):
                 "relative_sec": ref["relative_sec"],
                 "zone_id": ref.get("zone_id", ""),
                 "zone_type": ref.get("zone_type", ""),
+                "subzone_id": ref.get("subzone_id", ""),
+                "subzone_type": ref.get("subzone_type", ""),
                 "crop_path": ref["crop_path"],
                 "quality_score": round(ref["quality_score"], 4),
             }
@@ -1144,6 +1139,8 @@ def build_unknown_profile_rows(profiles):
                 "relative_sec": ref["relative_sec"],
                 "zone_id": ref.get("zone_id", ""),
                 "zone_type": ref.get("zone_type", ""),
+                "subzone_id": ref.get("subzone_id", ""),
+                "subzone_type": ref.get("subzone_type", ""),
                 "crop_path": ref["crop_path"],
                 "quality_score": round(ref["quality_score"], 4),
             }
@@ -1155,12 +1152,15 @@ def build_unknown_profile_rows(profiles):
                 "first_seen_camera": profile["first_seen_camera"],
                 "first_seen_time": round(profile["first_seen_time"], 3),
                 "first_seen_zone": profile.get("first_seen_zone", ""),
+                "first_seen_subzone": profile.get("first_seen_subzone", ""),
                 "latest_seen_camera": profile["latest_seen_camera"],
                 "latest_seen_time": round(profile["latest_seen_time"], 3),
                 "latest_seen_zone": profile.get("latest_seen_zone", ""),
+                "latest_seen_subzone": profile.get("latest_seen_subzone", ""),
                 "history_cameras": ",".join(sorted(profile["history_cameras"])),
                 "cameras_seen": ",".join(sorted(profile.get("cameras_seen", profile["history_cameras"]))),
                 "zones_seen": ",".join(sorted(profile.get("zones_seen", []))),
+                "subzones_seen": ",".join(sorted(profile.get("subzones_seen", []))),
                 "event_ids": ",".join(profile["event_ids"]),
                 "reference_face_frames_json": json.dumps(face_refs, ensure_ascii=False),
                 "reference_body_frames_json": json.dumps(body_refs, ensure_ascii=False),
@@ -1486,6 +1486,7 @@ def main(config_path: Path):
     audit_overlap_cases_csv = runtime_dir / "audit_overlap_cases.csv"
     audit_gt_split_merge_csv = runtime_dir / "audit_gt_split_merge.csv"
     audit_expected_reid_failures_csv = runtime_dir / "audit_expected_reid_failures.csv"
+    audit_event_generation_subzones_csv = runtime_dir / "audit_event_generation_subzones.csv"
     audit_report_md = runtime_dir / "audit_report.md"
     association_logs_dir = runtime_dir / "association_logs"
     association_decisions_jsonl = association_logs_dir / "association_decisions.jsonl"
@@ -1527,7 +1528,7 @@ def main(config_path: Path):
 
     baseline_events = []
     for row in queue_rows:
-        baseline_zone = default_zone_for_camera(row["camera_id"], camera_transition_map)
+        baseline_spatial = core_resolve_spatial_context(row["camera_id"], None, None, camera_transition_map)
         baseline_events.append(
             {
                 "event_id": row["event_id"],
@@ -1546,10 +1547,20 @@ def main(config_path: Path):
                 "anchor_relative_sec": as_float(row["relative_sec"]),
                 "relation_type": "entry",
                 "same_area_overlap": False,
-                "zone_id": baseline_zone["zone_id"],
-                "zone_type": baseline_zone["zone_type"],
-                "zone_reason": baseline_zone["zone_reason"],
-                "zone_fallback_used": baseline_zone["zone_fallback_used"],
+                "foot_x": "",
+                "foot_y": "",
+                "zone_id": baseline_spatial["zone_id"],
+                "zone_type": baseline_spatial["zone_type"],
+                "zone_reason": baseline_spatial["zone_reason"],
+                "zone_fallback_used": baseline_spatial["zone_fallback_used"],
+                "subzone_id": baseline_spatial["subzone_id"],
+                "subzone_type": baseline_spatial["subzone_type"],
+                "subzone_reason": baseline_spatial["subzone_reason"],
+                "subzone_fallback_used": baseline_spatial["subzone_fallback_used"],
+                "matched_zone_region_id": baseline_spatial["matched_zone_region_id"],
+                "matched_subzone_region_id": baseline_spatial["matched_subzone_region_id"],
+                "assignment_point_x": baseline_spatial["assignment_point_x"],
+                "assignment_point_y": baseline_spatial["assignment_point_y"],
             }
         )
     analyzed_baseline = analyze_event_crops(app, baseline_events)
@@ -1581,6 +1592,11 @@ def main(config_path: Path):
     association_summary = core_summarize_decision_logs(association_decision_logs)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
+    event_assignment_audit_rows = [
+        core_build_event_assignment_audit_row("mode_a_baseline", event) for event in baseline_events
+    ] + [
+        core_build_event_assignment_audit_row("mode_b_true_assoc", event) for event in fixed_events
+    ]
 
     coverage_rows, missing_rows, expected_failure_rows, overlap_rows = build_coverage_and_failures(
         stage_a_rows,
@@ -1686,6 +1702,11 @@ def main(config_path: Path):
         expected_failure_rows,
         fieldnames_for_rows(expected_failure_rows, ["global_gt_id"]),
     )
+    write_csv(
+        audit_event_generation_subzones_csv,
+        event_assignment_audit_rows,
+        fieldnames_for_rows(event_assignment_audit_rows, ["run_mode", "event_id"]),
+    )
 
     root_cause_lines = [
         "Baseline stage B exported only entry-camera events, so most multi-camera GTs never reached association as separate per-camera candidates.",
@@ -1722,6 +1743,9 @@ def main(config_path: Path):
             "summary_json": str(association_summary_json),
             "policy_runtime_json": str(association_policy_runtime_json),
             "camera_transition_map_runtime_json": str(camera_transition_map_runtime_json),
+        },
+        "event_generation_audit": {
+            "subzone_assignment_csv": str(audit_event_generation_subzones_csv),
         },
         "notes": [
             "Mode A reproduces the previous GT-grouped behavior for audit.",

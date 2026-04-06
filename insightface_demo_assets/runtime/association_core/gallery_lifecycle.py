@@ -49,13 +49,18 @@ def create_unknown_profile(unknown_global_id, item, policy=None):
         "first_seen_time": float(event["relative_sec"]),
         "first_seen_zone": event.get("zone_id", ""),
         "first_seen_zone_type": event.get("zone_type", ""),
+        "first_seen_subzone": event.get("subzone_id", ""),
+        "first_seen_subzone_type": event.get("subzone_type", ""),
         "latest_seen_camera": event["camera_id"],
         "latest_seen_time": float(event["relative_sec"]),
         "latest_seen_zone": event.get("zone_id", ""),
         "latest_seen_zone_type": event.get("zone_type", ""),
+        "latest_seen_subzone": event.get("subzone_id", ""),
+        "latest_seen_subzone_type": event.get("subzone_type", ""),
         "history_cameras": [event["camera_id"]],
         "cameras_seen": [event["camera_id"]],
         "zones_seen": [event["zone_id"]] if event.get("zone_id") else [],
+        "subzones_seen": [event["subzone_id"]] if event.get("subzone_id") else [],
         "event_ids": [event["event_id"]],
         "gt_ids": [event["global_gt_id"]],
         "face_refs": [],
@@ -79,6 +84,8 @@ def update_unknown_profile(profile, item, policy=None):
     profile["latest_seen_time"] = float(event["relative_sec"])
     profile["latest_seen_zone"] = event.get("zone_id", "")
     profile["latest_seen_zone_type"] = event.get("zone_type", "")
+    profile["latest_seen_subzone"] = event.get("subzone_id", "")
+    profile["latest_seen_subzone_type"] = event.get("subzone_type", "")
     profile["expiry_at_sec"] = float(event["relative_sec"]) + float(cfg["ttl_sec"])
     if event["camera_id"] not in profile["history_cameras"]:
         profile["history_cameras"].append(event["camera_id"])
@@ -86,6 +93,8 @@ def update_unknown_profile(profile, item, policy=None):
         profile["cameras_seen"].append(event["camera_id"])
     if event.get("zone_id") and event["zone_id"] not in profile["zones_seen"]:
         profile["zones_seen"].append(event["zone_id"])
+    if event.get("subzone_id") and event["subzone_id"] not in profile["subzones_seen"]:
+        profile["subzones_seen"].append(event["subzone_id"])
     if event["event_id"] not in profile["event_ids"]:
         profile["event_ids"].append(event["event_id"])
     if event["global_gt_id"] not in profile["gt_ids"]:
@@ -100,6 +109,8 @@ def update_unknown_profile(profile, item, policy=None):
                 "relative_sec": float(event["relative_sec"]),
                 "zone_id": event.get("zone_id", ""),
                 "zone_type": event.get("zone_type", ""),
+                "subzone_id": event.get("subzone_id", ""),
+                "subzone_type": event.get("subzone_type", ""),
                 "quality_score": float(item.get("face_det_score") or 0.0)
                 + (float(cfg["face_quality_area_bonus"]) * float(event.get("bbox_area") or 0.0)),
                 "crop_path": item.get("used_face_crop_path", ""),
@@ -116,6 +127,8 @@ def update_unknown_profile(profile, item, policy=None):
                 "relative_sec": float(event["relative_sec"]),
                 "zone_id": event.get("zone_id", ""),
                 "zone_type": event.get("zone_type", ""),
+                "subzone_id": event.get("subzone_id", ""),
+                "subzone_type": event.get("subzone_type", ""),
                 "quality_score": float(event.get("bbox_area") or 0.0),
                 "crop_path": event.get("best_body_crop", ""),
             },

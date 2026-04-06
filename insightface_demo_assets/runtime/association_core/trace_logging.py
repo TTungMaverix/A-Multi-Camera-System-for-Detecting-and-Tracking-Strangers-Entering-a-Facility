@@ -21,6 +21,8 @@ def summarize_decision_logs(decision_logs):
         "topology_reject_count": 0,
         "zone_reject_count": 0,
         "fallback_without_zone_count": 0,
+        "subzone_reject_count": 0,
+        "fallback_without_subzone_count": 0,
     }
     for row in decision_logs:
         decision = row.get("decision", "")
@@ -35,11 +37,15 @@ def summarize_decision_logs(decision_logs):
             summary["defer_count"] += 1
         if reason_code.startswith("poor_quality"):
             summary["quality_gate_reject_count"] += 1
-        if row.get("candidate_set_before_filter") and not row.get("candidate_set_after_filter"):
-            summary["topology_reject_count"] += 1
         candidate_evaluations = row.get("candidate_evaluations", [])
+        if any((not candidate.get("topology_valid", True)) or (not candidate.get("time_valid", True)) for candidate in candidate_evaluations):
+            summary["topology_reject_count"] += 1
         if any(not candidate.get("zone_valid", True) for candidate in candidate_evaluations):
             summary["zone_reject_count"] += 1
         if row.get("fallback_without_zone") or any(candidate.get("fallback_without_zone", False) for candidate in candidate_evaluations):
             summary["fallback_without_zone_count"] += 1
+        if any(not candidate.get("subzone_valid", True) for candidate in candidate_evaluations):
+            summary["subzone_reject_count"] += 1
+        if row.get("fallback_without_subzone") or any(candidate.get("fallback_without_subzone", False) for candidate in candidate_evaluations):
+            summary["fallback_without_subzone_count"] += 1
     return summary

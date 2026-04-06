@@ -20,6 +20,8 @@ association_policy:
       require_non_negative_delta: true
     zone:
       default_allow_when_missing: true
+    subzone:
+      default_allow_when_missing: true
 
   appearance_evidence:
     prefer_primary_face_when_reliable: true

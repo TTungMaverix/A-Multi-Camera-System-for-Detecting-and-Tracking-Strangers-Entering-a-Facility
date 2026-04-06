@@ -20,6 +20,8 @@ Each JSONL row corresponds to one observation event and includes:
 - `event_type`
 - `zone_id`
 - `zone_type`
+- `subzone_id`
+- `subzone_type`
 - `quality_gate_pass`
 - `quality_gate_reason`
 - `candidate_set_before_filter`
@@ -35,6 +37,11 @@ Each JSONL row corresponds to one observation event and includes:
 - `zone_valid`
 - `zone_reason`
 - `fallback_without_zone`
+- `source_subzone_id`
+- `target_subzone_id`
+- `subzone_valid`
+- `subzone_reason`
+- `fallback_without_subzone`
 - `modality_primary`
 - `modality_secondary`
 - `face_score`
@@ -60,6 +67,8 @@ Each JSONL row corresponds to one observation event and includes:
 - `topology_reject_count`
 - `zone_reject_count`
 - `fallback_without_zone_count`
+- `subzone_reject_count`
+- `fallback_without_subzone_count`
 
 These metrics are also merged into `face_resolution_summary.json` for the mode-B run.
 

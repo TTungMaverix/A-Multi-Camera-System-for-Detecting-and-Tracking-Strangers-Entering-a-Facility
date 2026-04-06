@@ -3,6 +3,7 @@ import numpy as np
 from association_core.config_loader import load_association_policy
 from association_core.decision_policy import assign_model_identities
 from association_core.gallery_lifecycle import create_unknown_profile, expire_profiles, update_unknown_profile
+from association_core.spatial_context import build_event_assignment_audit_row, resolve_spatial_context
 from association_core.topology_filter import build_topology_index
 
 
@@ -44,6 +45,8 @@ def make_transition_topology(
     avg_sec=None,
     allowed_exit_zones=None,
     allowed_entry_zones=None,
+    allowed_exit_subzones=None,
+    allowed_entry_subzones=None,
 ):
     avg = avg_sec if avg_sec is not None else (min_sec + max_sec) / 2.0
     return build_topology_index(
@@ -51,9 +54,11 @@ def make_transition_topology(
             "cameras": {
                 src_camera: {
                     "default_zone_id": allowed_exit_zones[0] if allowed_exit_zones else "",
+                    "default_subzone_id": allowed_exit_subzones[0] if allowed_exit_subzones else "",
                 },
                 dst_camera: {
                     "default_zone_id": allowed_entry_zones[0] if allowed_entry_zones else "",
+                    "default_subzone_id": allowed_entry_subzones[0] if allowed_entry_subzones else "",
                 },
             },
             "transitions": [
@@ -69,13 +74,25 @@ def make_transition_topology(
                     "max_travel_time_sec": max_sec,
                     "allowed_exit_zones": allowed_exit_zones or [],
                     "allowed_entry_zones": allowed_entry_zones or [],
+                    "allowed_exit_subzones": allowed_exit_subzones or [],
+                    "allowed_entry_subzones": allowed_entry_subzones or [],
                 }
             ],
         }
     )
 
 
-def make_item(event_id, camera_id, sec, face=None, body=None, bbox_area=4000, gt_id="1", zone_id=""):
+def make_item(
+    event_id,
+    camera_id,
+    sec,
+    face=None,
+    body=None,
+    bbox_area=4000,
+    gt_id="1",
+    zone_id="",
+    subzone_id="",
+):
     return {
         "event": {
             "event_id": event_id,
@@ -91,6 +108,7 @@ def make_item(event_id, camera_id, sec, face=None, body=None, bbox_area=4000, gt
             "anchor_relative_sec": "",
             "relation_type": "",
             "zone_id": zone_id,
+            "subzone_id": subzone_id,
         },
         "face_embedding": np.asarray(face, dtype=np.float32) if face is not None else None,
         "face_status": "ok" if face is not None else "missing",
@@ -255,13 +273,15 @@ def test_gallery_lifecycle_ttl_and_top_k_refs():
 
 def test_zone_compatible_transition_reuses_same_unknown_id():
     items = [
-        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
-        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="z_entry"),
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id="s_exit"),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="z_entry", subzone_id="s_entry"),
     ]
     topology = make_transition_topology(
         "overlap",
         allowed_exit_zones=["z_exit"],
         allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
         min_sec=0.0,
         max_sec=1.0,
     )
@@ -281,13 +301,15 @@ def test_zone_compatible_transition_reuses_same_unknown_id():
 
 def test_zone_mismatch_blocks_reuse_even_with_good_appearance():
     items = [
-        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
-        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="wrong_zone"),
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id="s_exit"),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="wrong_zone", subzone_id="s_entry"),
     ]
     topology = make_transition_topology(
         "overlap",
         allowed_exit_zones=["z_exit"],
         allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
         min_sec=0.0,
         max_sec=1.0,
     )
@@ -307,13 +329,15 @@ def test_zone_mismatch_blocks_reuse_even_with_good_appearance():
 
 def test_zone_match_but_out_of_time_window_does_not_reuse():
     items = [
-        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
-        make_item("e2", "C2", 4.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_entry"),
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id="s_exit"),
+        make_item("e2", "C2", 4.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_entry", subzone_id="s_entry"),
     ]
     topology = make_transition_topology(
         "sequential",
         allowed_exit_zones=["z_exit"],
         allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
         min_sec=1.0,
         max_sec=2.0,
         avg_sec=1.5,
@@ -334,13 +358,15 @@ def test_zone_match_but_out_of_time_window_does_not_reuse():
 
 def test_weak_link_zone_compatible_reuses_when_appearance_is_strong():
     items = [
-        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit"),
-        make_item("e2", "C2", 1.0, face=[0.98, 0.02], body=[0.98, 0.02], zone_id="z_entry"),
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id="s_exit"),
+        make_item("e2", "C2", 1.0, face=[0.98, 0.02], body=[0.98, 0.02], zone_id="z_entry", subzone_id="s_entry"),
     ]
     topology = make_transition_topology(
         "weak_link",
         allowed_exit_zones=["z_exit"],
         allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
         min_sec=0.0,
         max_sec=2.0,
         avg_sec=1.0,
@@ -381,3 +407,94 @@ def test_missing_zone_metadata_falls_back_safely():
     )
     assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
     assert debug["decision_logs"][1]["fallback_without_zone"] is True
+
+
+def test_subzone_mismatch_blocks_reuse_even_when_zone_matches():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id="s_exit"),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="z_entry", subzone_id="wrong_subzone"),
+    ]
+    topology = make_transition_topology(
+        "overlap",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
+        min_sec=0.0,
+        max_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["candidate_evaluations"][0]["subzone_valid"] is False
+    assert debug["decision_logs"][1]["reason_code"] == "subzone_entry_reject"
+
+
+def test_missing_subzone_metadata_falls_back_safely():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0], zone_id="z_exit", subzone_id=""),
+        make_item("e2", "C2", 0.2, face=[0.99, 0.01], body=[0.99, 0.01], zone_id="z_entry", subzone_id=""),
+    ]
+    topology = make_transition_topology(
+        "overlap",
+        allowed_exit_zones=["z_exit"],
+        allowed_entry_zones=["z_entry"],
+        allowed_exit_subzones=["s_exit"],
+        allowed_entry_subzones=["s_entry"],
+        min_sec=0.0,
+        max_sec=1.0,
+    )
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        topology,
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["fallback_without_subzone"] is True
+
+
+def test_event_generation_audit_records_subzone_assignment():
+    transition_map = {
+        "cameras": {
+            "C1": {
+                "default_zone_id": "z1",
+                "default_subzone_id": "s1",
+                "zones": [
+                    {"zone_id": "z1", "zone_type": "entry", "polygon": [[0, 0], [10, 0], [10, 10], [0, 10]], "priority": 1}
+                ],
+                "subzones": [
+                    {
+                        "subzone_id": "s1",
+                        "parent_zone_id": "z1",
+                        "subzone_type": "entry",
+                        "polygon": [[0, 0], [5, 0], [5, 10], [0, 10]],
+                        "priority": 100,
+                    }
+                ],
+            }
+        }
+    }
+    spatial = resolve_spatial_context("C1", 2.0, 4.0, transition_map)
+    event = {
+        "event_id": "evt_1",
+        "event_type": "ENTRY_IN",
+        "camera_id": "C1",
+        "relative_sec": 1.2,
+        **spatial,
+    }
+    row = build_event_assignment_audit_row("mode_b_true_assoc", event)
+    assert row["zone_id"] == "z1"
+    assert row["subzone_id"] == "s1"
+    assert row["subzone_type"] == "entry"
+    assert row["matched_subzone_region_id"] == "s1"

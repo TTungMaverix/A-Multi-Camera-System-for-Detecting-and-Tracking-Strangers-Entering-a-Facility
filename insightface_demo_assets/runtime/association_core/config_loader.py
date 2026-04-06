@@ -31,6 +31,9 @@ DEFAULT_ASSOCIATION_POLICY = {
         "zone": {
             "default_allow_when_missing": True,
         },
+        "subzone": {
+            "default_allow_when_missing": True,
+        },
     },
     "appearance_evidence": {
         "prefer_primary_face_when_reliable": True,

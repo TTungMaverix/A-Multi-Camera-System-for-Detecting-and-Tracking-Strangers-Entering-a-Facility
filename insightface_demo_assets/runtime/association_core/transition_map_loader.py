@@ -31,12 +31,14 @@ def _camera_zone_from_wildtrack(camera_id, camera_cfg):
     polygon = camera_cfg.get("entry_roi") or camera_cfg.get("track_roi") or []
     role = camera_cfg.get("role", "")
     default_zone_id = f"{camera_id.lower()}_{'entry' if role == 'entry' else 'track'}_default"
+    default_subzone_id = f"{default_zone_id}_subzone_default"
     zone_type = "entry" if role == "entry" else "transit"
     return {
         "camera_id": camera_id,
         "role": role,
         "description": camera_cfg.get("description", ""),
         "default_zone_id": default_zone_id,
+        "default_subzone_id": default_subzone_id,
         "entry_zones": [default_zone_id] if role == "entry" else [],
         "exit_zones": [default_zone_id],
         "zones": [
@@ -46,6 +48,18 @@ def _camera_zone_from_wildtrack(camera_id, camera_cfg):
                 "polygon": polygon,
                 "placeholder": False,
                 "description": f"Derived from {'entry_roi' if camera_cfg.get('entry_roi') else 'track_roi'} in wildtrack_demo_config.json",
+            }
+        ],
+        "subzones": [
+            {
+                "subzone_id": default_subzone_id,
+                "parent_zone_id": default_zone_id,
+                "subzone_type": zone_type,
+                "polygon": polygon,
+                "priority": 10,
+                "placeholder": True,
+                "allowed_transitions": [],
+                "description": "Fallback placeholder subzone derived from the default camera ROI.",
             }
         ],
     }
@@ -77,6 +91,8 @@ def build_default_transition_map(wildtrack_config):
                     "max_travel_time_sec": max_sec,
                     "allowed_exit_zones": [src_default_zone] if src_default_zone else [],
                     "allowed_entry_zones": [dst_default_zone] if dst_default_zone else [],
+                    "allowed_exit_subzones": [],
+                    "allowed_entry_subzones": [],
                     "placeholder": False,
                     "description": "Derived from camera_topology in wildtrack_demo_config.json",
                 }
@@ -85,6 +101,67 @@ def build_default_transition_map(wildtrack_config):
         "cameras": cameras,
         "transitions": transitions,
     }
+
+
+def _normalize_camera(camera_id, camera_cfg):
+    normalized = deepcopy(camera_cfg or {})
+    normalized["camera_id"] = normalized.get("camera_id", camera_id)
+    zones = normalized.get("zones", []) or []
+    if zones and not normalized.get("default_zone_id"):
+        normalized["default_zone_id"] = zones[0].get("zone_id", "")
+    subzones = normalized.get("subzones", []) or []
+    if not subzones and normalized.get("default_zone_id"):
+        default_zone_id = normalized["default_zone_id"]
+        source_zone = next((zone for zone in zones if zone.get("zone_id") == default_zone_id), None) or (zones[0] if zones else {})
+        subzones = [
+            {
+                "subzone_id": f"{default_zone_id}_subzone_default",
+                "parent_zone_id": default_zone_id,
+                "subzone_type": source_zone.get("zone_type", ""),
+                "polygon": source_zone.get("polygon", []),
+                "priority": 10,
+                "placeholder": True,
+                "allowed_transitions": [],
+                "description": "Auto-generated fallback subzone from default zone.",
+            }
+        ]
+    for index, subzone in enumerate(subzones):
+        subzone.setdefault("subzone_id", f"{camera_id.lower()}_subzone_{index:02d}")
+        subzone.setdefault("parent_zone_id", normalized.get("default_zone_id", ""))
+        subzone.setdefault("subzone_type", "")
+        subzone.setdefault("polygon", [])
+        subzone.setdefault("priority", 0)
+        subzone.setdefault("allowed_transitions", [])
+        subzone.setdefault("placeholder", False)
+        subzone.setdefault("description", "")
+    subzones = sorted(subzones, key=lambda item: int(item.get("priority", 0)), reverse=True)
+    normalized["subzones"] = subzones
+    if subzones and not normalized.get("default_subzone_id"):
+        normalized["default_subzone_id"] = subzones[0].get("subzone_id", "")
+    normalized.setdefault("entry_zones", [])
+    normalized.setdefault("exit_zones", [])
+    return normalized
+
+
+def _normalize_transition_map(transition_map):
+    normalized = deepcopy(transition_map)
+    cameras = {}
+    for camera_id, camera_cfg in (normalized.get("cameras", {}) or {}).items():
+        cameras[camera_id] = _normalize_camera(camera_id, camera_cfg)
+    normalized["cameras"] = cameras
+    transitions = []
+    for info in normalized.get("transitions", []) or []:
+        item = deepcopy(info)
+        item.setdefault("allowed_exit_zones", [])
+        item.setdefault("allowed_entry_zones", [])
+        item.setdefault("allowed_exit_subzones", [])
+        item.setdefault("allowed_entry_subzones", [])
+        item.setdefault("allowed_relation_types", [item.get("relation_type", "weak_link")])
+        item.setdefault("weak_link_support", item.get("relation_type", "weak_link") == "weak_link")
+        item.setdefault("description", "")
+        transitions.append(item)
+    normalized["transitions"] = transitions
+    return normalized
 
 
 def _candidate_paths(config_path):
@@ -114,7 +191,7 @@ def load_camera_transition_map(wildtrack_config, config_path=None, base_dir=None
         source_path = candidate_path
         break
 
-    merged = _deep_merge(default_map, loaded)
+    merged = _normalize_transition_map(_deep_merge(default_map, loaded))
     runtime_info = {
         "source_path": str(source_path) if source_path else "",
         "used_builtin_defaults_only": source_path is None,
@@ -122,5 +199,6 @@ def load_camera_transition_map(wildtrack_config, config_path=None, base_dir=None
         "defaulted_keys": _flatten_missing_keys(default_map, loaded),
         "camera_count": len(merged.get("cameras", {})),
         "transition_count": len(merged.get("transitions", [])),
+        "subzone_count": sum(len(camera_cfg.get("subzones", []) or []) for camera_cfg in (merged.get("cameras", {}) or {}).values()),
     }
     return merged, runtime_info
