@@ -1,18 +1,10 @@
 import numpy as np
 
-
-DEFAULT_GALLERY_POLICY = {
-    "top_k_face_refs": 3,
-    "top_k_body_refs": 5,
-    "ttl_sec": 12.0,
-}
+from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
 
 
 def _merge_policy(policy):
-    merged = dict(DEFAULT_GALLERY_POLICY)
-    if policy:
-        merged.update(policy)
-    return merged
+    return deep_merge(DEFAULT_ASSOCIATION_POLICY["gallery_lifecycle"], policy or {})
 
 
 def _normalize(vec):
@@ -100,7 +92,8 @@ def update_unknown_profile(profile, item, policy=None):
                 "event_id": event["event_id"],
                 "camera_id": event["camera_id"],
                 "relative_sec": float(event["relative_sec"]),
-                "quality_score": float(item.get("face_det_score") or 0.0) + (0.001 * float(event.get("bbox_area") or 0.0)),
+                "quality_score": float(item.get("face_det_score") or 0.0)
+                + (float(cfg["face_quality_area_bonus"]) * float(event.get("bbox_area") or 0.0)),
                 "crop_path": item.get("used_face_crop_path", ""),
             },
             profile["top_k_face"],

@@ -20,7 +20,10 @@ from association_core import (
     build_topology_index as core_build_topology_index,
     create_unknown_profile as core_create_unknown_profile,
     evaluate_profile_candidate as core_evaluate_profile_candidate,
+    load_association_policy as core_load_association_policy,
+    summarize_decision_logs as core_summarize_decision_logs,
     update_unknown_profile as core_update_unknown_profile,
+    write_jsonl as core_write_jsonl,
 )
 
 CONFIG_DEFAULT = Path(__file__).with_name("face_demo_config.json")
@@ -1031,8 +1034,20 @@ def evaluate_profile_candidate(item, profile, topology):
     return core_evaluate_profile_candidate(item, profile, topology)
 
 
-def assign_model_identities(analyzed_events, identity_means, topology, unknown_prefix, unknown_start):
-    return core_assign_model_identities(analyzed_events, identity_means, topology, unknown_prefix, unknown_start)
+def load_association_policy(config_path=None, base_dir=None):
+    return core_load_association_policy(config_path=config_path, base_dir=base_dir)
+
+
+def assign_model_identities(analyzed_events, identity_means, topology, unknown_prefix, unknown_start, policy=None, return_debug_bundle=False):
+    return core_assign_model_identities(
+        analyzed_events,
+        identity_means,
+        topology,
+        unknown_prefix,
+        unknown_start,
+        policy=policy,
+        return_debug_bundle=return_debug_bundle,
+    )
 
 
 def build_unknown_profile_rows(profiles):
@@ -1111,9 +1126,10 @@ def build_stream_timeline_from_events(track_rows, resolved_rows):
     return timeline
 
 
-def summarize_mode(resolved_rows, stage_b_rows, stage_a, gt_bridge_active, true_model_based_reuse_count):
+def summarize_mode(resolved_rows, stage_b_rows, stage_a, gt_bridge_active, true_model_based_reuse_count, association_summary=None):
     unknown_rows = [row for row in resolved_rows if row["identity_status"] == "unknown"]
     known_rows = [row for row in resolved_rows if row["identity_status"] == "known"]
+    deferred_rows = [row for row in resolved_rows if row["identity_status"] == "deferred"]
     unknown_groups = defaultdict(list)
     for row in unknown_rows:
         unknown_groups[row["unknown_global_id"]].append(row)
@@ -1127,10 +1143,11 @@ def summarize_mode(resolved_rows, stage_b_rows, stage_a, gt_bridge_active, true_
         for gt_id in {row["global_gt_id"] for row in resolved_rows}
         if len({row["camera_id"] for row in resolved_rows if row["global_gt_id"] == gt_id}) > 1
     )
-    return {
+    metrics = {
         "total_event_count": len(resolved_rows),
         "known_event_count": len(known_rows),
         "unknown_event_count": len(unknown_rows),
+        "deferred_event_count": len(deferred_rows),
         "unique_known_id_count": len({row["matched_known_id"] for row in known_rows if row["matched_known_id"]}),
         "unique_unknown_id_count": len({row["unknown_global_id"] for row in unknown_rows if row["unknown_global_id"]}),
         "reused_unknown_id_count": len(reused_unknown_ids),
@@ -1141,6 +1158,9 @@ def summarize_mode(resolved_rows, stage_b_rows, stage_a, gt_bridge_active, true_
         "true_model_based_reuse_count": true_model_based_reuse_count,
         "stage_b_created_event_count": sum(1 for row in stage_b_rows if row["candidate_event_created"]),
     }
+    if association_summary:
+        metrics.update(association_summary)
+    return metrics
 
 
 def build_coverage_and_failures(stage_a_rows, stage_b_baseline, stage_b_fixed, resolved_baseline, resolved_fixed):
@@ -1358,6 +1378,7 @@ def render_report(report_path: Path, mode_a_metrics, mode_b_metrics, stage_a, ro
 def main(config_path: Path):
     config = load_json(config_path)
     base_dir = config_path.parents[1]
+    association_policy_config = config.get("association_policy_config", "")
     queue_csv = Path(config["wildtrack_identity_queue_csv"])
     wildtrack_config_path = queue_csv.parents[2] / "wildtrack_demo_config.json"
     wildtrack_config = load_json(wildtrack_config_path)
@@ -1387,10 +1408,18 @@ def main(config_path: Path):
     audit_gt_split_merge_csv = runtime_dir / "audit_gt_split_merge.csv"
     audit_expected_reid_failures_csv = runtime_dir / "audit_expected_reid_failures.csv"
     audit_report_md = runtime_dir / "audit_report.md"
+    association_logs_dir = runtime_dir / "association_logs"
+    association_decisions_jsonl = association_logs_dir / "association_decisions.jsonl"
+    association_summary_json = association_logs_dir / "association_summary.json"
+    association_policy_runtime_json = association_logs_dir / "association_policy_runtime.json"
 
     track_rows = parse_track_rows(read_csv(tracks_csv))
     queue_rows = read_csv(queue_csv)
     base_manifest_rows = read_csv(known_manifest_csv)
+    association_policy, association_policy_runtime = load_association_policy(
+        config_path=association_policy_config,
+        base_dir=config_path.parent,
+    )
 
     app = FaceAnalysis(
         name=config["insightface_runtime"].get("recommended_model_name", "buffalo_l"),
@@ -1449,13 +1478,17 @@ def main(config_path: Path):
     )
     write_csv(fixed_event_csv, fixed_events, fieldnames_for_rows(fixed_events, ["event_id"]))
     analyzed_fixed = analyze_event_crops(app, fixed_events)
-    mode_b_resolved_rows, profiles, association_trace_rows = assign_model_identities(
+    mode_b_resolved_rows, profiles, association_trace_rows, association_debug = assign_model_identities(
         analyzed_fixed,
         identity_means,
         topology,
         unknown_prefix=config["unknown_handling"].get("seed_prefix", "UNK"),
         unknown_start=int(config["unknown_handling"].get("start_index", 1)),
+        policy=association_policy,
+        return_debug_bundle=True,
     )
+    association_decision_logs = association_debug["decision_logs"]
+    association_summary = core_summarize_decision_logs(association_decision_logs)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
 
@@ -1486,6 +1519,7 @@ def main(config_path: Path):
         stage_a,
         gt_bridge_active=False,
         true_model_based_reuse_count=0,
+        association_summary=association_summary,
     )
     mode_b_metrics = dict(temp_mode_b_metrics)
     mode_b_metrics["true_model_based_reuse_count"] = sum(
@@ -1531,6 +1565,22 @@ def main(config_path: Path):
         association_trace_rows,
         fieldnames_for_rows(association_trace_rows, ["run_mode"]),
     )
+    core_write_jsonl(association_decisions_jsonl, association_decision_logs)
+    save_json(
+        association_summary_json,
+        {
+            "metrics": association_summary,
+            "policy_source": association_policy_runtime,
+            "log_path": str(association_decisions_jsonl),
+        },
+    )
+    save_json(
+        association_policy_runtime_json,
+        {
+            "policy_runtime": association_policy_runtime,
+            "policy": association_policy,
+        },
+    )
     write_csv(audit_overlap_cases_csv, overlap_rows, fieldnames_for_rows(overlap_rows, ["global_gt_id"]))
     write_csv(audit_gt_split_merge_csv, split_merge_rows, fieldnames_for_rows(split_merge_rows, ["run_mode"]))
     write_csv(
@@ -1556,6 +1606,7 @@ def main(config_path: Path):
             "total_event_count_delta": mode_b_metrics["total_event_count"] - mode_a_metrics["total_event_count"],
             "resolved_multicam_gt_count_delta": mode_b_metrics["resolved_multicam_gt_count"] - mode_a_metrics["resolved_multicam_gt_count"],
         },
+        "association_policy_runtime": association_policy_runtime,
     }
     save_json(audit_stage_counts_json, stage_counts)
 
@@ -1565,6 +1616,12 @@ def main(config_path: Path):
         "auto_enrolled_demo_identities": [row["identity_id"] for row in auto_enrolled],
         "baseline_stream_unification_basis": "wildtrack_global_gt_id_demo_bridge",
         "mode_b_stream_unification_basis": "per_camera_event_projection_without_gt_crossstream_bridge",
+        "association_policy_runtime": association_policy_runtime,
+        "association_logs": {
+            "decision_log_jsonl": str(association_decisions_jsonl),
+            "summary_json": str(association_summary_json),
+            "policy_runtime_json": str(association_policy_runtime_json),
+        },
         "notes": [
             "Mode A reproduces the previous GT-grouped behavior for audit.",
             "Mode B disables GT bridge for cross-stream identity propagation and performs real unknown-gallery association.",
@@ -1572,10 +1629,18 @@ def main(config_path: Path):
     }
     save_json(summary_json, summary)
 
+    print(
+        "ASSOCIATION_POLICY_SOURCE="
+        + (association_policy_runtime["source_path"] or "built_in_defaults")
+    )
     print(f"TOTAL_EVENTS={mode_b_metrics['total_event_count']}")
     print(f"UNKNOWN_EVENTS={mode_b_metrics['unknown_event_count']}")
     print(f"UNIQUE_UNKNOWN_IDS={mode_b_metrics['unique_unknown_id_count']}")
     print(f"REUSED_UNKNOWN_IDS={mode_b_metrics['reused_unknown_id_count']}")
+    print(f"DEFER_COUNT={mode_b_metrics.get('defer_count', 0)}")
+    print(f"NEW_UNKNOWN_COUNT={mode_b_metrics.get('new_unknown_count', 0)}")
+    print(f"UNKNOWN_REUSE_COUNT={mode_b_metrics.get('unknown_reuse_count', 0)}")
+    print(f"KNOWN_ACCEPT_COUNT={mode_b_metrics.get('known_accept_count', 0)}")
     print(f"TIMELINE_MULTICAM_GT={mode_b_metrics['timeline_multicam_gt_count']}")
     print(f"RESOLVED_MULTICAM_GT={mode_b_metrics['resolved_multicam_gt_count']}")
     print(f"EXPECTED_REID_CANDIDATES={mode_b_metrics['expected_reid_candidate_count']}")

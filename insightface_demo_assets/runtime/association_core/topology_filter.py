@@ -1,11 +1,10 @@
 from collections import defaultdict
 
+from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
 
-RELATION_PRIOR = {
-    "overlap": 1.0,
-    "sequential": 0.85,
-    "weak_link": 0.65,
-}
+
+def _merge_policy(policy):
+    return deep_merge(DEFAULT_ASSOCIATION_POLICY["topology_filter"], policy or {})
 
 
 def build_topology_index(config):
@@ -49,13 +48,13 @@ def _profile_reference_points(profile):
     return list(merged.values())
 
 
-def _evaluate_zone_compatibility(event, profile, relation):
+def _evaluate_zone_compatibility(event, profile, relation, policy):
     current_zone = event.get("zone_id", "") or ""
     profile_zones = set(profile.get("zones_seen", []) or [])
     allowed_exit = set(relation.get("allowed_exit_zones", []) or [])
     allowed_entry = set(relation.get("allowed_entry_zones", []) or [])
 
-    if not current_zone and not profile_zones and not allowed_exit and not allowed_entry:
+    if not current_zone and not profile_zones and not allowed_exit and not allowed_entry and policy["zone"]["default_allow_when_missing"]:
         return {
             "zone_allowed": True,
             "zone_score": 1.0,
@@ -80,58 +79,60 @@ def _evaluate_zone_compatibility(event, profile, relation):
     }
 
 
-def _evaluate_time_compatibility(delta_sec, relation):
+def _evaluate_time_compatibility(delta_sec, relation, policy):
+    priors = policy["relation_priors"]
     relation_type = relation["relation_type"]
     if relation_type == "overlap":
-        max_sec = max(0.5, float(relation["max_travel_time"]))
+        max_sec = max(float(policy["overlap"]["max_time_floor_sec"]), float(relation["max_travel_time"]))
         if abs(delta_sec) > max_sec:
             return {
                 "topology_allowed": False,
                 "time_score": 0.0,
-                "topology_score": RELATION_PRIOR["overlap"],
+                "topology_score": priors["overlap"],
                 "reason_code": "overlap_window_reject",
             }
         return {
             "topology_allowed": True,
             "time_score": max(0.0, 1.0 - (abs(delta_sec) / max_sec)),
-            "topology_score": RELATION_PRIOR["overlap"],
+            "topology_score": priors["overlap"],
             "reason_code": "topology_time_ok",
         }
     if relation_type == "sequential":
         min_sec = float(relation["min_travel_time"])
-        max_sec = max(min_sec + 0.5, float(relation["max_travel_time"]))
+        max_sec = max(min_sec + float(policy["sequential"]["min_window_span_sec"]), float(relation["max_travel_time"]))
         if delta_sec < min_sec or delta_sec > max_sec:
             return {
                 "topology_allowed": False,
                 "time_score": 0.0,
-                "topology_score": RELATION_PRIOR["sequential"],
+                "topology_score": priors["sequential"],
                 "reason_code": "sequential_window_reject",
             }
-        span = max(0.5, max_sec - min_sec)
+        span = max(float(policy["sequential"]["min_window_span_sec"]), max_sec - min_sec)
         center = float(relation["avg_travel_time"])
         return {
             "topology_allowed": True,
             "time_score": max(0.0, 1.0 - (abs(delta_sec - center) / span)),
-            "topology_score": RELATION_PRIOR["sequential"],
+            "topology_score": priors["sequential"],
             "reason_code": "topology_time_ok",
         }
-    max_sec = max(1.0, float(relation.get("max_travel_time", 2.0)))
-    if delta_sec < 0.0 or delta_sec > max_sec:
+    max_sec = max(float(policy["weak_link"]["fallback_max_travel_time_sec"]), float(relation.get("max_travel_time", 2.0)))
+    if (policy["weak_link"]["require_non_negative_delta"] and delta_sec < 0.0) or delta_sec > max_sec:
         return {
             "topology_allowed": False,
             "time_score": 0.0,
-            "topology_score": RELATION_PRIOR["weak_link"],
+            "topology_score": priors["weak_link"],
             "reason_code": "weak_link_window_reject",
         }
     return {
         "topology_allowed": True,
         "time_score": max(0.0, 1.0 - (delta_sec / max_sec)),
-        "topology_score": RELATION_PRIOR["weak_link"],
+        "topology_score": priors["weak_link"],
         "reason_code": "topology_time_ok",
     }
 
 
-def evaluate_profile_topology(item, profile, topology):
+def evaluate_profile_topology(item, profile, topology, policy=None):
+    cfg = _merge_policy(policy)
     event = item["event"]
     current_camera = event["camera_id"]
     current_sec = float(event["relative_sec"])
@@ -164,8 +165,8 @@ def evaluate_profile_topology(item, profile, topology):
         if relation is None:
             continue
         delta_sec = current_sec - prev_sec
-        time_eval = _evaluate_time_compatibility(delta_sec, relation)
-        zone_eval = _evaluate_zone_compatibility(event, profile, relation)
+        time_eval = _evaluate_time_compatibility(delta_sec, relation, cfg)
+        zone_eval = _evaluate_zone_compatibility(event, profile, relation, cfg)
         allowed = time_eval["topology_allowed"] and zone_eval["zone_allowed"]
         candidate = {
             "candidate_unknown_global_id": profile["unknown_global_id"],

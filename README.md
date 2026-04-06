@@ -44,12 +44,20 @@ The association layer must support:
 
 and it must emit decision logs with `reason_code`.
 
+Additional docs:
+
+- [docs/association_runtime_config.md](docs/association_runtime_config.md)
+- [docs/association_trace_logging.md](docs/association_trace_logging.md)
+
 ## Phase Status
 
 Current code status:
 
 - `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the runnable compatibility entrypoint
 - association core logic now lives under `insightface_demo_assets/runtime/association_core/`
+- association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
+- association decision logs are exported under `insightface_demo_assets/runtime/association_logs/`
+- scenario tests for association core live under `tests/`
 - this phase refactors only the association core
 - ingest, detector, tracker, dashboard, and the demo command are intentionally kept stable in this phase
 
@@ -93,6 +101,15 @@ Main outputs:
 - `insightface_demo_assets/runtime/face_resolution_summary.json`
 - `insightface_demo_assets/runtime/stream_identity_timeline.csv`
 - `insightface_demo_assets/runtime/audit_report.md`
+- `insightface_demo_assets/runtime/association_logs/association_decisions.jsonl`
+- `insightface_demo_assets/runtime/association_logs/association_summary.json`
+
+Run the lightweight association tests:
+
+```cmd
+cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests\test_association_core.py
+```
 
 ## Current Repository Layout
 
@@ -115,11 +132,19 @@ Main outputs:
 |     |  |- topology_filter.py
 |     |  |- appearance_evidence.py
 |     |  |- gallery_lifecycle.py
-|     |  `- decision_policy.py
+|     |  |- decision_policy.py
+|     |  |- config_loader.py
+|     |  `- trace_logging.py
+|     |- config/
+|     |  `- association_policy.example.yaml
 |     |- face_demo_config.json
 |     |- run_face_resolution_demo.py
 |     |- audit_*.csv/json/md
 |     `- resolved_events_mode_*.csv
+|- tests/
+|  |- conftest.py
+|  `- test_association_core.py
+|- requirements-dev.txt
 |- Wildtrack/
 |- PAPERS/
 |- stranger_demo_bootstrap/
@@ -130,6 +155,8 @@ Notes:
 
 - `run_face_resolution_demo.py` is still the public entrypoint for the demo phase.
 - `association_core/` is the new paper-grounded association package used under that entrypoint.
+- `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
+- `runtime/association_logs/` is generated at run time and is intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.
 
@@ -145,8 +172,9 @@ Near-term implementation should proceed in small runnable phases:
    - `appearance_evidence`
    - `gallery_lifecycle`
    - `decision_policy`
-4. keep README and docs synchronized after each phase
-5. add RTSP/live only after the file-based pipeline is stable
+4. externalize thresholds, margins, TTL, and defer policy into config files
+5. keep README and docs synchronized after each phase
+6. add RTSP/live only after the file-based pipeline is stable
 
 ## Dependencies
 

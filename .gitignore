@@ -77,3 +77,15 @@ wildtrack_roi/
 /Dataset/
 /insightface_runtime_src/
 **/__pycache__/
+
+# Demo runtime outputs
+/insightface_demo_assets/runtime/association_logs/
+/insightface_demo_assets/runtime/generated_event_crops/
+/insightface_demo_assets/runtime/generated_candidate_events_mode_b.csv
+/insightface_demo_assets/runtime/resolved_events_mode_a_baseline.csv
+/insightface_demo_assets/runtime/resolved_events_mode_b_true_assoc.csv
+/insightface_demo_assets/runtime/stream_identity_timeline_mode_a.csv
+/insightface_demo_assets/runtime/stream_identity_timeline_mode_b.csv
+/insightface_demo_assets/runtime/audit_*.csv
+/insightface_demo_assets/runtime/audit_*.json
+/insightface_demo_assets/runtime/audit_*.md

@@ -1,63 +1,14 @@
 import json
-from copy import deepcopy
 
 from .appearance_evidence import cosine_similarity, evaluate_appearance_evidence
+from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
 from .gallery_lifecycle import create_unknown_profile, expire_profiles, update_unknown_profile
 from .quality_gate import evaluate_quality_gate
 from .topology_filter import evaluate_profile_topology
 
-DEFAULT_ASSOCIATION_POLICY = {
-    "quality_gate": {},
-    "gallery": {
-        "top_k_face_refs": 3,
-        "top_k_body_refs": 5,
-        "ttl_sec": 12.0,
-    },
-    "known": {
-        "accept_threshold": 0.65,
-        "margin_threshold": 0.02,
-    },
-    "unknown": {
-        "margin_by_relation": {
-            "overlap": 0.015,
-            "sequential": 0.02,
-            "weak_link": 0.04,
-            "camera_already_seen": 1.0,
-            "no_link": 1.0,
-        },
-        "thresholds": {
-            "overlap": {
-                "face_primary": 0.18,
-                "face_secondary": 0.30,
-                "body_primary": 0.60,
-                "body_secondary": 0.18,
-            },
-            "sequential": {
-                "face_primary": 0.20,
-                "face_secondary": 0.35,
-                "body_primary": 0.58,
-                "body_secondary": 0.18,
-            },
-            "weak_link": {
-                "face_primary": 0.24,
-                "face_secondary": 0.40,
-                "body_primary": 0.64,
-                "body_secondary": 0.22,
-            },
-        },
-        "defer_quality_reliability_max": 0.35,
-    },
-}
 
-
-def _deep_update(base, updates):
-    merged = deepcopy(base)
-    for key, value in (updates or {}).items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_update(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
+def _merge_policy(policy):
+    return deep_merge(DEFAULT_ASSOCIATION_POLICY, policy or {})
 
 
 def _sorted_known_candidates(face_embedding, identity_means):
@@ -78,11 +29,22 @@ def best_known_match(face_embedding, identity_means):
 def _known_acceptance(item, identity_means, policy):
     candidates = _sorted_known_candidates(item.get("face_embedding"), identity_means)
     if not candidates:
-        return None, {"reason_code": "no_known_face_embedding", "candidates": []}
+        return None, {
+            "reason_code": "no_known_face_embedding",
+            "candidates": [],
+            "thresholds_used": {
+                "known_accept_threshold": float(policy["known_accept_threshold"]),
+                "known_margin_threshold": float(policy["known_margin_threshold"]),
+            },
+        }
     best = candidates[0]
     second = candidates[1] if len(candidates) > 1 else {"identity_id": "", "score": 0.0}
     margin = best["score"] - second["score"]
-    if best["score"] >= float(policy["accept_threshold"]) and margin >= float(policy["margin_threshold"]):
+    thresholds = {
+        "known_accept_threshold": float(policy["known_accept_threshold"]),
+        "known_margin_threshold": float(policy["known_margin_threshold"]),
+    }
+    if best["score"] >= thresholds["known_accept_threshold"] and margin >= thresholds["known_margin_threshold"]:
         return (
             {
                 "identity_id": best["identity_id"],
@@ -90,7 +52,7 @@ def _known_acceptance(item, identity_means, policy):
                 "margin": margin,
                 "reason_code": "known_accept",
             },
-            {"reason_code": "known_accept", "candidates": candidates[:5]},
+            {"reason_code": "known_accept", "candidates": candidates[:5], "thresholds_used": thresholds},
         )
     return None, {
         "reason_code": "known_reject_open_set_fallback",
@@ -98,11 +60,12 @@ def _known_acceptance(item, identity_means, policy):
         "best_score": best["score"],
         "second_score": second["score"],
         "margin": margin,
+        "thresholds_used": thresholds,
     }
 
 
 def _relation_thresholds(policy, relation_type):
-    thresholds = policy["thresholds"]
+    thresholds = policy["relation_thresholds"]
     if relation_type in thresholds:
         return thresholds[relation_type]
     return thresholds["weak_link"]
@@ -110,27 +73,40 @@ def _relation_thresholds(policy, relation_type):
 
 def _candidate_acceptance(candidate, policy):
     if not candidate["quality_gate_pass"]:
-        return False, "poor_quality"
+        return False, "poor_quality", {}
     if not candidate["topology_allowed"]:
-        return False, candidate["candidate_reason"] or "topology_or_time_reject"
+        return False, candidate["candidate_reason"] or "topology_or_time_reject", {}
     if not candidate["zone_allowed"]:
-        return False, candidate["candidate_reason"] or "zone_reject"
+        return False, candidate["candidate_reason"] or "zone_reject", {}
     if candidate["appearance_primary"] <= 0.0:
-        return False, "appearance_missing"
+        return False, "appearance_missing", {}
 
     thresholds = _relation_thresholds(policy, candidate["relation_type"])
+    primary_floor = float(policy["unknown_reuse_threshold"])
+    minimum_evidence = policy["minimum_evidence"]
     if candidate["primary_modality"] == "face":
-        primary_threshold = float(thresholds["face_primary"])
+        primary_threshold = max(primary_floor, float(thresholds["face_primary"]))
         secondary_threshold = float(thresholds["face_secondary"])
     else:
-        primary_threshold = float(thresholds["body_primary"])
+        primary_threshold = max(primary_floor, float(thresholds["body_primary"]))
         secondary_threshold = float(thresholds["body_secondary"])
+    threshold_info = {
+        "unknown_reuse_threshold": primary_floor,
+        "relation_type": candidate["relation_type"],
+        "primary_threshold": primary_threshold,
+        "secondary_threshold": secondary_threshold,
+        "minimum_evidence": minimum_evidence,
+    }
 
     if candidate["appearance_primary"] < primary_threshold:
-        return False, "below_primary_threshold"
-    if candidate["appearance_secondary_available"] and candidate["appearance_secondary"] < secondary_threshold:
-        return False, "below_secondary_threshold"
-    return True, "candidate_threshold_pass"
+        return False, "below_primary_threshold", threshold_info
+    if (
+        minimum_evidence["require_secondary_when_available"]
+        and candidate["appearance_secondary_available"]
+        and candidate["appearance_secondary"] < secondary_threshold
+    ):
+        return False, "below_secondary_threshold", threshold_info
+    return True, "candidate_threshold_pass", threshold_info
 
 
 def _ranking_key(candidate):
@@ -151,9 +127,10 @@ def _primary_margin(top1, top2):
 
 
 def evaluate_profile_candidate(item, profile, topology, policy=None):
-    merged_policy = _deep_update(DEFAULT_ASSOCIATION_POLICY, policy or {})
+    merged_policy = _merge_policy(policy)
     quality = evaluate_quality_gate(item, merged_policy["quality_gate"])
-    topology_eval = evaluate_profile_topology(item, profile, topology)
+    quality["appearance_evidence_policy"] = merged_policy["appearance_evidence"]
+    topology_eval = evaluate_profile_topology(item, profile, topology, merged_policy["topology_filter"])
     appearance = evaluate_appearance_evidence(item, profile, quality)
     candidate = {
         **topology_eval,
@@ -165,7 +142,8 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "body_quality": quality["body_quality"],
         "face_available": appearance["face_available"],
         "body_available": appearance["body_available"],
-        "appearance_secondary_available": appearance["appearance_secondary"] > 0.0,
+        "appearance_secondary_available": appearance["appearance_secondary"]
+        > float(merged_policy["appearance_evidence"]["secondary_available_min_score"]),
         "final_total_score": appearance["appearance_primary"],
         "reason_code": topology_eval["candidate_reason"] if not topology_eval["topology_allowed"] else appearance["evidence_reason"],
     }
@@ -231,19 +209,113 @@ def _build_trace_row(event, candidate, decision_reason, reused_old_id=False, cre
     }
 
 
-def assign_model_identities(analyzed_events, identity_means, topology, unknown_prefix, unknown_start, policy=None):
-    merged_policy = _deep_update(DEFAULT_ASSOCIATION_POLICY, policy or {})
+def _build_decision_log(
+    event,
+    quality,
+    candidate_scores,
+    decision,
+    reason_code,
+    selected_candidate,
+    gallery_id_before,
+    gallery_id_after,
+    thresholds_used,
+    margin_used,
+):
+    candidate_set_before_filter = [candidate["candidate_unknown_global_id"] for candidate in candidate_scores if candidate["candidate_unknown_global_id"]]
+    candidate_set_after_filter = [
+        candidate["candidate_unknown_global_id"]
+        for candidate in candidate_scores
+        if candidate["topology_allowed"] and candidate["zone_allowed"]
+    ]
+    top_candidate = selected_candidate or (candidate_scores[0] if candidate_scores else None)
+    candidate_details = []
+    for candidate in candidate_scores:
+        candidate_details.append(
+            {
+                "candidate_unknown_global_id": candidate["candidate_unknown_global_id"],
+                "relation_type": candidate["relation_type"],
+                "topology_allowed": candidate["topology_allowed"],
+                "zone_allowed": candidate["zone_allowed"],
+                "candidate_reason": candidate["candidate_reason"],
+                "acceptance_reason": candidate.get("acceptance_reason", ""),
+                "reason_code": candidate.get("reason_code", ""),
+                "quality_gate_pass": candidate["quality_gate_pass"],
+                "face_score": candidate["face_score"],
+                "body_score": candidate["body_score"],
+                "appearance_primary": candidate["appearance_primary"],
+                "appearance_secondary": candidate["appearance_secondary"],
+                "time_score": candidate["time_score"],
+                "topology_score": candidate["topology_score"],
+                "zone_score": candidate["zone_score"],
+                "quality_reliability": candidate["quality_reliability"],
+                "selected_candidate": selected_candidate is not None
+                and candidate["candidate_unknown_global_id"] == selected_candidate["candidate_unknown_global_id"],
+            }
+        )
+    return {
+        "timestamp_sec": float(event["relative_sec"]),
+        "relative_time": float(event["relative_sec"]),
+        "camera_id": event["camera_id"],
+        "observation_id": event["event_id"],
+        "event_type": event["event_type"],
+        "quality_gate_pass": quality["gate_pass"],
+        "quality_gate_reason": quality["reason_code"],
+        "candidate_set_before_filter": candidate_set_before_filter,
+        "candidate_set_after_filter": candidate_set_after_filter,
+        "selected_candidate_id": selected_candidate["candidate_unknown_global_id"] if selected_candidate else "",
+        "relation_type": top_candidate["relation_type"] if top_candidate else "",
+        "topology_metadata": {
+            "profile_camera": top_candidate["profile_camera"] if top_candidate else "",
+            "same_area_overlap": top_candidate["same_area_overlap"] if top_candidate else False,
+            "topology_allowed": top_candidate["topology_allowed"] if top_candidate else False,
+            "zone_allowed": top_candidate["zone_allowed"] if top_candidate else False,
+        },
+        "time_delta": top_candidate["delta_sec"] if top_candidate else "",
+        "travel_window": {
+            "min_travel_time": top_candidate["min_travel_time"] if top_candidate else "",
+            "avg_travel_time": top_candidate["avg_travel_time"] if top_candidate else "",
+            "max_travel_time": top_candidate["max_travel_time"] if top_candidate else "",
+        },
+        "modality_primary": top_candidate["primary_modality"] if top_candidate else quality["primary_modality"],
+        "modality_secondary": "body"
+        if top_candidate and top_candidate["primary_modality"] == "face"
+        else ("face" if top_candidate and top_candidate["primary_modality"] == "body" else ""),
+        "face_score": top_candidate["face_score"] if top_candidate else "",
+        "body_score": top_candidate["body_score"] if top_candidate else "",
+        "thresholds_used": thresholds_used,
+        "margin_used": margin_used,
+        "decision": decision,
+        "reason_code": reason_code,
+        "gallery_id_before": gallery_id_before,
+        "gallery_id_after": gallery_id_after,
+        "candidate_evaluations": candidate_details,
+    }
+
+
+def assign_model_identities(
+    analyzed_events,
+    identity_means,
+    topology,
+    unknown_prefix,
+    unknown_start,
+    policy=None,
+    return_debug_bundle=False,
+):
+    merged_policy = _merge_policy(policy)
     profiles = []
     resolved_rows = []
     trace_rows = []
+    decision_logs = []
     next_unknown = unknown_start
+    decision_cfg = merged_policy["decision_policy"]
+    gallery_cfg = merged_policy["gallery_lifecycle"]
 
     for item in analyzed_events:
         event = item["event"]
         current_sec = float(event["relative_sec"])
         profiles, _expired_profiles = expire_profiles(profiles, current_sec)
 
-        known_match, known_audit = _known_acceptance(item, identity_means, merged_policy["known"])
+        known_match, known_audit = _known_acceptance(item, identity_means, decision_cfg)
         if known_match is not None:
             resolved_rows.append(
                 _build_resolved_row(
@@ -294,15 +366,48 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
                     "decision_reason": "known_accept",
                 }
             )
+            decision_logs.append(
+                {
+                    "timestamp_sec": float(event["relative_sec"]),
+                    "relative_time": float(event["relative_sec"]),
+                    "camera_id": event["camera_id"],
+                    "observation_id": event["event_id"],
+                    "event_type": event["event_type"],
+                    "quality_gate_pass": True,
+                    "quality_gate_reason": "quality_gate_pass",
+                    "candidate_set_before_filter": [],
+                    "candidate_set_after_filter": [],
+                    "selected_candidate_id": "",
+                    "relation_type": "",
+                    "topology_metadata": {},
+                    "time_delta": "",
+                    "travel_window": {},
+                    "modality_primary": "face",
+                    "modality_secondary": "",
+                    "face_score": round(known_match["score"], 4),
+                    "body_score": "",
+                    "thresholds_used": known_audit["thresholds_used"],
+                    "margin_used": {
+                        "actual_margin": round(known_match["margin"], 4),
+                        "required_margin": float(decision_cfg["known_margin_threshold"]),
+                    },
+                    "decision": "known_accept",
+                    "reason_code": "known_accept",
+                    "gallery_id_before": "",
+                    "gallery_id_after": known_match["identity_id"],
+                    "candidate_evaluations": [],
+                }
+            )
             continue
 
         quality = evaluate_quality_gate(item, merged_policy["quality_gate"])
         candidate_scores = []
         for profile in profiles:
             candidate = evaluate_profile_candidate(item, profile, topology, merged_policy)
-            allowed, acceptance_reason = _candidate_acceptance(candidate, merged_policy["unknown"])
+            allowed, acceptance_reason, threshold_info = _candidate_acceptance(candidate, decision_cfg)
             candidate["acceptance_pass"] = allowed
             candidate["acceptance_reason"] = acceptance_reason
+            candidate["thresholds_used"] = threshold_info
             candidate["ranking_key"] = json.dumps(_ranking_key(candidate))
             candidate_scores.append(candidate)
         candidate_scores.sort(key=_ranking_key, reverse=True)
@@ -311,14 +416,17 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
         top2 = candidate_scores[1] if len(candidate_scores) > 1 else None
         selected = None
         margin = _primary_margin(top1, top2) if top1 else 0.0
+        required_margin = 0.0
+        selected_thresholds = {}
 
         if quality["gate_pass"] and top1 and top1["acceptance_pass"]:
             required_margin = float(
-                merged_policy["unknown"]["margin_by_relation"].get(
+                decision_cfg["margin_by_relation"].get(
                     top1["relation_type"],
-                    merged_policy["unknown"]["margin_by_relation"]["weak_link"],
+                    decision_cfg["margin_by_relation"]["weak_link"],
                 )
             )
+            selected_thresholds = top1.get("thresholds_used", {})
             if margin >= required_margin:
                 selected = top1
                 selected["decision_reason"] = "unknown_reuse"
@@ -329,7 +437,7 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
 
         if selected is not None:
             profile = next(profile for profile in profiles if profile["unknown_global_id"] == selected["candidate_unknown_global_id"])
-            update_unknown_profile(profile, item, policy=merged_policy["gallery"])
+            update_unknown_profile(profile, item, policy=gallery_cfg)
             resolved_rows.append(
                 _build_resolved_row(
                     event,
@@ -352,9 +460,26 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
                         selected_candidate=candidate["candidate_unknown_global_id"] == profile["unknown_global_id"],
                     )
                 )
+            decision_logs.append(
+                _build_decision_log(
+                    event,
+                    quality,
+                    candidate_scores,
+                    decision="unknown_reuse",
+                    reason_code="unknown_reuse",
+                    selected_candidate=selected,
+                    gallery_id_before=selected["candidate_unknown_global_id"],
+                    gallery_id_after=profile["unknown_global_id"],
+                    thresholds_used={**selected_thresholds, "required_margin": required_margin},
+                    margin_used={"actual_margin": margin, "required_margin": required_margin},
+                )
+            )
             continue
 
         if not quality["gate_pass"]:
+            action = decision_cfg["defer_policy"]["quality_gate_fail_action"]
+            if action != "defer":
+                action = "defer"
             resolved_rows.append(
                 _build_resolved_row(
                     event,
@@ -415,17 +540,75 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
                         selected_candidate=False,
                     )
                 )
+            decision_logs.append(
+                _build_decision_log(
+                    event,
+                    quality,
+                    candidate_scores,
+                    decision=action,
+                    reason_code=quality["reason_code"],
+                    selected_candidate=None,
+                    gallery_id_before="",
+                    gallery_id_after="",
+                    thresholds_used={"defer_policy": decision_cfg["defer_policy"]},
+                    margin_used={"actual_margin": margin, "required_margin": ""},
+                )
+            )
             continue
 
         unknown_global_id = f"{unknown_prefix}_{next_unknown:04d}"
         next_unknown += 1
-        profile = create_unknown_profile(unknown_global_id, item, policy=merged_policy["gallery"])
         had_previous_profiles = bool(profiles)
-        profiles.append(profile)
         create_reason = "no_candidate"
         if top1 is not None:
             if top1.get("reason_code") == "ambiguous":
-                if quality["quality_reliability"] <= float(merged_policy["unknown"]["defer_quality_reliability_max"]):
+                if quality["quality_reliability"] <= float(decision_cfg["defer_policy"]["quality_reliability_max"]):
+                    low_quality_action = decision_cfg["defer_policy"]["ambiguous_low_quality_action"]
+                    if low_quality_action == "defer":
+                        resolved_rows.append(
+                            _build_resolved_row(
+                                event,
+                                item,
+                                decision_type="defer",
+                                reason_code="ambiguous_low_quality_defer",
+                                resolution_source="model_defer_ambiguous_low_quality",
+                            )
+                        )
+                        for candidate in candidate_scores:
+                            decision_reason = candidate.get("decision_reason") or "ambiguous_low_quality_defer"
+                            trace_rows.append(
+                                _build_trace_row(
+                                    event,
+                                    candidate,
+                                    decision_reason=decision_reason,
+                                    reused_old_id=False,
+                                    created_new_id=False,
+                                    selected_candidate=False,
+                                )
+                            )
+                        decision_logs.append(
+                            _build_decision_log(
+                                event,
+                                quality,
+                                candidate_scores,
+                                decision="defer",
+                                reason_code="ambiguous_low_quality_defer",
+                                selected_candidate=top1,
+                                gallery_id_before="",
+                                gallery_id_after="",
+                                thresholds_used={**top1.get("thresholds_used", {}), "defer_policy": decision_cfg["defer_policy"]},
+                                margin_used={
+                                    "actual_margin": margin,
+                                    "required_margin": float(
+                                        decision_cfg["margin_by_relation"].get(
+                                            top1["relation_type"],
+                                            decision_cfg["margin_by_relation"]["weak_link"],
+                                        )
+                                    ),
+                                },
+                            )
+                        )
+                        continue
                     create_reason = "ambiguous_low_quality_create"
                 else:
                     create_reason = "ambiguous_create_unknown"
@@ -433,6 +616,8 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
                 create_reason = top1.get("acceptance_reason") or top1.get("candidate_reason") or "below_threshold"
         elif not had_previous_profiles:
             create_reason = "no_previous_unknown_profiles"
+        profile = create_unknown_profile(unknown_global_id, item, policy=gallery_cfg)
+        profiles.append(profile)
         resolved_rows.append(
             _build_resolved_row(
                 event,
@@ -495,4 +680,34 @@ def assign_model_identities(analyzed_events, identity_means, topology, unknown_p
                     selected_candidate=False,
                 )
             )
+        decision_logs.append(
+            _build_decision_log(
+                event,
+                quality,
+                candidate_scores,
+                decision="create_new",
+                reason_code=create_reason,
+                selected_candidate=top1,
+                gallery_id_before=top1["candidate_unknown_global_id"] if top1 else "",
+                gallery_id_after=unknown_global_id,
+                thresholds_used={
+                    **(top1.get("thresholds_used", {}) if top1 else {}),
+                    "create_rule": decision_cfg["create_rule"],
+                },
+                margin_used={
+                    "actual_margin": margin,
+                    "required_margin": float(
+                        decision_cfg["margin_by_relation"].get(
+                            top1["relation_type"],
+                            decision_cfg["margin_by_relation"]["weak_link"],
+                        )
+                    )
+                    if top1
+                    else "",
+                },
+            )
+        )
+    debug_bundle = {"policy": merged_policy, "decision_logs": decision_logs}
+    if return_debug_bundle:
+        return resolved_rows, profiles, trace_rows, debug_bundle
     return resolved_rows, profiles, trace_rows

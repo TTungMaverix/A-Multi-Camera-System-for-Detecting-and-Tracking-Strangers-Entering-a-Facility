@@ -7,6 +7,7 @@
   "known_face_embeddings_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\known_face_embeddings_template.csv",
   "resolved_events_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\resolved_events_template.csv",
   "unknown_profiles_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\unknown_profiles_template.csv",
+  "association_policy_config": "config/association_policy.example.yaml",
   "insightface_runtime": {
     "python_runtime_available": true,
     "model_pack_available": true,

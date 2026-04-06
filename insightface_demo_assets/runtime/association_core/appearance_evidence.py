@@ -1,5 +1,11 @@
 import numpy as np
 
+from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
+
+
+def _merge_policy(policy):
+    return deep_merge(DEFAULT_ASSOCIATION_POLICY["appearance_evidence"], policy or {})
+
 
 def _normalize(vec):
     vec = np.asarray(vec, dtype=np.float32)
@@ -27,6 +33,7 @@ def _best_similarity(embedding, refs):
 
 
 def evaluate_appearance_evidence(item, profile, quality_gate_result):
+    cfg = _merge_policy(quality_gate_result.get("appearance_evidence_policy"))
     face_score = _best_similarity(item.get("face_embedding"), profile.get("face_refs", []))
     body_score = _best_similarity(item.get("body_embedding"), profile.get("body_refs", []))
     face_available = item.get("face_embedding") is not None and bool(profile.get("face_refs"))
@@ -35,10 +42,10 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
     primary_modality = quality_gate_result.get("primary_modality", "")
     modality_state = quality_gate_result.get("modality_state", "weak_both")
 
-    if primary_modality == "face" and face_available:
+    if cfg["prefer_primary_face_when_reliable"] and primary_modality == "face" and face_available:
         appearance_primary = face_score
         appearance_secondary = body_score if body_available else 0.0
-    elif body_available:
+    elif cfg["allow_body_primary_fallback"] and body_available:
         primary_modality = "body"
         appearance_primary = body_score
         appearance_secondary = face_score if face_available else 0.0
@@ -70,5 +77,6 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
         "modality_state": modality_state,
         "face_available": face_available,
         "body_available": body_available,
+        "appearance_evidence_policy": cfg,
         "evidence_reason": "appearance_evidence_ready" if primary_modality else "appearance_missing",
     }

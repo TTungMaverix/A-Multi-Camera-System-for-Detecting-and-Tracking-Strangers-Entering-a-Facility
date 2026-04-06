@@ -1,17 +1,8 @@
-DEFAULT_QUALITY_GATE_POLICY = {
-    "min_bbox_area": 1200.0,
-    "min_body_area": 1800.0,
-    "full_body_area": 22000.0,
-    "reliable_face_det_score": 0.20,
-    "strong_face_det_score": 0.35,
-}
+from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
 
 
 def _merge_policy(policy):
-    merged = dict(DEFAULT_QUALITY_GATE_POLICY)
-    if policy:
-        merged.update(policy)
-    return merged
+    return deep_merge(DEFAULT_ASSOCIATION_POLICY["quality_gate"], policy or {})
 
 
 def evaluate_quality_gate(item, policy=None):
