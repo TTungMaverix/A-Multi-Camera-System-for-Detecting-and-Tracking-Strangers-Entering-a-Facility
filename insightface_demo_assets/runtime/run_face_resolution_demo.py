@@ -3,6 +3,7 @@ import json
 import math
 import os
 import shutil
+import sys
 from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -10,6 +11,10 @@ from pathlib import Path
 os.environ.setdefault("ALBUMENTATIONS_DISABLE_VERSION_CHECK", "1")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 os.environ.setdefault("PYTHONUTF8", "1")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 import cv2
 import numpy as np
@@ -30,6 +35,7 @@ from association_core import (
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
 )
+from offline_pipeline.event_builder import FrameSourceCache
 
 CONFIG_DEFAULT = Path(__file__).with_name("face_demo_config.json")
 
@@ -56,7 +62,14 @@ def write_csv(path: Path, rows, fieldnames):
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow(row)
+                writer.writerow(row)
+
+
+def resolve_path(base_dir: Path, value):
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (base_dir / path).resolve()
 
 
 def fieldnames_for_rows(rows, preferred=None):
@@ -283,18 +296,11 @@ def get_head_rect(record, head_cfg, img_width, img_height):
     )
 
 
-def crop_and_save(image_path: Path, rect, out_path: Path):
-    image = load_image_unicode(image_path)
-    if image is None:
-        return False, "failed_to_read_source"
-    x = rect["x"]
-    y = rect["y"]
-    w = rect["width"]
-    h = rect["height"]
-    crop = image[y : y + h, x : x + w]
-    if crop.size == 0:
-        return False, "empty_crop"
-    write_image_unicode(out_path, crop)
+def crop_and_save_from_record(frame_cache, dataset_root: Path, record, rect, out_path: Path):
+    try:
+        frame_cache.crop_record(record, rect, out_path, dataset_root)
+    except RuntimeError as exc:
+        return False, str(exc)
     return True, "ok"
 
 
@@ -563,11 +569,14 @@ def build_event_from_record(
     head_cfg,
     extra,
     transition_map,
+    frame_cache=None,
 ):
     image_path = dataset_root / best_record["image_rel_path"]
-    image = load_image_unicode(image_path)
-    if image is None:
-        return None, "missing_source_image"
+    active_frame_cache = frame_cache or FrameSourceCache()
+    try:
+        image = active_frame_cache.frame_for_record(best_record, dataset_root)
+    except RuntimeError as exc:
+        return None, str(exc)
     img_h, img_w = image.shape[:2]
     body_rect = clamp_rect(
         {"x": best_record["xmin"], "y": best_record["ymin"], "width": best_record["width"], "height": best_record["height"]},
@@ -578,8 +587,8 @@ def build_event_from_record(
     camera_dir = crop_root / record["camera_id"]
     body_path = camera_dir / f"{event_id}_body.png"
     head_path = camera_dir / f"{event_id}_head.png"
-    ok_body, body_message = crop_and_save(image_path, body_rect, body_path)
-    ok_head, head_message = crop_and_save(image_path, head_rect, head_path)
+    ok_body, body_message = crop_and_save_from_record(active_frame_cache, dataset_root, best_record, body_rect, body_path)
+    ok_head, head_message = crop_and_save_from_record(active_frame_cache, dataset_root, best_record, head_rect, head_path)
     if not ok_body or not ok_head:
         return None, f"crop_failure:{body_message}|{head_message}"
     spatial_meta = resolve_zone_for_record(record, transition_map)
@@ -729,225 +738,230 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
     anchor_events_by_gt = defaultdict(list)
     placeholder_rows = []
     created_event_rows = []
-
-    for gt_id in all_gt_ids:
-        for camera_id in selected_cameras:
-            records = by_gt_camera.get((gt_id, camera_id), [])
-            if not records:
+    frame_cache = FrameSourceCache()
+    try:
+        for gt_id in all_gt_ids:
+            for camera_id in selected_cameras:
+                records = by_gt_camera.get((gt_id, camera_id), [])
+                if not records:
+                    placeholder_rows.append(
+                        {
+                            "global_gt_id": gt_id,
+                            "camera_id": camera_id,
+                            "camera_role": camera_cfgs[camera_id]["role"],
+                            "track_present": False,
+                            "candidate_event_created": False,
+                            "drop_reason": "no_track",
+                            "drop_detail": "",
+                        }
+                    )
+                    continue
+                if camera_cfgs[camera_id]["role"] != "entry":
+                    placeholder_rows.append(
+                        {
+                            "global_gt_id": gt_id,
+                            "camera_id": camera_id,
+                            "camera_role": camera_cfgs[camera_id]["role"],
+                            "track_present": True,
+                            "candidate_event_created": False,
+                            "drop_reason": "pending_followup_selection",
+                            "drop_detail": "",
+                        }
+                    )
+                    continue
+                anchor, anchor_reason = find_entry_anchor(records, camera_cfgs[camera_id], line_threshold)
+                if anchor is None:
+                    placeholder_rows.append(
+                        {
+                            "global_gt_id": gt_id,
+                            "camera_id": camera_id,
+                            "camera_role": camera_cfgs[camera_id]["role"],
+                            "track_present": True,
+                            "candidate_event_created": False,
+                            "drop_reason": anchor_reason,
+                            "drop_detail": "",
+                        }
+                    )
+                    continue
+                crossing_row = anchor["crossing_row"]
+                best_record = select_best_record(records, max(crossing_row["frame_id"] - 20, 0), crossing_row["frame_id"] + best_shot_window)
+                if best_record is None:
+                    placeholder_rows.append(
+                        {
+                            "global_gt_id": gt_id,
+                            "camera_id": camera_id,
+                            "camera_role": camera_cfgs[camera_id]["role"],
+                            "track_present": True,
+                            "candidate_event_created": False,
+                            "drop_reason": "not_selected_as_best_event",
+                            "drop_detail": "no_best_record_in_window",
+                        }
+                    )
+                    continue
+                event_id = f"ENTRY_{camera_id}_{int(gt_id):04d}_{crossing_row['frame_id']:08d}"
+                event, message = build_event_from_record(
+                    event_id,
+                    "ENTRY_IN",
+                    crossing_row,
+                    best_record,
+                    dataset_root,
+                    crop_root,
+                    config["head_crop"],
+                    {
+                        "anchor_camera_id": camera_id,
+                        "anchor_frame_id": crossing_row["frame_id"],
+                        "anchor_relative_sec": crossing_row["relative_sec"],
+                        "relation_type": "entry",
+                        "same_area_overlap": False,
+                    },
+                    transition_map,
+                    frame_cache=frame_cache,
+                )
+                if event is None:
+                    placeholder_rows.append(
+                        {
+                            "global_gt_id": gt_id,
+                            "camera_id": camera_id,
+                            "camera_role": camera_cfgs[camera_id]["role"],
+                            "track_present": True,
+                            "candidate_event_created": False,
+                            "drop_reason": "low_quality_crop",
+                            "drop_detail": message,
+                        }
+                    )
+                    continue
+                created_event_rows.append(event)
+                anchor_events_by_gt[gt_id].append(event)
                 placeholder_rows.append(
                     {
                         "global_gt_id": gt_id,
                         "camera_id": camera_id,
                         "camera_role": camera_cfgs[camera_id]["role"],
-                        "track_present": False,
-                        "candidate_event_created": False,
-                        "drop_reason": "no_track",
+                        "track_present": True,
+                        "candidate_event_created": True,
+                        "candidate_event_id": event_id,
+                        "event_type": "ENTRY_IN",
+                        "drop_reason": "",
                         "drop_detail": "",
                     }
                 )
-                continue
-            if camera_cfgs[camera_id]["role"] != "entry":
-                placeholder_rows.append(
-                    {
-                        "global_gt_id": gt_id,
-                        "camera_id": camera_id,
-                        "camera_role": camera_cfgs[camera_id]["role"],
-                        "track_present": True,
-                        "candidate_event_created": False,
-                        "drop_reason": "pending_followup_selection",
-                        "drop_detail": "",
-                    }
-                )
-                continue
-            anchor, anchor_reason = find_entry_anchor(records, camera_cfgs[camera_id], line_threshold)
-            if anchor is None:
-                placeholder_rows.append(
-                    {
-                        "global_gt_id": gt_id,
-                        "camera_id": camera_id,
-                        "camera_role": camera_cfgs[camera_id]["role"],
-                        "track_present": True,
-                        "candidate_event_created": False,
-                        "drop_reason": anchor_reason,
-                        "drop_detail": "",
-                    }
-                )
-                continue
-            crossing_row = anchor["crossing_row"]
-            best_record = select_best_record(records, max(crossing_row["frame_id"] - 20, 0), crossing_row["frame_id"] + best_shot_window)
-            if best_record is None:
-                placeholder_rows.append(
-                    {
-                        "global_gt_id": gt_id,
-                        "camera_id": camera_id,
-                        "camera_role": camera_cfgs[camera_id]["role"],
-                        "track_present": True,
-                        "candidate_event_created": False,
-                        "drop_reason": "not_selected_as_best_event",
-                        "drop_detail": "no_best_record_in_window",
-                    }
-                )
-                continue
-            event_id = f"ENTRY_{camera_id}_{int(gt_id):04d}_{crossing_row['frame_id']:08d}"
-            event, message = build_event_from_record(
-                event_id,
-                "ENTRY_IN",
-                crossing_row,
-                best_record,
-                dataset_root,
-                crop_root,
-                config["head_crop"],
-                {
-                    "anchor_camera_id": camera_id,
-                    "anchor_frame_id": crossing_row["frame_id"],
-                    "anchor_relative_sec": crossing_row["relative_sec"],
-                    "relation_type": "entry",
-                    "same_area_overlap": False,
-                },
-                transition_map,
-            )
-            if event is None:
-                placeholder_rows.append(
-                    {
-                        "global_gt_id": gt_id,
-                        "camera_id": camera_id,
-                        "camera_role": camera_cfgs[camera_id]["role"],
-                        "track_present": True,
-                        "candidate_event_created": False,
-                        "drop_reason": "low_quality_crop",
-                        "drop_detail": message,
-                    }
-                )
-                continue
-            created_event_rows.append(event)
-            anchor_events_by_gt[gt_id].append(event)
-            placeholder_rows.append(
-                {
-                    "global_gt_id": gt_id,
-                    "camera_id": camera_id,
-                    "camera_role": camera_cfgs[camera_id]["role"],
-                    "track_present": True,
-                    "candidate_event_created": True,
-                    "candidate_event_id": event_id,
-                    "event_type": "ENTRY_IN",
-                    "drop_reason": "",
-                    "drop_detail": "",
-                }
-            )
-    final_rows = []
-    created_lookup = {(row["global_gt_id"], row["camera_id"]): row for row in placeholder_rows if row["candidate_event_created"]}
-    placeholder_lookup = {(row["global_gt_id"], row["camera_id"]): row for row in placeholder_rows if not row["candidate_event_created"]}
+        final_rows = []
+        created_lookup = {(row["global_gt_id"], row["camera_id"]): row for row in placeholder_rows if row["candidate_event_created"]}
+        placeholder_lookup = {(row["global_gt_id"], row["camera_id"]): row for row in placeholder_rows if not row["candidate_event_created"]}
 
-    for gt_id in all_gt_ids:
-        anchors = sorted(anchor_events_by_gt.get(gt_id, []), key=lambda item: (item["relative_sec"], item["camera_id"]))
-        for camera_id in selected_cameras:
-            key = (gt_id, camera_id)
-            if key in created_lookup:
-                row = dict(created_lookup[key])
-                row["run_mode"] = "mode_b_true_assoc"
-                final_rows.append(row)
-                continue
-            placeholder = dict(placeholder_lookup[key])
-            placeholder["run_mode"] = "mode_b_true_assoc"
-            records = by_gt_camera.get(key, [])
-            if not records:
-                final_rows.append(placeholder)
-                continue
-            if not anchors:
-                if placeholder["drop_reason"] == "pending_followup_selection":
-                    placeholder["drop_reason"] = "filtered_by_direction"
-                    placeholder["drop_detail"] = "no_entry_anchor_in_any_entry_camera"
-                final_rows.append(placeholder)
-                continue
+        for gt_id in all_gt_ids:
+            anchors = sorted(anchor_events_by_gt.get(gt_id, []), key=lambda item: (item["relative_sec"], item["camera_id"]))
+            for camera_id in selected_cameras:
+                key = (gt_id, camera_id)
+                if key in created_lookup:
+                    row = dict(created_lookup[key])
+                    row["run_mode"] = "mode_b_true_assoc"
+                    final_rows.append(row)
+                    continue
+                placeholder = dict(placeholder_lookup[key])
+                placeholder["run_mode"] = "mode_b_true_assoc"
+                records = by_gt_camera.get(key, [])
+                if not records:
+                    final_rows.append(placeholder)
+                    continue
+                if not anchors:
+                    if placeholder["drop_reason"] == "pending_followup_selection":
+                        placeholder["drop_reason"] = "filtered_by_direction"
+                        placeholder["drop_detail"] = "no_entry_anchor_in_any_entry_camera"
+                    final_rows.append(placeholder)
+                    continue
 
-            best_option = None
-            for anchor_event in anchors:
-                if anchor_event["camera_id"] == camera_id:
-                    continue
-                relation = topology.get(anchor_event["camera_id"], {}).get(camera_id)
-                if not relation:
-                    continue
-                candidate_row, candidate_reason = pick_observation_candidate(records, anchor_event, relation)
-                if candidate_row is None:
-                    continue
-                option = {
-                    "anchor_event": anchor_event,
-                    "relation": relation,
-                    "candidate_row": candidate_row,
-                    "candidate_reason": candidate_reason,
-                }
+                best_option = None
+                for anchor_event in anchors:
+                    if anchor_event["camera_id"] == camera_id:
+                        continue
+                    relation = topology.get(anchor_event["camera_id"], {}).get(camera_id)
+                    if not relation:
+                        continue
+                    candidate_row, candidate_reason = pick_observation_candidate(records, anchor_event, relation)
+                    if candidate_row is None:
+                        continue
+                    option = {
+                        "anchor_event": anchor_event,
+                        "relation": relation,
+                        "candidate_row": candidate_row,
+                        "candidate_reason": candidate_reason,
+                    }
+                    if best_option is None:
+                        best_option = option
+                        continue
+                    current_delta = abs(candidate_row["frame_id"] - anchor_event["frame_id"])
+                    best_delta = abs(best_option["candidate_row"]["frame_id"] - best_option["anchor_event"]["frame_id"])
+                    if current_delta < best_delta or (
+                        current_delta == best_delta and candidate_row["area"] > best_option["candidate_row"]["area"]
+                    ):
+                        best_option = option
+
                 if best_option is None:
-                    best_option = option
+                    placeholder["drop_reason"] = "blocked_by_travel_time"
+                    placeholder["drop_detail"] = "no_topology_window_match_from_any_entry_anchor"
+                    final_rows.append(placeholder)
                     continue
-                current_delta = abs(candidate_row["frame_id"] - anchor_event["frame_id"])
-                best_delta = abs(best_option["candidate_row"]["frame_id"] - best_option["anchor_event"]["frame_id"])
-                if current_delta < best_delta or (
-                    current_delta == best_delta and candidate_row["area"] > best_option["candidate_row"]["area"]
-                ):
-                    best_option = option
 
-            if best_option is None:
-                placeholder["drop_reason"] = "blocked_by_travel_time"
-                placeholder["drop_detail"] = "no_topology_window_match_from_any_entry_anchor"
-                final_rows.append(placeholder)
-                continue
+                best_record = select_best_record(
+                    records,
+                    max(best_option["candidate_row"]["frame_id"] - 15, 0),
+                    best_option["candidate_row"]["frame_id"] + best_shot_window,
+                )
+                if best_record is None:
+                    placeholder["drop_reason"] = "not_selected_as_best_event"
+                    placeholder["drop_detail"] = "no_best_record_for_followup_event"
+                    final_rows.append(placeholder)
+                    continue
 
-            best_record = select_best_record(
-                records,
-                max(best_option["candidate_row"]["frame_id"] - 15, 0),
-                best_option["candidate_row"]["frame_id"] + best_shot_window,
-            )
-            if best_record is None:
-                placeholder["drop_reason"] = "not_selected_as_best_event"
-                placeholder["drop_detail"] = "no_best_record_for_followup_event"
-                final_rows.append(placeholder)
-                continue
-
-            anchor_event = best_option["anchor_event"]
-            relation = best_option["relation"]
-            event_type = "OVERLAP_OBSERVATION" if relation["relation_type"] == "overlap" else "FOLLOWUP_OBSERVATION"
-            event_id = f"{event_type}_{camera_id}_{int(gt_id):04d}_{best_option['candidate_row']['frame_id']:08d}"
-            event, message = build_event_from_record(
-                event_id,
-                event_type,
-                best_option["candidate_row"],
-                best_record,
-                dataset_root,
-                crop_root,
-                config["head_crop"],
-                {
-                    "anchor_camera_id": anchor_event["camera_id"],
-                    "anchor_frame_id": anchor_event["frame_id"],
-                    "anchor_relative_sec": anchor_event["relative_sec"],
-                    "relation_type": relation["relation_type"],
-                    "same_area_overlap": relation["same_area_overlap"],
-                    "min_travel_time": relation["min_travel_time"],
-                    "avg_travel_time": relation["avg_travel_time"],
-                    "max_travel_time": relation["max_travel_time"],
-                    "delta_from_anchor_sec": round(best_option["candidate_row"]["relative_sec"] - anchor_event["relative_sec"], 3),
-                },
-                transition_map,
-            )
-            if event is None:
-                placeholder["drop_reason"] = "low_quality_crop"
-                placeholder["drop_detail"] = message
-                final_rows.append(placeholder)
-                continue
-            created_event_rows.append(event)
-            final_rows.append(
-                {
-                    "run_mode": "mode_b_true_assoc",
-                    "global_gt_id": gt_id,
-                    "camera_id": camera_id,
-                    "camera_role": camera_cfgs[camera_id]["role"],
-                    "track_present": True,
-                    "candidate_event_created": True,
-                    "candidate_event_id": event_id,
-                    "event_type": event_type,
-                    "drop_reason": "",
-                    "drop_detail": "",
-                }
-            )
+                anchor_event = best_option["anchor_event"]
+                relation = best_option["relation"]
+                event_type = "OVERLAP_OBSERVATION" if relation["relation_type"] == "overlap" else "FOLLOWUP_OBSERVATION"
+                event_id = f"{event_type}_{camera_id}_{int(gt_id):04d}_{best_option['candidate_row']['frame_id']:08d}"
+                event, message = build_event_from_record(
+                    event_id,
+                    event_type,
+                    best_option["candidate_row"],
+                    best_record,
+                    dataset_root,
+                    crop_root,
+                    config["head_crop"],
+                    {
+                        "anchor_camera_id": anchor_event["camera_id"],
+                        "anchor_frame_id": anchor_event["frame_id"],
+                        "anchor_relative_sec": anchor_event["relative_sec"],
+                        "relation_type": relation["relation_type"],
+                        "same_area_overlap": relation["same_area_overlap"],
+                        "min_travel_time": relation["min_travel_time"],
+                        "avg_travel_time": relation["avg_travel_time"],
+                        "max_travel_time": relation["max_travel_time"],
+                        "delta_from_anchor_sec": round(best_option["candidate_row"]["relative_sec"] - anchor_event["relative_sec"], 3),
+                    },
+                    transition_map,
+                    frame_cache=frame_cache,
+                )
+                if event is None:
+                    placeholder["drop_reason"] = "low_quality_crop"
+                    placeholder["drop_detail"] = message
+                    final_rows.append(placeholder)
+                    continue
+                created_event_rows.append(event)
+                final_rows.append(
+                    {
+                        "run_mode": "mode_b_true_assoc",
+                        "global_gt_id": gt_id,
+                        "camera_id": camera_id,
+                        "camera_role": camera_cfgs[camera_id]["role"],
+                        "track_present": True,
+                        "candidate_event_created": True,
+                        "candidate_event_id": event_id,
+                        "event_type": event_type,
+                        "drop_reason": "",
+                        "drop_detail": "",
+                    }
+                )
+    finally:
+        frame_cache.close()
 
     created_event_rows.sort(key=lambda row: (row["anchor_relative_sec"], 0 if row["event_type"] == "ENTRY_IN" else 1, row["camera_id"]))
     return created_event_rows, final_rows, anchor_events_by_gt, by_gt_camera, topology
@@ -1455,18 +1469,21 @@ def render_report(report_path: Path, mode_a_metrics, mode_b_metrics, stage_a, ro
 
 def main(config_path: Path):
     config = load_json(config_path)
-    base_dir = config_path.parents[1]
+    base_dir = resolve_path(config_path.parent, config.get("project_root", str(config_path.parents[1])))
     association_policy_config = config.get("association_policy_config", "")
     camera_transition_map_config = config.get("camera_transition_map_config", "")
-    queue_csv = Path(config["wildtrack_identity_queue_csv"])
-    wildtrack_config_path = queue_csv.parents[2] / "wildtrack_demo_config.json"
+    queue_csv = resolve_path(base_dir, config["wildtrack_identity_queue_csv"])
+    wildtrack_config_path = resolve_path(
+        base_dir,
+        config.get("wildtrack_config_path", str(queue_csv.parents[2] / "wildtrack_demo_config.json")),
+    )
     wildtrack_config = load_json(wildtrack_config_path)
-    dataset_root = wildtrack_config_path.parent / wildtrack_config["dataset_root"]
-    tracks_csv = queue_csv.parents[1] / "tracks" / "all_tracks_filtered.csv"
-    known_root = Path(config["known_face_gallery_root"])
-    known_manifest_csv = Path(config["known_face_manifest_csv"])
-    known_embeddings_csv = Path(config["known_face_embeddings_csv"])
-    resolved_events_csv = Path(config["resolved_events_csv"])
+    dataset_root = resolve_path(base_dir, config.get("dataset_root", str(wildtrack_config_path.parent / wildtrack_config["dataset_root"])))
+    tracks_csv = resolve_path(base_dir, config.get("tracks_csv", str(queue_csv.parents[1] / "tracks" / "all_tracks_filtered.csv")))
+    known_root = resolve_path(base_dir, config["known_face_gallery_root"])
+    known_manifest_csv = resolve_path(base_dir, config["known_face_manifest_csv"])
+    known_embeddings_csv = resolve_path(base_dir, config["known_face_embeddings_csv"])
+    resolved_events_csv = resolve_path(base_dir, config["resolved_events_csv"])
     runtime_dir = resolved_events_csv.parent
     runtime_manifest_csv = known_manifest_csv.with_name("known_face_manifest_runtime.csv")
     baseline_resolved_csv = runtime_dir / "resolved_events_mode_a_baseline.csv"
@@ -1474,7 +1491,7 @@ def main(config_path: Path):
     mode_b_resolved_csv = runtime_dir / "resolved_events_mode_b_true_assoc.csv"
     mode_b_timeline_csv = runtime_dir / "stream_identity_timeline_mode_b.csv"
     summary_json = runtime_dir / "face_resolution_summary.json"
-    unknown_profiles_csv = Path(config["unknown_profiles_csv"])
+    unknown_profiles_csv = resolve_path(base_dir, config["unknown_profiles_csv"])
     fixed_event_csv = runtime_dir / "generated_candidate_events_mode_b.csv"
     fixed_crop_root = runtime_dir / "generated_event_crops"
 
@@ -1528,7 +1545,27 @@ def main(config_path: Path):
 
     baseline_events = []
     for row in queue_rows:
-        baseline_spatial = core_resolve_spatial_context(row["camera_id"], None, None, camera_transition_map)
+        baseline_spatial = {
+            "zone_id": row.get("zone_id") or "",
+            "zone_type": row.get("zone_type") or "",
+            "zone_reason": row.get("zone_reason") or "",
+            "zone_fallback_used": row.get("zone_fallback_used", False),
+            "subzone_id": row.get("subzone_id") or "",
+            "subzone_type": row.get("subzone_type") or "",
+            "subzone_reason": row.get("subzone_reason") or "",
+            "subzone_fallback_used": row.get("subzone_fallback_used", False),
+            "matched_zone_region_id": row.get("matched_zone_region_id") or row.get("zone_id") or "",
+            "matched_subzone_region_id": row.get("matched_subzone_region_id") or row.get("subzone_id") or "",
+            "assignment_point_x": row.get("foot_x", ""),
+            "assignment_point_y": row.get("foot_y", ""),
+        }
+        if not baseline_spatial["zone_id"] and not baseline_spatial["subzone_id"]:
+            baseline_spatial = core_resolve_spatial_context(
+                row["camera_id"],
+                as_float(row.get("foot_x"), None),
+                as_float(row.get("foot_y"), None),
+                camera_transition_map,
+            )
         baseline_events.append(
             {
                 "event_id": row["event_id"],
@@ -1536,6 +1573,7 @@ def main(config_path: Path):
                 "camera_id": row["camera_id"],
                 "camera_role": wildtrack_config["cameras"][row["camera_id"]]["role"],
                 "global_gt_id": str(row["global_gt_id"]),
+                "local_track_id": row.get("local_track_id", ""),
                 "frame_id": as_int(row["frame_id"]),
                 "relative_sec": as_float(row["relative_sec"]),
                 "best_shot_frame": as_int(row["frame_id"]),
@@ -1547,8 +1585,9 @@ def main(config_path: Path):
                 "anchor_relative_sec": as_float(row["relative_sec"]),
                 "relation_type": "entry",
                 "same_area_overlap": False,
-                "foot_x": "",
-                "foot_y": "",
+                "direction": row.get("direction", "IN"),
+                "foot_x": row.get("foot_x", ""),
+                "foot_y": row.get("foot_y", ""),
                 "zone_id": baseline_spatial["zone_id"],
                 "zone_type": baseline_spatial["zone_type"],
                 "zone_reason": baseline_spatial["zone_reason"],

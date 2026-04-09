@@ -1,0 +1,27 @@
+offline_pipeline:
+  project_root: D:\ĐỒ ÁN TỐT NGHIỆP
+  pipeline_name: wildtrack_offline_multicam_demo_low_load
+  source_backend: wildtrack_gt_annotations
+  output_root: outputs/offline_runs/wildtrack_low_load
+  frame_source_mode: image_subsets
+  low_load:
+    enabled: true
+    start_frame: 0
+    end_frame: 120
+    frame_stride: 5
+  execution:
+    mode: sequential
+  dataset:
+    root: Wildtrack
+    video_sources:
+      C3: Wildtrack/cam3.mp4
+      C5: Wildtrack/cam5.mp4
+      C6: Wildtrack/cam6.mp4
+      C7: Wildtrack/cam7.mp4
+  wildtrack_demo_config: wildtrack_demo/wildtrack_demo_config.json
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  known_gallery:
+    manifest_csv: insightface_demo_assets/known_face_manifest.csv
+    gallery_root: insightface_demo_assets/known_faces
+  association_policy_config: insightface_demo_assets/runtime/config/association_policy.example.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml

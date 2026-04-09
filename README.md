@@ -14,13 +14,19 @@ Graduation project repository for a multi-camera security pipeline that:
 
 The current runnable vertical slice is video-file-first:
 
-1. generate candidate entry and follow-up events from 4 selected Wildtrack cameras
-2. run face matching with InsightFace and a known gallery
-3. run paper-grounded cross-camera association through a compatibility entrypoint
-4. create or reuse unknown IDs
-5. export resolved events, timelines, and audit logs
+1. run one offline orchestrator over 4 selected Wildtrack video sources
+2. generate GT-backed per-camera track rows and entry events
+3. run face matching with InsightFace and a known gallery
+4. run paper-grounded cross-camera association through a compatibility entrypoint
+5. create or reuse unknown IDs
+6. export resolved events, timelines, and audit logs into a single run folder
 
 RTSP/live ingestion is planned later. Video files are the current priority.
+
+Important limitation:
+
+- the current offline detect/track stage is still a Wildtrack annotation-backed provider for the thesis demo baseline
+- the repo now has a real offline end-to-end flow, but it is not yet a production detector+tracker inference stack
 
 ## Association Source of Truth
 
@@ -31,8 +37,7 @@ Association design must follow:
 Association must not fall back to a vague weighted sum if the design note already defines the logic. The required structure is:
 
 1. `quality gate`
-2. `candidate filtering` by topology + travel time + zone constraints when available
-   with subzone constraints when the dataset provides them
+2. `candidate filtering` by topology + travel time + zone constraints when available, with subzone constraints when the dataset provides them
 3. `modality-aware appearance evidence` with face and body kept separate
 4. `accept / reject / create / defer`
 5. `gallery lifecycle` with TTL and top-k references
@@ -51,23 +56,23 @@ Additional docs:
 - [docs/association_trace_logging.md](docs/association_trace_logging.md)
 - [docs/camera_transition_map_config.md](docs/camera_transition_map_config.md)
 - [docs/camera_subzone_config.md](docs/camera_subzone_config.md)
+- [docs/offline_pipeline.md](docs/offline_pipeline.md)
 
 ## Phase Status
 
 Current code status:
 
-- `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the runnable compatibility entrypoint
-- association core logic now lives under `insightface_demo_assets/runtime/association_core/`
+- `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the face-resolution compatibility entrypoint
+- `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py` is the offline end-to-end orchestrator entrypoint
+- `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
+- association core logic lives under `insightface_demo_assets/runtime/association_core/`
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
-- camera-pair transitions and zone metadata are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
-- camera subzones are now externalized in the same transition-map config so event generation and association can reason about entry/exit subpaths
-- association decision logs are exported under `insightface_demo_assets/runtime/association_logs/`
-- candidate observations now carry `zone_id` / `zone_type` when available, with safe fallback to camera defaults
-- candidate observations now also carry `subzone_id` / `subzone_type` when available, with safe fallback to zone-level defaults
-- event generation now exports a subzone-assignment audit file for debug
-- scenario tests for association core live under `tests/`
-- this phase refactors only the association core
-- ingest, detector, tracker, dashboard, and the demo command are intentionally kept stable in this phase
+- camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
+- offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
+- association decision logs are exported under `association_logs/` in each offline run
+- offline runs export standardized folders under `outputs/offline_runs/`
+- scenario tests for association core and offline event creation live under `tests/`
+- live ingestion, dashboard, and storage remain later phases
 
 ## Project Scope
 
@@ -96,6 +101,20 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
 ```
 
+Direct offline orchestrator:
+
+```cmd
+cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
+```
+
+Low-load sanity run:
+
+```cmd
+cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.low_load.yaml"
+```
+
 To run only the face-resolution stage:
 
 ```cmd
@@ -105,20 +124,20 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 
 Main outputs:
 
-- `wildtrack_demo/output/events/`
+- `outputs/offline_runs/<run_name>/events/`
+- `outputs/offline_runs/<run_name>/timelines/`
+- `outputs/offline_runs/<run_name>/summaries/`
+- `outputs/offline_runs/<run_name>/audit/`
+- `outputs/offline_runs/<run_name>/association_logs/`
 - `insightface_demo_assets/runtime/face_resolution_summary.json`
 - `insightface_demo_assets/runtime/stream_identity_timeline.csv`
 - `insightface_demo_assets/runtime/audit_report.md`
-- `insightface_demo_assets/runtime/association_logs/association_decisions.jsonl`
-- `insightface_demo_assets/runtime/association_logs/association_summary.json`
-- `insightface_demo_assets/runtime/association_logs/camera_transition_map_runtime.json`
-- `insightface_demo_assets/runtime/audit_event_generation_subzones.csv`
 
-Run the lightweight association tests:
+Run the lightweight tests:
 
 ```cmd
 cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests\test_association_core.py
+".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests\test_association_core.py tests\test_offline_pipeline.py
 ```
 
 ## Current Repository Layout
@@ -127,36 +146,34 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 .
 |- README.md
 |- run_multicam_identity_demo.ps1
+|- run_offline_multicam_pipeline.ps1
 |- docs/
 |  |- association_paper_grounded_design.md
+|  `- offline_pipeline.md
 |- wildtrack_demo/
 |  |- wildtrack_demo_config.json
 |  |- export_wildtrack_demo.ps1
-|  |- output/
+|  `- output/
 |- insightface_demo_assets/
 |  |- known_faces/
 |  |- known_face_manifest.csv
 |  |- runtime/
+|     |- offline_pipeline/
 |     |- association_core/
-|     |  |- quality_gate.py
-|     |  |- topology_filter.py
-|     |  |- appearance_evidence.py
-|     |  |- gallery_lifecycle.py
-|     |  |- decision_policy.py
-|     |  |- config_loader.py
-|     |  |- spatial_context.py
-|     |  |- transition_map_loader.py
-|     |  `- trace_logging.py
 |     |- config/
 |     |  |- association_policy.example.yaml
-|     |  `- camera_transition_map.example.yaml
+|     |  |- camera_transition_map.example.yaml
+|     |  |- offline_pipeline_demo.example.yaml
+|     |  `- offline_pipeline_demo.low_load.yaml
 |     |- face_demo_config.json
 |     |- run_face_resolution_demo.py
-|     |- audit_*.csv/json/md
-|     `- resolved_events_mode_*.csv
+|     `- run_offline_multicam_pipeline.py
+|- outputs/
+|  `- offline_runs/
 |- tests/
 |  |- conftest.py
-|  `- test_association_core.py
+|  |- test_association_core.py
+|  `- test_offline_pipeline.py
 |- requirements-dev.txt
 |- Wildtrack/
 |- PAPERS/
@@ -166,12 +183,12 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 
 Notes:
 
-- `run_face_resolution_demo.py` is still the public entrypoint for the demo phase.
-- `association_core/` is the new paper-grounded association package used under that entrypoint.
+- `run_multicam_identity_demo.ps1` now routes to the offline orchestrator so the legacy command still works.
+- `run_face_resolution_demo.py` remains the stage-only entrypoint for face resolution and association.
 - `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
-- `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, and overlap behavior.
-- the same map config also carries per-camera subzones and transition-level allowed entry/exit subzones.
-- `runtime/association_logs/` is generated at run time and is intentionally not part of source control.
+- `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, overlap behavior, and subzones.
+- `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
+- `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.
 
@@ -179,17 +196,11 @@ Notes:
 
 Near-term implementation should proceed in small runnable phases:
 
-1. keep the current video-file vertical slice runnable
-2. refactor association core without touching the rest of the pipeline in the same phase
-3. keep the compatibility entrypoint working while moving logic into:
-   - `quality_gate`
-   - `topology_filter`
-   - `appearance_evidence`
-   - `gallery_lifecycle`
-   - `decision_policy`
-4. externalize thresholds, margins, TTL, and defer policy into config files
-5. keep README and docs synchronized after each phase
-6. add RTSP/live only after the file-based pipeline is stable
+1. keep the current offline video-file vertical slice runnable
+2. add multiprocessing producer-consumer around the offline flow
+3. add evaluation and threshold tuning from cached offline outputs
+4. improve best-shot selection without adding heavy new models
+5. add RTSP/live only after the file-based pipeline is stable
 
 ## Dependencies
 
