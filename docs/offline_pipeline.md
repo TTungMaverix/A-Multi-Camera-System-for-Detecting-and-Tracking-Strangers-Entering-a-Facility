@@ -47,6 +47,7 @@ Important fields:
 
 - `dataset.video_sources`: 4 input videos
 - `wildtrack_demo_config`: dataset-specific ROI, line crossing, best-shot window
+- `wildtrack_demo_config.best_shot_selection`: line-aware best-shot policy
 - `known_gallery.manifest_csv`
 - `known_gallery.gallery_root`
 - `association_policy_config`
@@ -76,8 +77,10 @@ Event creation rules in the current backend:
 1. keep rows whose foot point stays inside the configured ROI
 2. for entry cameras, detect line crossing into the protected side
 3. only after line crossing, create `ENTRY_IN`
-4. create best-shot body/head crops
-5. send that event to face matching and then to cross-camera association
+4. select a best shot inside the configured frame window
+5. when enabled, prefer post-anchor frames in higher-priority subzones such as `exit` or `interior`
+6. create best-shot body/head crops
+7. send that event to face matching and then to cross-camera association
 
 ## Output Layout
 
@@ -99,3 +102,7 @@ Main final files:
 - `summaries/face_resolution_summary.json`
 - `association_logs/association_decisions.jsonl`
 - `audit/audit_report.md`
+- `audit/entry_event_assignment_audit.csv`
+- `audit/audit_event_generation_subzones.csv`
+
+The audit CSV files now include line-aware best-shot metadata so event creation can be debugged without rerunning the full pipeline.

@@ -289,7 +289,39 @@ def group_rows_by_track(rows):
     return grouped
 
 
-def select_best_record(records, frame_min=None, frame_max=None):
+DEFAULT_BEST_SHOT_SELECTION = {
+    "enabled": False,
+    "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
+    "minimum_frames_after_anchor": {
+        "entry": 0,
+        "overlap": 0,
+        "sequential": 0,
+        "weak_link": 0,
+    },
+}
+
+
+def _best_shot_cfg(best_shot_cfg):
+    merged = dict(DEFAULT_BEST_SHOT_SELECTION)
+    merged["minimum_frames_after_anchor"] = dict(DEFAULT_BEST_SHOT_SELECTION["minimum_frames_after_anchor"])
+    if not best_shot_cfg:
+        return merged
+    for key, value in best_shot_cfg.items():
+        if key == "minimum_frames_after_anchor" and isinstance(value, dict):
+            merged["minimum_frames_after_anchor"].update(value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _subzone_priority(subzone_type, cfg):
+    preferred = cfg.get("preferred_subzone_types", []) or []
+    if subzone_type in preferred:
+        return len(preferred) - preferred.index(subzone_type)
+    return 0
+
+
+def select_best_record(records, frame_min=None, frame_max=None, camera_id="", transition_map=None, best_shot_cfg=None, anchor_frame_id=None, relation_type="entry"):
     candidates = []
     for record in records:
         if frame_min is not None and record["frame_id"] < frame_min:
@@ -298,8 +330,60 @@ def select_best_record(records, frame_min=None, frame_max=None):
             continue
         candidates.append(record)
     if not candidates:
-        return None
-    return max(candidates, key=lambda row: (row["area"], -row["frame_id"]))
+        return None, {}
+
+    cfg = _best_shot_cfg(best_shot_cfg)
+    if not cfg.get("enabled") or not camera_id or not transition_map:
+        selected = max(candidates, key=lambda row: (row["area"], -row["frame_id"]))
+        return selected, {
+            "best_shot_strategy": "max_area_in_window",
+            "best_shot_reason": "selected_largest_bbox_area_in_window",
+            "best_shot_zone_id": "",
+            "best_shot_subzone_id": "",
+            "best_shot_subzone_type": "",
+            "best_shot_frames_after_anchor": as_int(selected["frame_id"]) - as_int(anchor_frame_id, as_int(selected["frame_id"])),
+        }
+
+    min_frames_after_anchor = as_int(cfg.get("minimum_frames_after_anchor", {}).get(relation_type, 0))
+    ranked = []
+    for record in candidates:
+        spatial = resolve_spatial_context(camera_id, record.get("foot_x"), record.get("foot_y"), transition_map)
+        frames_after_anchor = as_int(record["frame_id"]) - as_int(anchor_frame_id, as_int(record["frame_id"]))
+        ranked.append(
+            {
+                "record": record,
+                "spatial": spatial,
+                "frames_after_anchor": frames_after_anchor,
+                "after_anchor_ok": frames_after_anchor >= min_frames_after_anchor,
+                "subzone_priority": _subzone_priority(spatial.get("subzone_type", ""), cfg),
+            }
+        )
+    ranked.sort(
+        key=lambda item: (
+            1 if item["after_anchor_ok"] else 0,
+            item["subzone_priority"],
+            item["record"]["area"],
+            item["frames_after_anchor"],
+        ),
+        reverse=True,
+    )
+    selected = ranked[0]
+    record = selected["record"]
+    spatial = selected["spatial"]
+    reason_bits = [
+        f"after_anchor_ok={str(selected['after_anchor_ok']).lower()}",
+        f"frames_after_anchor={selected['frames_after_anchor']}",
+        f"subzone_type={spatial.get('subzone_type', '') or 'none'}",
+        f"bbox_area={record['area']}",
+    ]
+    return record, {
+        "best_shot_strategy": "line_aware_subzone_priority",
+        "best_shot_reason": ";".join(reason_bits),
+        "best_shot_zone_id": spatial.get("zone_id", ""),
+        "best_shot_subzone_id": spatial.get("subzone_id", ""),
+        "best_shot_subzone_type": spatial.get("subzone_type", ""),
+        "best_shot_frames_after_anchor": selected["frames_after_anchor"],
+    }
 
 
 def crop_event_from_record(frame_cache: FrameSourceCache, dataset_root: Path, crop_root: Path, event_id, record, head_cfg):
@@ -330,6 +414,7 @@ def build_entry_events(
     line_threshold = float(wildtrack_config["line_crossing_distance_threshold"])
     best_shot_window = int(wildtrack_config["best_shot_window_frames"])
     head_cfg = wildtrack_config["head_crop"]
+    best_shot_cfg = wildtrack_config.get("best_shot_selection", {})
     event_rows = []
     queue_rows = []
     event_assignment_rows = []
@@ -357,10 +442,15 @@ def build_entry_events(
                     break
             if crossing_row is None:
                 continue
-            best_record = select_best_record(
+            best_record, best_shot_meta = select_best_record(
                 records,
                 max(crossing_row["frame_id"] - 20, 0),
                 crossing_row["frame_id"] + best_shot_window,
+                camera_id=camera_id,
+                transition_map=transition_map,
+                best_shot_cfg=best_shot_cfg,
+                anchor_frame_id=crossing_row["frame_id"],
+                relation_type="entry",
             )
             if best_record is None:
                 continue
@@ -404,6 +494,12 @@ def build_entry_events(
                 "matched_subzone_region_id": spatial["matched_subzone_region_id"],
                 "assignment_point_x": spatial["assignment_point_x"],
                 "assignment_point_y": spatial["assignment_point_y"],
+                "best_shot_strategy": best_shot_meta.get("best_shot_strategy", ""),
+                "best_shot_reason": best_shot_meta.get("best_shot_reason", ""),
+                "best_shot_zone_id": best_shot_meta.get("best_shot_zone_id", ""),
+                "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
+                "best_shot_subzone_type": best_shot_meta.get("best_shot_subzone_type", ""),
+                "best_shot_frames_after_anchor": best_shot_meta.get("best_shot_frames_after_anchor", ""),
             }
             event_rows.append(event)
             queue_rows.append(
@@ -426,6 +522,11 @@ def build_entry_events(
                     "subzone_type": spatial["subzone_type"],
                     "foot_x": best_record["foot_x"],
                     "foot_y": best_record["foot_y"],
+                    "best_shot_strategy": best_shot_meta.get("best_shot_strategy", ""),
+                    "best_shot_reason": best_shot_meta.get("best_shot_reason", ""),
+                    "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
+                    "best_shot_subzone_type": best_shot_meta.get("best_shot_subzone_type", ""),
+                    "best_shot_frames_after_anchor": best_shot_meta.get("best_shot_frames_after_anchor", ""),
                     "matched_known_id": "",
                     "matched_known_score": "",
                     "unknown_global_id": "",
@@ -452,6 +553,11 @@ def build_entry_events(
                     "subzone_reason": spatial["subzone_reason"],
                     "zone_fallback_used": spatial["zone_fallback_used"],
                     "subzone_fallback_used": spatial["subzone_fallback_used"],
+                    "best_shot_strategy": best_shot_meta.get("best_shot_strategy", ""),
+                    "best_shot_reason": best_shot_meta.get("best_shot_reason", ""),
+                    "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
+                    "best_shot_subzone_type": best_shot_meta.get("best_shot_subzone_type", ""),
+                    "best_shot_frames_after_anchor": best_shot_meta.get("best_shot_frames_after_anchor", ""),
                 }
             )
     event_rows.sort(key=lambda row: (row["relative_sec"], row["camera_id"], row["local_track_id"]))

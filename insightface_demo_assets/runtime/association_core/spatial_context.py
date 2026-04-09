@@ -159,4 +159,10 @@ def build_event_assignment_audit_row(run_mode, event):
         "subzone_reason": event.get("subzone_reason", ""),
         "zone_fallback_used": event.get("zone_fallback_used", False),
         "subzone_fallback_used": event.get("subzone_fallback_used", False),
+        "best_shot_strategy": event.get("best_shot_strategy", ""),
+        "best_shot_reason": event.get("best_shot_reason", ""),
+        "best_shot_zone_id": event.get("best_shot_zone_id", ""),
+        "best_shot_subzone_id": event.get("best_shot_subzone_id", ""),
+        "best_shot_subzone_type": event.get("best_shot_subzone_type", ""),
+        "best_shot_frames_after_anchor": event.get("best_shot_frames_after_anchor", ""),
     }

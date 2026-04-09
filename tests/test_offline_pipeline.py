@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import yaml
 
-from offline_pipeline.event_builder import FrameSourceCache, build_entry_anchor_packets, build_entry_events
+from offline_pipeline.event_builder import FrameSourceCache, build_entry_anchor_packets, build_entry_events, select_best_record
 from offline_pipeline.orchestrator import load_pipeline_config
 
 
@@ -174,3 +174,52 @@ def test_entry_anchor_packet_schema_is_lightweight():
     assert packets[0]["packet_type"] == "entry_anchor"
     assert packets[0]["direction"] == "IN"
     assert packets[0]["crop_reference"]["video_path"] == "cam5.mp4"
+
+
+def test_line_aware_best_shot_prefers_exit_subzone_after_anchor():
+    records = [
+        {
+            "camera_id": "C5",
+            "frame_id": 10,
+            "area": 50000,
+            "foot_x": 10.0,
+            "foot_y": 10.0,
+        },
+        {
+            "camera_id": "C5",
+            "frame_id": 14,
+            "area": 30000,
+            "foot_x": 80.0,
+            "foot_y": 80.0,
+        },
+    ]
+    transition_map = {
+        "cameras": {
+            "C5": {
+                "default_zone_id": "c5_entry_main",
+                "default_subzone_id": "c5_outer_entry",
+                "zones": [{"zone_id": "c5_entry_main", "zone_type": "entry", "polygon": [[0, 0], [100, 0], [100, 100], [0, 100]]}],
+                "subzones": [
+                    {"subzone_id": "c5_outer_entry", "parent_zone_id": "c5_entry_main", "subzone_type": "entry", "polygon": [[0, 0], [40, 0], [40, 40], [0, 40]], "priority": 5},
+                    {"subzone_id": "c5_inner_exit", "parent_zone_id": "c5_entry_main", "subzone_type": "exit", "polygon": [[60, 60], [100, 60], [100, 100], [60, 100]], "priority": 10},
+                ],
+            }
+        }
+    }
+    selected, meta = select_best_record(
+        records,
+        frame_min=10,
+        frame_max=20,
+        camera_id="C5",
+        transition_map=transition_map,
+        best_shot_cfg={
+            "enabled": True,
+            "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
+            "minimum_frames_after_anchor": {"entry": 3},
+        },
+        anchor_frame_id=10,
+        relation_type="entry",
+    )
+    assert selected["frame_id"] == 14
+    assert meta["best_shot_subzone_id"] == "c5_inner_exit"
+    assert meta["best_shot_strategy"] == "line_aware_subzone_priority"

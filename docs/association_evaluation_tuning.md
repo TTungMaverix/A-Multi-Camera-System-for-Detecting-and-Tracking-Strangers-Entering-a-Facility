@@ -47,6 +47,11 @@ And the selected policy is written to:
 
 - `insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml`
 
+Important note:
+
+- the current tuned policy was selected before the latest line-aware best-shot refinement
+- if best-shot behavior changes materially, rerun the policy sweep so thresholds are chosen against the new candidate-event distribution
+
 ## Current Comparison Metrics
 
 - `known_accept_count`

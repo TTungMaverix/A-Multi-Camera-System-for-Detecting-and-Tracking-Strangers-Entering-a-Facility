@@ -4,6 +4,16 @@
   "selected_cameras": ["C3", "C5", "C6", "C7"],
   "best_shot_window_frames": 80,
   "line_crossing_distance_threshold": 140,
+  "best_shot_selection": {
+    "enabled": true,
+    "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
+    "minimum_frames_after_anchor": {
+      "entry": 3,
+      "overlap": 0,
+      "sequential": 1,
+      "weak_link": 1
+    }
+  },
   "head_crop": {
     "top_ratio": 0.02,
     "bottom_ratio": 0.45,

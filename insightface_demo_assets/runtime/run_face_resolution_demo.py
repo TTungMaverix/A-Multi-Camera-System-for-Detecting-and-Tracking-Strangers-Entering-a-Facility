@@ -496,7 +496,39 @@ def analyze_event_crops(app, events):
     return analyzed
 
 
-def select_best_record(records, frame_min=None, frame_max=None):
+DEFAULT_BEST_SHOT_SELECTION = {
+    "enabled": False,
+    "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
+    "minimum_frames_after_anchor": {
+        "entry": 0,
+        "overlap": 0,
+        "sequential": 0,
+        "weak_link": 0,
+    },
+}
+
+
+def _best_shot_cfg(best_shot_cfg):
+    merged = dict(DEFAULT_BEST_SHOT_SELECTION)
+    merged["minimum_frames_after_anchor"] = dict(DEFAULT_BEST_SHOT_SELECTION["minimum_frames_after_anchor"])
+    if not best_shot_cfg:
+        return merged
+    for key, value in best_shot_cfg.items():
+        if key == "minimum_frames_after_anchor" and isinstance(value, dict):
+            merged["minimum_frames_after_anchor"].update(value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _subzone_priority(subzone_type, cfg):
+    preferred = cfg.get("preferred_subzone_types", []) or []
+    if subzone_type in preferred:
+        return len(preferred) - preferred.index(subzone_type)
+    return 0
+
+
+def select_best_record(records, frame_min=None, frame_max=None, camera_id="", transition_map=None, best_shot_cfg=None, anchor_frame_id=None, relation_type="entry"):
     candidates = []
     for record in records:
         if frame_min is not None and record["frame_id"] < frame_min:
@@ -505,8 +537,60 @@ def select_best_record(records, frame_min=None, frame_max=None):
             continue
         candidates.append(record)
     if not candidates:
-        return None
-    return max(candidates, key=lambda row: (row["area"], -abs(row["frame_id"] - (frame_min or row["frame_id"]))))
+        return None, {}
+
+    cfg = _best_shot_cfg(best_shot_cfg)
+    if not cfg.get("enabled") or not camera_id or not transition_map:
+        selected = max(candidates, key=lambda row: (row["area"], -abs(row["frame_id"] - (frame_min or row["frame_id"]))))
+        return selected, {
+            "best_shot_strategy": "max_area_in_window",
+            "best_shot_reason": "selected_largest_bbox_area_in_window",
+            "best_shot_zone_id": "",
+            "best_shot_subzone_id": "",
+            "best_shot_subzone_type": "",
+            "best_shot_frames_after_anchor": as_int(selected["frame_id"]) - as_int(anchor_frame_id, as_int(selected["frame_id"])),
+        }
+
+    min_frames_after_anchor = as_int(cfg.get("minimum_frames_after_anchor", {}).get(relation_type, 0))
+    ranked = []
+    for record in candidates:
+        spatial = core_resolve_spatial_context(camera_id, record.get("foot_x"), record.get("foot_y"), transition_map)
+        frames_after_anchor = as_int(record["frame_id"]) - as_int(anchor_frame_id, as_int(record["frame_id"]))
+        ranked.append(
+            {
+                "record": record,
+                "spatial": spatial,
+                "frames_after_anchor": frames_after_anchor,
+                "after_anchor_ok": frames_after_anchor >= min_frames_after_anchor,
+                "subzone_priority": _subzone_priority(spatial.get("subzone_type", ""), cfg),
+            }
+        )
+    ranked.sort(
+        key=lambda item: (
+            1 if item["after_anchor_ok"] else 0,
+            item["subzone_priority"],
+            item["record"]["area"],
+            item["frames_after_anchor"],
+        ),
+        reverse=True,
+    )
+    selected = ranked[0]
+    record = selected["record"]
+    spatial = selected["spatial"]
+    reason_bits = [
+        f"after_anchor_ok={str(selected['after_anchor_ok']).lower()}",
+        f"frames_after_anchor={selected['frames_after_anchor']}",
+        f"subzone_type={spatial.get('subzone_type', '') or 'none'}",
+        f"bbox_area={record['area']}",
+    ]
+    return record, {
+        "best_shot_strategy": "line_aware_subzone_priority",
+        "best_shot_reason": ";".join(reason_bits),
+        "best_shot_zone_id": spatial.get("zone_id", ""),
+        "best_shot_subzone_id": spatial.get("subzone_id", ""),
+        "best_shot_subzone_type": spatial.get("subzone_type", ""),
+        "best_shot_frames_after_anchor": selected["frames_after_anchor"],
+    }
 
 
 def build_timeline_audit(track_rows, selected_cameras):
@@ -726,6 +810,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
     camera_cfgs = config["cameras"]
     line_threshold = float(config["line_crossing_distance_threshold"])
     best_shot_window = int(config["best_shot_window_frames"])
+    best_shot_cfg = config.get("best_shot_selection", {})
     topology = build_topology(transition_map)
     for src_camera, targets in topology.items():
         for dst_camera, info in targets.items():
@@ -784,7 +869,16 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     )
                     continue
                 crossing_row = anchor["crossing_row"]
-                best_record = select_best_record(records, max(crossing_row["frame_id"] - 20, 0), crossing_row["frame_id"] + best_shot_window)
+                best_record, best_shot_meta = select_best_record(
+                    records,
+                    max(crossing_row["frame_id"] - 20, 0),
+                    crossing_row["frame_id"] + best_shot_window,
+                    camera_id=camera_id,
+                    transition_map=transition_map,
+                    best_shot_cfg=best_shot_cfg,
+                    anchor_frame_id=crossing_row["frame_id"],
+                    relation_type="entry",
+                )
                 if best_record is None:
                     placeholder_rows.append(
                         {
@@ -813,6 +907,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                         "anchor_relative_sec": crossing_row["relative_sec"],
                         "relation_type": "entry",
                         "same_area_overlap": False,
+                        **best_shot_meta,
                     },
                     transition_map,
                     frame_cache=frame_cache,
@@ -903,10 +998,15 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     final_rows.append(placeholder)
                     continue
 
-                best_record = select_best_record(
+                best_record, best_shot_meta = select_best_record(
                     records,
                     max(best_option["candidate_row"]["frame_id"] - 15, 0),
                     best_option["candidate_row"]["frame_id"] + best_shot_window,
+                    camera_id=camera_id,
+                    transition_map=transition_map,
+                    best_shot_cfg=best_shot_cfg,
+                    anchor_frame_id=best_option["candidate_row"]["frame_id"],
+                    relation_type=best_option["relation"]["relation_type"],
                 )
                 if best_record is None:
                     placeholder["drop_reason"] = "not_selected_as_best_event"
@@ -936,6 +1036,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                         "avg_travel_time": relation["avg_travel_time"],
                         "max_travel_time": relation["max_travel_time"],
                         "delta_from_anchor_sec": round(best_option["candidate_row"]["relative_sec"] - anchor_event["relative_sec"], 3),
+                        **best_shot_meta,
                     },
                     transition_map,
                     frame_cache=frame_cache,
@@ -1600,6 +1701,12 @@ def main(config_path: Path):
                 "matched_subzone_region_id": baseline_spatial["matched_subzone_region_id"],
                 "assignment_point_x": baseline_spatial["assignment_point_x"],
                 "assignment_point_y": baseline_spatial["assignment_point_y"],
+                "best_shot_strategy": row.get("best_shot_strategy", ""),
+                "best_shot_reason": row.get("best_shot_reason", ""),
+                "best_shot_zone_id": row.get("best_shot_zone_id", ""),
+                "best_shot_subzone_id": row.get("best_shot_subzone_id", ""),
+                "best_shot_subzone_type": row.get("best_shot_subzone_type", ""),
+                "best_shot_frames_after_anchor": row.get("best_shot_frames_after_anchor", ""),
             }
         )
     analyzed_baseline = analyze_event_crops(app, baseline_events)
