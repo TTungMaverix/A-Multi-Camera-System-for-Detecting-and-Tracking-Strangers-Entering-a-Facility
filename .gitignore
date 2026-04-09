@@ -89,5 +89,9 @@ wildtrack_roi/
 /insightface_demo_assets/runtime/audit_*.csv
 /insightface_demo_assets/runtime/audit_*.json
 /insightface_demo_assets/runtime/audit_*.md
+/insightface_demo_assets/known_faces/
+/insightface_demo_assets/known_face_manifest.csv
+/insightface_demo_assets/known_face_manifest_runtime.csv
 /outputs/offline_runs/
+/outputs/live_runs/
 /outputs/evaluation/

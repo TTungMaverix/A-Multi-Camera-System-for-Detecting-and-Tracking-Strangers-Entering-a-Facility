@@ -21,7 +21,7 @@ The current runnable vertical slice is video-file-first:
 5. create or reuse unknown IDs
 6. export resolved events, timelines, and audit logs into a single run folder
 
-RTSP/live ingestion is planned later. Video files are the current priority.
+Video files remain the primary thesis validation path, but a lightweight live ingestion baseline now exists for demo preparation.
 
 Important limitation:
 
@@ -64,6 +64,7 @@ Additional docs:
 - [docs/offline_pipeline.md](docs/offline_pipeline.md)
 - [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
+- [docs/live_pipeline.md](docs/live_pipeline.md)
 
 ## Phase Status
 
@@ -86,7 +87,9 @@ Current code status:
 - body-first fallback is now part of the default association flow when face is missing or unreliable
 - offline runs export standardized folders under `outputs/offline_runs/`
 - scenario tests for association core and offline event creation live under `tests/`
-- live ingestion, dashboard, and storage remain later phases
+- live ingestion baseline now lives under `insightface_demo_assets/runtime/live_pipeline/`
+- live outputs are exported under `outputs/live_runs/`
+- lightweight web demo is still a separate later phase
 
 ## Project Scope
 
@@ -129,6 +132,20 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.low_load.yaml"
 ```
 
+Live file-sanity run:
+
+```cmd
+cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+powershell -ExecutionPolicy Bypass -File ".\run_live_multicam_demo.ps1"
+```
+
+Direct live orchestrator:
+
+```cmd
+cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
+```
+
 Low-load multiprocessing sanity run:
 
 ```cmd
@@ -157,6 +174,9 @@ Main outputs:
 - `outputs/offline_runs/<run_name>/summaries/`
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
+- `outputs/live_runs/<run_name>/events/`
+- `outputs/live_runs/<run_name>/association_logs/`
+- `outputs/live_runs/<run_name>/summaries/`
 - `insightface_demo_assets/runtime/face_resolution_summary.json`
 - `insightface_demo_assets/runtime/stream_identity_timeline.csv`
 - `insightface_demo_assets/runtime/audit_report.md`
@@ -186,6 +206,7 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |  |- known_faces/
 |  |- known_face_manifest.csv
 |  |- runtime/
+|     |- live_pipeline/
 |     |- offline_pipeline/
 |     |- association_core/
 |     |- config/
@@ -193,18 +214,23 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |     |  |- association_policy.wildtrack_tuned.yaml
 |     |  |- association_tuning_grid.example.yaml
 |     |  |- camera_transition_map.example.yaml
+|     |  |- live_pipeline_demo.file_sanity.yaml
+|     |  |- live_pipeline_demo.rtsp.example.yaml
 |     |  |- offline_pipeline_demo.example.yaml
 |     |  |- offline_pipeline_demo.low_load.yaml
 |     |  `- offline_pipeline_demo.multiprocessing.low_load.yaml
 |     |- face_demo_config.json
 |     |- run_association_tuning.py
 |     |- run_face_resolution_demo.py
+|     |- run_live_multicam_demo.py
 |     `- run_offline_multicam_pipeline.py
 |- outputs/
 |  `- offline_runs/
+|  `- live_runs/
 |- tests/
 |  |- conftest.py
 |  |- test_association_core.py
+|  |- test_live_pipeline.py
 |  `- test_offline_pipeline.py
 |- requirements-dev.txt
 |- Wildtrack/
@@ -226,8 +252,12 @@ Notes:
 - `runtime/config/association_tuning_grid.phase_f.yaml` is the Phase F tuning sweep config for regenerated candidate events.
 - `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
 - `runtime/config/offline_pipeline_demo.multiprocessing.low_load.yaml` is the lightweight producer-consumer sample config.
+- `runtime/config/live_pipeline_demo.file_sanity.yaml` is the current live-ingestion sanity config.
+- `runtime/config/live_pipeline_demo.rtsp.example.yaml` and `runtime/config/live_pipeline_demo.webcam.example.yaml` are live source templates.
+- `runtime/live_pipeline/orchestrator.py` is the lightweight live producer-consumer baseline.
 - `runtime/config/association_tuning_grid.example.yaml` is the public tuning sweep template.
 - `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
+- `outputs/live_runs/` is generated at run time and is intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.
 
@@ -239,7 +269,7 @@ Near-term implementation should proceed in small runnable phases:
 2. add multiprocessing producer-consumer around the offline flow
 3. add evaluation and threshold tuning from cached offline outputs
 4. improve best-shot selection without adding heavy new models
-5. add RTSP/live only after the file-based pipeline is stable
+5. extend the current live baseline from file replay to real RTSP/webcam demos
 
 ## Dependencies
 
