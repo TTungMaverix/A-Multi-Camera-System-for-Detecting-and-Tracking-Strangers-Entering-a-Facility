@@ -96,6 +96,11 @@ def sync_final_outputs(output_root: Path):
 def run_offline_pipeline(config_path: Path, cli_overrides=None):
     cli_overrides = cli_overrides or {}
     offline_config = load_pipeline_config(config_path)
+    execution_mode = (offline_config.get("execution", {}) or {}).get("mode", "sequential")
+    if execution_mode == "multiprocessing":
+        from offline_pipeline.multiprocessing_runner import run_offline_pipeline_multiprocess
+
+        return run_offline_pipeline_multiprocess(config_path, cli_overrides=cli_overrides)
     project_root = resolve_path(config_path.parent, offline_config.get("project_root", "."))
     offline_config["project_root"] = str(project_root)
 

@@ -496,18 +496,7 @@ def build_global_gt_summary(track_rows):
     return rows
 
 
-def build_offline_stage_inputs(offline_config, transition_map):
-    project_root = Path(offline_config["project_root"]).resolve()
-    dataset_root = Path(offline_config["dataset"]["root"])
-    if not dataset_root.is_absolute():
-        dataset_root = (project_root / dataset_root).resolve()
-    wildtrack_config_path = Path(offline_config["wildtrack_demo_config"])
-    if not wildtrack_config_path.is_absolute():
-        wildtrack_config_path = (project_root / wildtrack_config_path).resolve()
-    wildtrack_config = load_json(wildtrack_config_path)
-    output_root = Path(offline_config["output_root"])
-    if not output_root.is_absolute():
-        output_root = (project_root / output_root).resolve()
+def materialize_stage_inputs(project_root: Path, dataset_root: Path, wildtrack_config_path: Path, wildtrack_config, output_root: Path, track_rows_by_camera, frame_source_mode, low_load_cfg, transition_map):
     tracks_dir = output_root / "tracks"
     events_dir = output_root / "events"
     crops_dir = output_root / "crops"
@@ -516,31 +505,9 @@ def build_offline_stage_inputs(offline_config, transition_map):
     for directory in (tracks_dir, events_dir, crops_dir, summaries_dir, audit_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    frame_source_mode = offline_config.get("frame_source_mode", "video_files")
-    video_sources = {}
-    for camera_id, video_path in (offline_config["dataset"].get("video_sources", {}) or {}).items():
-        resolved = Path(video_path)
-        if not resolved.is_absolute():
-            resolved = (project_root / resolved).resolve()
-        video_sources[camera_id] = resolved
-
-    fps = float(wildtrack_config["assumed_video_fps"])
-    low_load_cfg = offline_config.get("low_load", {})
-    track_rows_by_camera = {}
     all_track_rows = []
     for camera_id in wildtrack_config["selected_cameras"]:
-        if camera_id not in video_sources:
-            raise RuntimeError(f"Missing video source for {camera_id} in offline pipeline config.")
-        rows = extract_camera_track_rows(
-            dataset_root,
-            camera_id,
-            wildtrack_config["cameras"][camera_id],
-            fps,
-            video_sources[camera_id],
-            low_load_cfg,
-            frame_source_mode,
-        )
-        track_rows_by_camera[camera_id] = rows
+        rows = track_rows_by_camera.get(camera_id, [])
         all_track_rows.extend(rows)
         write_csv(tracks_dir / f"{camera_id}_tracks.csv", rows, fieldnames_for_rows(rows))
 
@@ -583,7 +550,6 @@ def build_offline_stage_inputs(offline_config, transition_map):
         "wildtrack_config_path": str(wildtrack_config_path),
         "frame_source_mode": frame_source_mode,
         "low_load": low_load_cfg,
-        "video_sources": {camera_id: str(path) for camera_id, path in video_sources.items()},
         "selected_cameras": list(wildtrack_config["selected_cameras"]),
         "filtered_track_rows": len(all_track_rows),
         "entry_in_events": len(entry_events),
@@ -609,3 +575,105 @@ def build_offline_stage_inputs(offline_config, transition_map):
         "stage_summary_json": str(summaries_dir / "stage_input_summary.json"),
         "stage_assignment_audit_csv": str(audit_dir / "entry_event_assignment_audit.csv"),
     }
+
+
+def build_entry_anchor_packets(camera_id, camera_cfg, camera_rows, line_threshold, transition_map):
+    packets = []
+    track_map = group_rows_by_track(camera_rows)
+    for local_track_id, records in track_map.items():
+        if len(records) < 2:
+            continue
+        for index in range(1, len(records)):
+            prev_row = records[index - 1]
+            curr_row = records[index]
+            if not test_entry_crossing(
+                {"x": prev_row["foot_x"], "y": prev_row["foot_y"]},
+                {"x": curr_row["foot_x"], "y": curr_row["foot_y"]},
+                camera_cfg["entry_line"],
+                camera_cfg["in_side_point"],
+                line_threshold,
+            ):
+                continue
+            spatial = resolve_spatial_context(camera_id, curr_row["foot_x"], curr_row["foot_y"], transition_map)
+            packets.append(
+                {
+                    "packet_type": "entry_anchor",
+                    "camera_id": camera_id,
+                    "frame_idx": int(curr_row["frame_id"]),
+                    "relative_sec": float(curr_row["relative_sec"]),
+                    "local_track_id": str(local_track_id),
+                    "global_gt_id": int(curr_row["global_gt_id"]),
+                    "direction": "IN",
+                    "bbox_xmin": int(curr_row["xmin"]),
+                    "bbox_ymin": int(curr_row["ymin"]),
+                    "bbox_xmax": int(curr_row["xmax"]),
+                    "bbox_ymax": int(curr_row["ymax"]),
+                    "bbox_area": int(curr_row["area"]),
+                    "foot_x": float(curr_row["foot_x"]),
+                    "foot_y": float(curr_row["foot_y"]),
+                    "zone_id": spatial["zone_id"],
+                    "subzone_id": spatial["subzone_id"],
+                    "zone_type": spatial["zone_type"],
+                    "subzone_type": spatial["subzone_type"],
+                    "crop_reference": {
+                        "frame_source_mode": curr_row.get("frame_source_mode", "image_subsets"),
+                        "video_path": curr_row.get("video_path", ""),
+                        "image_rel_path": curr_row.get("image_rel_path", ""),
+                    },
+                }
+            )
+            break
+    packets.sort(key=lambda row: (row["relative_sec"], row["camera_id"], row["local_track_id"]))
+    return packets
+
+
+def build_offline_stage_inputs(offline_config, transition_map):
+    project_root = Path(offline_config["project_root"]).resolve()
+    dataset_root = Path(offline_config["dataset"]["root"])
+    if not dataset_root.is_absolute():
+        dataset_root = (project_root / dataset_root).resolve()
+    wildtrack_config_path = Path(offline_config["wildtrack_demo_config"])
+    if not wildtrack_config_path.is_absolute():
+        wildtrack_config_path = (project_root / wildtrack_config_path).resolve()
+    wildtrack_config = load_json(wildtrack_config_path)
+    output_root = Path(offline_config["output_root"])
+    if not output_root.is_absolute():
+        output_root = (project_root / output_root).resolve()
+
+    frame_source_mode = offline_config.get("frame_source_mode", "video_files")
+    video_sources = {}
+    for camera_id, video_path in (offline_config["dataset"].get("video_sources", {}) or {}).items():
+        resolved = Path(video_path)
+        if not resolved.is_absolute():
+            resolved = (project_root / resolved).resolve()
+        video_sources[camera_id] = resolved
+
+    fps = float(wildtrack_config["assumed_video_fps"])
+    low_load_cfg = offline_config.get("low_load", {})
+    track_rows_by_camera = {}
+    for camera_id in wildtrack_config["selected_cameras"]:
+        if camera_id not in video_sources:
+            raise RuntimeError(f"Missing video source for {camera_id} in offline pipeline config.")
+        track_rows_by_camera[camera_id] = extract_camera_track_rows(
+            dataset_root,
+            camera_id,
+            wildtrack_config["cameras"][camera_id],
+            fps,
+            video_sources[camera_id],
+            low_load_cfg,
+            frame_source_mode,
+        )
+
+    result = materialize_stage_inputs(
+        project_root,
+        dataset_root,
+        wildtrack_config_path,
+        wildtrack_config,
+        output_root,
+        track_rows_by_camera,
+        frame_source_mode,
+        low_load_cfg,
+        transition_map,
+    )
+    result["video_sources"] = {camera_id: str(path) for camera_id, path in video_sources.items()}
+    return result

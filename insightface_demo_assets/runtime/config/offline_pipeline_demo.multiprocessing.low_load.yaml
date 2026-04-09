@@ -1,8 +1,8 @@
 offline_pipeline:
   project_root: D:\ĐỒ ÁN TỐT NGHIỆP
-  pipeline_name: wildtrack_offline_multicam_demo_low_load
+  pipeline_name: wildtrack_offline_multicam_demo_multiprocessing
   source_backend: wildtrack_gt_annotations
-  output_root: outputs/offline_runs/wildtrack_low_load
+  output_root: outputs/offline_runs/wildtrack_multiprocessing_low_load
   frame_source_mode: image_subsets
   low_load:
     enabled: true
@@ -10,8 +10,8 @@ offline_pipeline:
     end_frame: 260
     frame_stride: 2
   execution:
-    mode: sequential
-    packet_batch_size: 128
+    mode: multiprocessing
+    packet_batch_size: 64
     queue_max_size: 32
     start_method: spawn
   dataset:

@@ -11,6 +11,9 @@ offline_pipeline:
     frame_stride: 1
   execution:
     mode: sequential
+    packet_batch_size: 256
+    queue_max_size: 64
+    start_method: spawn
   dataset:
     root: Wildtrack
     video_sources:

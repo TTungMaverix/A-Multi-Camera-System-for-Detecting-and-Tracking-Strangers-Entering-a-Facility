@@ -57,6 +57,7 @@ Additional docs:
 - [docs/camera_transition_map_config.md](docs/camera_transition_map_config.md)
 - [docs/camera_subzone_config.md](docs/camera_subzone_config.md)
 - [docs/offline_pipeline.md](docs/offline_pipeline.md)
+- [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
 
 ## Phase Status
 
@@ -65,6 +66,7 @@ Current code status:
 - `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the face-resolution compatibility entrypoint
 - `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py` is the offline end-to-end orchestrator entrypoint
 - `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
+- the offline orchestrator now supports both `sequential` and `multiprocessing` execution modes
 - association core logic lives under `insightface_demo_assets/runtime/association_core/`
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
 - camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
@@ -113,6 +115,13 @@ Low-load sanity run:
 ```cmd
 cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.low_load.yaml"
+```
+
+Low-load multiprocessing sanity run:
+
+```cmd
+cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.multiprocessing.low_load.yaml"
 ```
 
 To run only the face-resolution stage:
@@ -164,7 +173,8 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |     |  |- association_policy.example.yaml
 |     |  |- camera_transition_map.example.yaml
 |     |  |- offline_pipeline_demo.example.yaml
-|     |  `- offline_pipeline_demo.low_load.yaml
+|     |  |- offline_pipeline_demo.low_load.yaml
+|     |  `- offline_pipeline_demo.multiprocessing.low_load.yaml
 |     |- face_demo_config.json
 |     |- run_face_resolution_demo.py
 |     `- run_offline_multicam_pipeline.py
@@ -188,6 +198,7 @@ Notes:
 - `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
 - `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, overlap behavior, and subzones.
 - `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
+- `runtime/config/offline_pipeline_demo.multiprocessing.low_load.yaml` is the lightweight producer-consumer sample config.
 - `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.
