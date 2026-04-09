@@ -90,3 +90,4 @@ wildtrack_roi/
 /insightface_demo_assets/runtime/audit_*.json
 /insightface_demo_assets/runtime/audit_*.md
 /outputs/offline_runs/
+/outputs/evaluation/

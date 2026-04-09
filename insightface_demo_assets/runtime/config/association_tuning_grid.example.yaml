@@ -1,0 +1,42 @@
+association_tuning:
+  project_root: D:\ĐỒ ÁN TỐT NGHIỆP
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  wildtrack_demo_config: wildtrack_demo/wildtrack_demo_config.json
+  base_policy_config: insightface_demo_assets/runtime/config/association_policy.example.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml
+  output_root: outputs/evaluation/association_policy_sweep
+  selected_policy_output: insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml
+  refresh_feature_cache: false
+  input:
+    candidate_events_csv: insightface_demo_assets/runtime/generated_candidate_events_mode_b.csv
+    known_face_gallery_root: insightface_demo_assets/known_faces
+    known_face_manifest_csv:
+  variants:
+    - name: baseline_example
+      overrides: {}
+    - name: overlap_reuse_relaxed
+      overrides:
+        decision_policy:
+          unknown_reuse_threshold: 0.16
+          margin_by_relation:
+            overlap: 0.01
+          relation_thresholds:
+            overlap:
+              face_primary: 0.16
+              face_secondary: 0.28
+              body_primary: 0.57
+              body_secondary: 0.16
+    - name: stricter_merge_guard
+      overrides:
+        decision_policy:
+          unknown_reuse_threshold: 0.2
+          margin_by_relation:
+            overlap: 0.02
+            sequential: 0.025
+            weak_link: 0.05
+          relation_thresholds:
+            overlap:
+              face_primary: 0.2
+              face_secondary: 0.32
+              body_primary: 0.62
+              body_secondary: 0.2

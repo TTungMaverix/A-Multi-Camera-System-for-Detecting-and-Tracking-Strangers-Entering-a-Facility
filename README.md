@@ -58,6 +58,7 @@ Additional docs:
 - [docs/camera_subzone_config.md](docs/camera_subzone_config.md)
 - [docs/offline_pipeline.md](docs/offline_pipeline.md)
 - [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
+- [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 
 ## Phase Status
 
@@ -68,7 +69,9 @@ Current code status:
 - `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
 - the offline orchestrator now supports both `sequential` and `multiprocessing` execution modes
 - association core logic lives under `insightface_demo_assets/runtime/association_core/`
+- `insightface_demo_assets/runtime/run_association_tuning.py` now provides a cache-first threshold tuning workflow
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
+- the current selected policy for Wildtrack demo runs is `insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml`
 - camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
 - offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 - association decision logs are exported under `association_logs/` in each offline run
@@ -124,6 +127,13 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.multiprocessing.low_load.yaml"
 ```
 
+Run association tuning from cached candidate events:
+
+```cmd
+cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_association_tuning.py" --config ".\insightface_demo_assets\runtime\config\association_tuning_grid.example.yaml"
+```
+
 To run only the face-resolution stage:
 
 ```cmd
@@ -171,11 +181,14 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |     |- association_core/
 |     |- config/
 |     |  |- association_policy.example.yaml
+|     |  |- association_policy.wildtrack_tuned.yaml
+|     |  |- association_tuning_grid.example.yaml
 |     |  |- camera_transition_map.example.yaml
 |     |  |- offline_pipeline_demo.example.yaml
 |     |  |- offline_pipeline_demo.low_load.yaml
 |     |  `- offline_pipeline_demo.multiprocessing.low_load.yaml
 |     |- face_demo_config.json
+|     |- run_association_tuning.py
 |     |- run_face_resolution_demo.py
 |     `- run_offline_multicam_pipeline.py
 |- outputs/
@@ -196,9 +209,11 @@ Notes:
 - `run_multicam_identity_demo.ps1` now routes to the offline orchestrator so the legacy command still works.
 - `run_face_resolution_demo.py` remains the stage-only entrypoint for face resolution and association.
 - `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
+- `runtime/config/association_policy.wildtrack_tuned.yaml` is the current selected policy from cached offline tuning experiments.
 - `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, overlap behavior, and subzones.
 - `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
 - `runtime/config/offline_pipeline_demo.multiprocessing.low_load.yaml` is the lightweight producer-consumer sample config.
+- `runtime/config/association_tuning_grid.example.yaml` is the public tuning sweep template.
 - `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
 - `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
 - `Dataset/` is legacy/reference material and is not the current runnable thesis path.
