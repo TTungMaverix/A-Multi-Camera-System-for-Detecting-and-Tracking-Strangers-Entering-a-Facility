@@ -32,40 +32,40 @@ association_policy:
   gallery_lifecycle:
     top_k_face_refs: 3
     top_k_body_refs: 5
-    ttl_sec: 12.0
+    ttl_sec: 8.0
     face_quality_area_bonus: 0.001
     representative_update_policy: mean_top_k_refs
     expiry_policy: hard_ttl
   decision_policy:
     known_accept_threshold: 0.65
     known_margin_threshold: 0.02
-    unknown_reuse_threshold: 0.16
+    unknown_reuse_threshold: 0.12
     create_rule: create_new_unknown_when_no_safe_match
     defer_policy:
       quality_reliability_max: 0.35
       quality_gate_fail_action: defer
       ambiguous_low_quality_action: create_unknown
     margin_by_relation:
-      overlap: 0.01
-      sequential: 0.02
-      weak_link: 0.04
+      overlap: 0.005
+      sequential: 0.012
+      weak_link: 0.025
       camera_already_seen: 1.0
       no_link: 1.0
     relation_thresholds:
       overlap:
-        face_primary: 0.16
-        face_secondary: 0.28
-        body_primary: 0.57
-        body_secondary: 0.16
+        face_primary: 0.14
+        face_secondary: 0.2
+        body_primary: 0.47
+        body_secondary: 0.08
       sequential:
-        face_primary: 0.2
-        face_secondary: 0.35
-        body_primary: 0.58
-        body_secondary: 0.18
+        face_primary: 0.17
+        face_secondary: 0.24
+        body_primary: 0.5
+        body_secondary: 0.1
       weak_link:
-        face_primary: 0.24
-        face_secondary: 0.4
-        body_primary: 0.64
-        body_secondary: 0.22
+        face_primary: 0.2
+        face_secondary: 0.3
+        body_primary: 0.56
+        body_secondary: 0.12
     minimum_evidence:
       require_secondary_when_available: true

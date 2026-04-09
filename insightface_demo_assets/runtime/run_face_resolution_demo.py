@@ -142,6 +142,16 @@ def choose_best_face(faces):
     return max(faces, key=score)
 
 
+_BODY_HOG_DESCRIPTOR = None
+
+
+def _body_hog_descriptor():
+    global _BODY_HOG_DESCRIPTOR
+    if _BODY_HOG_DESCRIPTOR is None:
+        _BODY_HOG_DESCRIPTOR = cv2.HOGDescriptor((64, 128), (16, 16), (8, 8), (8, 8), 9)
+    return _BODY_HOG_DESCRIPTOR
+
+
 def extract_embedding_from_image(app, image_path: Path):
     result = {
         "status": "missing",
@@ -199,18 +209,19 @@ def extract_body_feature(image_path: Path):
         result["status"] = "too_small"
         result["message"] = f"too_small:{w}x{h}"
         return result
-    resized = cv2.resize(image, (48, 128), interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(image, (64, 128), interpolation=cv2.INTER_LINEAR)
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    hog_vec = _body_hog_descriptor().compute(gray)
+    hog_vec = hog_vec.reshape(-1).astype(np.float32) if hog_vec is not None else np.zeros((0,), dtype=np.float32)
     hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-    halves = [hsv, hsv[:64, :, :], hsv[64:, :, :]]
-    parts = []
-    for part in halves:
-        hist = cv2.calcHist([part], [0, 1, 2], None, [8, 8, 4], [0, 180, 0, 256, 0, 256])
-        hist = hist.flatten().astype(np.float32)
-        parts.append(hist)
-    embedding = normalize(np.concatenate(parts, axis=0))
+    hs_parts = []
+    for part in (hsv, hsv[:64, :, :], hsv[64:, :, :]):
+        hist = cv2.calcHist([part], [0, 1], None, [12, 8], [0, 180, 0, 256]).flatten().astype(np.float32)
+        hs_parts.append(hist)
+    embedding = normalize(np.concatenate([hog_vec, *hs_parts], axis=0))
     result["status"] = "ok"
     result["embedding"] = embedding
-    result["message"] = "ok"
+    result["message"] = "ok_hog_hs_descriptor"
     return result
 
 

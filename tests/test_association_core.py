@@ -92,6 +92,7 @@ def make_item(
     gt_id="1",
     zone_id="",
     subzone_id="",
+    face_det_score=None,
 ):
     return {
         "event": {
@@ -113,7 +114,7 @@ def make_item(
         "face_embedding": np.asarray(face, dtype=np.float32) if face is not None else None,
         "face_status": "ok" if face is not None else "missing",
         "face_count": 1 if face is not None else 0,
-        "face_det_score": 0.9 if face is not None else 0.0,
+        "face_det_score": (0.9 if face is not None else 0.0) if face_det_score is None else float(face_det_score),
         "used_face_crop": "head" if face is not None else "",
         "used_face_crop_path": "",
         "face_bbox": "",
@@ -235,6 +236,27 @@ def test_ambiguous_margin_creates_new_unknown_by_policy():
     assert rows[2]["resolution_source"] == "model_unknown_new_profile"
     assert debug["decision_logs"][2]["decision"] == "create_new"
     assert "ambiguous" in debug["decision_logs"][2]["reason_code"]
+
+
+def test_body_fallback_reuses_when_face_is_low_quality():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),
+        make_item("e2", "C2", 0.2, face=[1.0, 0.0], body=[1.0, 0.0], face_det_score=0.05),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert rows[1]["body_fallback_used"] is True
+    assert rows[1]["modality_primary_used"] == "body"
+    assert debug["decision_logs"][1]["body_fallback_used"] is True
+    assert debug["decision_logs"][1]["face_unusable_reason"] == "face_quality_below_reliable_threshold"
 
 
 def test_weak_link_requires_strong_appearance_but_can_reuse():

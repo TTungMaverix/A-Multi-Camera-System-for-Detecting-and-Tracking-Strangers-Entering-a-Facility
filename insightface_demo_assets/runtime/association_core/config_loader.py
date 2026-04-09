@@ -39,6 +39,10 @@ DEFAULT_ASSOCIATION_POLICY = {
         "prefer_primary_face_when_reliable": True,
         "allow_body_primary_fallback": True,
         "secondary_available_min_score": 0.0,
+        "face_reference_weight": 0.7,
+        "face_representative_weight": 0.3,
+        "body_reference_weight": 0.65,
+        "body_representative_weight": 0.35,
     },
     "gallery_lifecycle": {
         "top_k_face_refs": 3,

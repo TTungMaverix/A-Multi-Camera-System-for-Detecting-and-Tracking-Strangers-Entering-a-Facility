@@ -57,6 +57,10 @@ Additional docs:
 - [docs/camera_transition_map_config.md](docs/camera_transition_map_config.md)
 - [docs/camera_subzone_config.md](docs/camera_subzone_config.md)
 - [docs/line_aware_best_shot.md](docs/line_aware_best_shot.md)
+- [docs/phase_f_quality_diagnostic.md](docs/phase_f_quality_diagnostic.md)
+- [docs/phase_f_c5_c6_map_fix.md](docs/phase_f_c5_c6_map_fix.md)
+- [docs/phase_f_body_fallback.md](docs/phase_f_body_fallback.md)
+- [docs/phase_f_tuning_rerun.md](docs/phase_f_tuning_rerun.md)
 - [docs/offline_pipeline.md](docs/offline_pipeline.md)
 - [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
@@ -73,11 +77,13 @@ Current code status:
 - `insightface_demo_assets/runtime/run_association_tuning.py` now provides a cache-first threshold tuning workflow
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
 - the current selected policy for Wildtrack demo runs is `insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml`
+- the current selected policy after Phase F is `insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml`
 - camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
 - entry-camera best-shot selection is now line-aware and subzone-aware through `wildtrack_demo/wildtrack_demo_config.json`
 - offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 - association decision logs are exported under `association_logs/` in each offline run
 - event-generation audit now records best-shot strategy, subzone choice, and frames after anchor
+- body-first fallback is now part of the default association flow when face is missing or unreliable
 - offline runs export standardized folders under `outputs/offline_runs/`
 - scenario tests for association core and offline event creation live under `tests/`
 - live ingestion, dashboard, and storage remain later phases
@@ -213,9 +219,11 @@ Notes:
 - `run_multicam_identity_demo.ps1` and `run_offline_multicam_pipeline.ps1` now resolve paths relative to the script location instead of relying on hard-coded absolute Windows paths.
 - `run_face_resolution_demo.py` remains the stage-only entrypoint for face resolution and association.
 - `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
-- `runtime/config/association_policy.wildtrack_tuned.yaml` is the current selected policy from cached offline tuning experiments.
+- `runtime/config/association_policy.wildtrack_tuned.yaml` is the pre-Phase-F selected policy kept for reference.
+- `runtime/config/association_policy.wildtrack_phase_f_tuned.yaml` is the current selected policy after the Phase F body-fallback and map-fix rerun.
 - `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, overlap behavior, and subzones.
 - `wildtrack_demo/wildtrack_demo_config.json` now carries line-aware best-shot preferences such as preferred subzone types and minimum frames after an anchor crossing.
+- `runtime/config/association_tuning_grid.phase_f.yaml` is the Phase F tuning sweep config for regenerated candidate events.
 - `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
 - `runtime/config/offline_pipeline_demo.multiprocessing.low_load.yaml` is the lightweight producer-consumer sample config.
 - `runtime/config/association_tuning_grid.example.yaml` is the public tuning sweep template.

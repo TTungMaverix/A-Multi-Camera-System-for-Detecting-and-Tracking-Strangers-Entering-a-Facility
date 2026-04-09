@@ -26,5 +26,5 @@ offline_pipeline:
   known_gallery:
     manifest_csv: insightface_demo_assets/known_face_manifest.csv
     gallery_root: insightface_demo_assets/known_faces
-  association_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml
+  association_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml
   camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml

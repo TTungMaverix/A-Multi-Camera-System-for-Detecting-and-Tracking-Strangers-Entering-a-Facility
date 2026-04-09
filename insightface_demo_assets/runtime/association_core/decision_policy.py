@@ -108,7 +108,7 @@ def _candidate_acceptance(candidate, policy):
         return False, "below_primary_threshold", threshold_info
     if (
         minimum_evidence["require_secondary_when_available"]
-        and candidate["appearance_secondary_available"]
+        and candidate["appearance_secondary_reliable"]
         and candidate["appearance_secondary"] < secondary_threshold
     ):
         return False, "below_secondary_threshold", threshold_info
@@ -150,6 +150,10 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "body_available": appearance["body_available"],
         "appearance_secondary_available": appearance["appearance_secondary"]
         > float(merged_policy["appearance_evidence"]["secondary_available_min_score"]),
+        "appearance_secondary_reliable": bool(appearance.get("secondary_reliable")),
+        "secondary_modality": appearance.get("secondary_modality", ""),
+        "body_fallback_used": bool(appearance.get("body_fallback_used")),
+        "face_unusable_reason": appearance.get("face_unusable_reason", ""),
         "final_total_score": appearance["appearance_primary"],
         "reason_code": (
             topology_eval.get("rejection_reason")
@@ -161,7 +165,19 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
     return candidate
 
 
-def _build_resolved_row(event, item, known_match=None, unknown_global_id="", decision_type="", reason_code="", resolution_source=""):
+def _build_resolved_row(
+    event,
+    item,
+    known_match=None,
+    unknown_global_id="",
+    decision_type="",
+    reason_code="",
+    resolution_source="",
+    modality_primary="",
+    modality_secondary="",
+    body_fallback_used=False,
+    face_unusable_reason="",
+):
     if decision_type == "attach_known":
         identity_status = "known"
         matched_known_id = known_match["identity_id"]
@@ -211,6 +227,10 @@ def _build_resolved_row(event, item, known_match=None, unknown_global_id="", dec
         "face_bbox": item["face_bbox"],
         "body_feature_status": item["body_status"],
         "body_feature_shape": item["body_shape"],
+        "modality_primary_used": modality_primary,
+        "modality_secondary_used": modality_secondary,
+        "body_fallback_used": body_fallback_used,
+        "face_unusable_reason": face_unusable_reason,
     }
 
 
@@ -280,8 +300,16 @@ def _build_decision_log(
                 "quality_gate_pass": candidate["quality_gate_pass"],
                 "face_score": candidate["face_score"],
                 "body_score": candidate["body_score"],
+                "face_ref_score": candidate.get("face_ref_score", ""),
+                "face_representative_score": candidate.get("face_representative_score", ""),
+                "body_ref_score": candidate.get("body_ref_score", ""),
+                "body_representative_score": candidate.get("body_representative_score", ""),
                 "appearance_primary": candidate["appearance_primary"],
                 "appearance_secondary": candidate["appearance_secondary"],
+                "secondary_modality": candidate.get("secondary_modality", ""),
+                "appearance_secondary_reliable": candidate.get("appearance_secondary_reliable", False),
+                "body_fallback_used": candidate.get("body_fallback_used", False),
+                "face_unusable_reason": candidate.get("face_unusable_reason", ""),
                 "time_score": candidate["time_score"],
                 "topology_score": candidate["topology_score"],
                 "zone_score": candidate["zone_score"],
@@ -330,9 +358,21 @@ def _build_decision_log(
         "subzone_reason": top_candidate.get("subzone_reason", "") if top_candidate else event.get("subzone_reason", ""),
         "fallback_without_subzone": top_candidate.get("fallback_without_subzone", False) if top_candidate else bool(event.get("subzone_fallback_used", False)),
         "modality_primary": top_candidate["primary_modality"] if top_candidate else quality["primary_modality"],
-        "modality_secondary": "body"
-        if top_candidate and top_candidate["primary_modality"] == "face"
-        else ("face" if top_candidate and top_candidate["primary_modality"] == "body" else ""),
+        "modality_secondary": top_candidate.get("secondary_modality", "") if top_candidate else "",
+        "body_fallback_used": (
+            top_candidate.get("body_fallback_used", False)
+            if top_candidate
+            else (quality.get("primary_modality") == "body" and not quality.get("face_reliable", False))
+        ),
+        "face_unusable_reason": (
+            top_candidate.get("face_unusable_reason", "")
+            if top_candidate
+            else (
+                "face_embedding_missing"
+                if not quality.get("face_available", False)
+                else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+            )
+        ),
         "face_score": top_candidate["face_score"] if top_candidate else "",
         "body_score": top_candidate["body_score"] if top_candidate else "",
         "thresholds_used": thresholds_used,
@@ -378,6 +418,10 @@ def assign_model_identities(
                     decision_type="attach_known",
                     reason_code="known_accept",
                     resolution_source="model_face_match",
+                    modality_primary="face",
+                    modality_secondary="",
+                    body_fallback_used=False,
+                    face_unusable_reason="",
                 )
             )
             trace_rows.append(
@@ -535,6 +579,10 @@ def assign_model_identities(
                     decision_type="reuse_unknown",
                     reason_code="unknown_reuse",
                     resolution_source="model_unknown_gallery_reuse",
+                    modality_primary=selected["primary_modality"],
+                    modality_secondary=selected.get("secondary_modality", ""),
+                    body_fallback_used=selected.get("body_fallback_used", False),
+                    face_unusable_reason=selected.get("face_unusable_reason", ""),
                 )
             )
             for candidate in candidate_scores:
@@ -576,6 +624,14 @@ def assign_model_identities(
                     decision_type="defer",
                     reason_code=quality["reason_code"],
                     resolution_source="model_defer_quality_gate",
+                    modality_primary=quality["primary_modality"],
+                    modality_secondary="",
+                    body_fallback_used=quality["primary_modality"] == "body" and not quality.get("face_reliable", False),
+                    face_unusable_reason=(
+                        "face_embedding_missing"
+                        if item.get("face_embedding") is None
+                        else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                    ),
                 )
             )
             if not candidate_scores:
@@ -682,6 +738,10 @@ def assign_model_identities(
                                 decision_type="defer",
                                 reason_code="ambiguous_low_quality_defer",
                                 resolution_source="model_defer_ambiguous_low_quality",
+                                modality_primary=top1["primary_modality"],
+                                modality_secondary=top1.get("secondary_modality", ""),
+                                body_fallback_used=top1.get("body_fallback_used", False),
+                                face_unusable_reason=top1.get("face_unusable_reason", ""),
                             )
                         )
                         for candidate in candidate_scores:
@@ -736,6 +796,18 @@ def assign_model_identities(
                 decision_type="create_unknown",
                 reason_code=create_reason,
                 resolution_source="model_unknown_new_profile",
+                modality_primary=(top1["primary_modality"] if top1 else quality["primary_modality"]),
+                modality_secondary=(top1.get("secondary_modality", "") if top1 else ""),
+                body_fallback_used=(
+                    top1.get("body_fallback_used", False)
+                    if top1
+                    else (quality["primary_modality"] == "body" and not quality.get("face_reliable", False))
+                ),
+                face_unusable_reason=(
+                    top1.get("face_unusable_reason", "")
+                    if top1
+                    else ("face_embedding_missing" if item.get("face_embedding") is None else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else ""))
+                ),
             )
         )
         if not candidate_scores:

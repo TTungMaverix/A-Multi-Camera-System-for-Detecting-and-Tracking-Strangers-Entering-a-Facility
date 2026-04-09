@@ -23,6 +23,8 @@ def summarize_decision_logs(decision_logs):
         "fallback_without_zone_count": 0,
         "subzone_reject_count": 0,
         "fallback_without_subzone_count": 0,
+        "body_fallback_used_count": 0,
+        "face_unusable_event_count": 0,
     }
     for row in decision_logs:
         decision = row.get("decision", "")
@@ -48,4 +50,8 @@ def summarize_decision_logs(decision_logs):
             summary["subzone_reject_count"] += 1
         if row.get("fallback_without_subzone") or any(candidate.get("fallback_without_subzone", False) for candidate in candidate_evaluations):
             summary["fallback_without_subzone_count"] += 1
+        if row.get("body_fallback_used"):
+            summary["body_fallback_used_count"] += 1
+        if row.get("face_unusable_reason"):
+            summary["face_unusable_event_count"] += 1
     return summary
