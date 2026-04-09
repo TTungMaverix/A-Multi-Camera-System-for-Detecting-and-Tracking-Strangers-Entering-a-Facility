@@ -65,6 +65,7 @@ Additional docs:
 - [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 - [docs/live_pipeline.md](docs/live_pipeline.md)
+- [docs/live_demo_ui.md](docs/live_demo_ui.md)
 
 ## Phase Status
 
@@ -89,7 +90,7 @@ Current code status:
 - scenario tests for association core and offline event creation live under `tests/`
 - live ingestion baseline now lives under `insightface_demo_assets/runtime/live_pipeline/`
 - live outputs are exported under `outputs/live_runs/`
-- lightweight web demo is still a separate later phase
+- lightweight web demo now reads the live event outputs through a small local HTTP server
 
 ## Project Scope
 
@@ -144,6 +145,13 @@ Direct live orchestrator:
 ```cmd
 cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
+```
+
+Start the lightweight web demo:
+
+```cmd
+cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
 ```
 
 Low-load multiprocessing sanity run:
@@ -222,6 +230,7 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |     |- face_demo_config.json
 |     |- run_association_tuning.py
 |     |- run_face_resolution_demo.py
+|     |- run_live_event_demo_server.py
 |     |- run_live_multicam_demo.py
 |     `- run_offline_multicam_pipeline.py
 |- outputs/
@@ -230,6 +239,7 @@ cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
 |- tests/
 |  |- conftest.py
 |  |- test_association_core.py
+|  |- test_live_demo_server.py
 |  |- test_live_pipeline.py
 |  `- test_offline_pipeline.py
 |- requirements-dev.txt
@@ -255,6 +265,7 @@ Notes:
 - `runtime/config/live_pipeline_demo.file_sanity.yaml` is the current live-ingestion sanity config.
 - `runtime/config/live_pipeline_demo.rtsp.example.yaml` and `runtime/config/live_pipeline_demo.webcam.example.yaml` are live source templates.
 - `runtime/live_pipeline/orchestrator.py` is the lightweight live producer-consumer baseline.
+- `runtime/run_live_event_demo_server.py` serves a minimal live event UI from the generated outputs.
 - `runtime/config/association_tuning_grid.example.yaml` is the public tuning sweep template.
 - `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
 - `outputs/live_runs/` is generated at run time and is intentionally not part of source control.
@@ -269,7 +280,7 @@ Near-term implementation should proceed in small runnable phases:
 2. add multiprocessing producer-consumer around the offline flow
 3. add evaluation and threshold tuning from cached offline outputs
 4. improve best-shot selection without adding heavy new models
-5. extend the current live baseline from file replay to real RTSP/webcam demos
+5. extend the current live baseline to cleaner real-camera demos without changing the association core
 
 ## Dependencies
 

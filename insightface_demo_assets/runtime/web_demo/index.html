@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Stranger Demo</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --card: #fffaf0;
+      --ink: #1b2a1f;
+      --accent: #0d6b4c;
+      --accent-2: #c65c2d;
+      --muted: #6b766f;
+      --line: #d9d0bf;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: radial-gradient(circle at top, #fff7df 0%, var(--bg) 55%);
+      color: var(--ink);
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: 0.02em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 16px;
+      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.06);
+    }
+    .metric .label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .metric .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .event-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .event-card {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 14px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
+    }
+    .event-card img {
+      width: 120px;
+      height: 120px;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #d5d0c2;
+    }
+    .event-info {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      width: fit-content;
+    }
+    .pill.unknown {
+      background: rgba(198, 92, 45, 0.14);
+      color: var(--accent-2);
+    }
+    .pill.known {
+      background: rgba(13, 107, 76, 0.12);
+      color: var(--accent);
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .empty {
+      padding: 28px;
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      color: var(--muted);
+      background: rgba(255,255,255,0.55);
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <h1>Realtime Stranger Event Demo</h1>
+      <p>This page polls the live event output files and shows the latest known/unknown decisions, camera origin, subzone metadata, and snapshot evidence.</p>
+    </section>
+    <section class="summary" id="summary"></section>
+    <section class="event-grid" id="events"></section>
+  </main>
+  <script>
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+
+    function metric(label, value) {
+      return `<article class="metric"><div class="label">${label}</div><div class="value">${value}</div></article>`;
+    }
+
+    function renderSummary(summary) {
+      const root = document.getElementById("summary");
+      const workerCount = Object.keys(summary.worker_summaries || {}).length;
+      root.innerHTML = [
+        metric("Live Events", summary.live_event_count || 0),
+        metric("Unknown", summary.unknown_event_count || 0),
+        metric("Known", summary.known_event_count || 0),
+        metric("Body Fallback", summary.body_fallback_used_count || 0),
+        metric("Avg Latency", `${summary.avg_latency_sec || 0}s`),
+        metric("Dropped Frames", summary.dropped_frames_total || 0),
+        metric("Workers", workerCount),
+      ].join("");
+    }
+
+    function renderEvents(events) {
+      const root = document.getElementById("events");
+      if (!events.length) {
+        root.innerHTML = `<div class="empty">No live events yet. Start the live pipeline first, then refresh or wait for polling.</div>`;
+        return;
+      }
+      root.innerHTML = events.slice().reverse().map((event) => {
+        const badgeClass = event.identity_type === "known" ? "known" : "unknown";
+        const imageHtml = event.snapshot_url
+          ? `<img src="${event.snapshot_url}" alt="snapshot">`
+          : `<img alt="no snapshot">`;
+        return `
+          <article class="event-card">
+            ${imageHtml}
+            <div class="event-info">
+              <div class="pill ${badgeClass}">${event.identity_type.toUpperCase()} ${event.identity_id || ""}</div>
+              <strong>${event.camera_id} · ${event.direction || "N/A"}</strong>
+              <div class="meta">zone=${event.zone_id || "-"} · subzone=${event.subzone_id || "-"}</div>
+              <div class="meta">primary=${event.modality_primary || "-"} · secondary=${event.modality_secondary || "-"}</div>
+              <div class="meta">body_fallback=${String(!!event.body_fallback_used)} · latency=${event.latency_sec || 0}s</div>
+              <div class="meta">reason=${event.decision_reason || event.reason_code || "-"}</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    async function refresh() {
+      try {
+        const [summary, latest] = await Promise.all([
+          fetchJson("/api/summary"),
+          fetchJson("/api/latest-events"),
+        ]);
+        renderSummary(summary);
+        renderEvents(latest.events || []);
+      } catch (error) {
+        document.getElementById("events").innerHTML = `<div class="empty">Failed to load live data: ${error.message}</div>`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>
