@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from association_core.spatial_context import resolve_spatial_context
+from offline_pipeline.direction_logic import evaluate_direction
 
 
 def load_json(path: Path):
@@ -109,6 +110,38 @@ def test_entry_crossing(prev_point, curr_point, line, in_side_point, distance_th
         "y": (prev_point["y"] + curr_point["y"]) / 2.0,
     }
     return point_to_segment_distance(mid_point, line) <= distance_threshold
+
+
+def camera_processing_polygon(camera_cfg):
+    return camera_cfg.get("processing_roi") or camera_cfg.get("entry_roi") or camera_cfg.get("track_roi") or []
+
+
+def find_direction_anchor(records, camera_id, camera_cfg, transition_map, direction_cfg):
+    if len(records) < 2:
+        return None, "no_track"
+    line = camera_cfg.get("entry_line") or []
+    in_side_point = camera_cfg.get("in_side_point") or []
+    if not line or not in_side_point:
+        return None, "missing_manual_entry_line"
+    history_window = max(2, as_int((direction_cfg or {}).get("history_window", 6), 6))
+    for index in range(1, len(records)):
+        start_index = max(0, index - history_window + 1)
+        window_rows = records[start_index : index + 1]
+        points = [{"x": row["foot_x"], "y": row["foot_y"]} for row in window_rows]
+        spatial_history = [
+            resolve_spatial_context(camera_id, row.get("foot_x"), row.get("foot_y"), transition_map)
+            for row in window_rows
+        ]
+        result = evaluate_direction(points, line, in_side_point, spatial_history=spatial_history, config=direction_cfg)
+        if result["decision"] == "IN":
+            return {
+                "anchor_index": index,
+                "anchor_row": records[index],
+                "window_start_index": start_index,
+                "window_rows": window_rows,
+                "direction_result": result,
+            }, "ok"
+    return None, "filtered_by_direction"
 
 
 def clamp_rect(rect, img_width, img_height):
@@ -232,7 +265,7 @@ def iter_annotation_payloads(annotation_dir: Path, low_load_cfg):
 
 def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, video_source: Path, low_load_cfg, frame_source_mode):
     annotation_dir = dataset_root / "annotations_positions"
-    polygon = camera_cfg.get("entry_roi") or camera_cfg.get("track_roi") or []
+    polygon = camera_processing_polygon(camera_cfg)
     view_index = as_int(camera_cfg["view_index"])
     rows = []
     for frame_id, objects in iter_annotation_payloads(annotation_dir, low_load_cfg):
@@ -411,10 +444,10 @@ def build_entry_events(
     crop_root: Path,
     transition_map,
 ):
-    line_threshold = float(wildtrack_config["line_crossing_distance_threshold"])
     best_shot_window = int(wildtrack_config["best_shot_window_frames"])
     head_cfg = wildtrack_config["head_crop"]
     best_shot_cfg = wildtrack_config.get("best_shot_selection", {})
+    direction_cfg = wildtrack_config.get("direction_filter", {})
     event_rows = []
     queue_rows = []
     event_assignment_rows = []
@@ -427,21 +460,11 @@ def build_entry_events(
         for local_track_id, records in track_map.items():
             if len(records) < 2:
                 continue
-            crossing_row = None
-            for index in range(1, len(records)):
-                prev_row = records[index - 1]
-                curr_row = records[index]
-                if test_entry_crossing(
-                    {"x": prev_row["foot_x"], "y": prev_row["foot_y"]},
-                    {"x": curr_row["foot_x"], "y": curr_row["foot_y"]},
-                    camera_cfg["entry_line"],
-                    camera_cfg["in_side_point"],
-                    line_threshold,
-                ):
-                    crossing_row = curr_row
-                    break
-            if crossing_row is None:
+            anchor, anchor_reason = find_direction_anchor(records, camera_id, camera_cfg, transition_map, direction_cfg)
+            if anchor is None:
                 continue
+            crossing_row = anchor["anchor_row"]
+            direction_result = anchor["direction_result"]
             best_record, best_shot_meta = select_best_record(
                 records,
                 max(crossing_row["frame_id"] - 20, 0),
@@ -471,6 +494,12 @@ def build_entry_events(
                 "best_head_crop": str(head_path),
                 "best_body_crop": str(body_path),
                 "direction": "IN",
+                "direction_reason": direction_result.get("reason", ""),
+                "direction_history_points": direction_result.get("history_points", 0),
+                "direction_momentum_px": direction_result.get("momentum_px", 0.0),
+                "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
+                "direction_cross_in": direction_result.get("cross_in", False),
+                "direction_zone_transition_ok": direction_result.get("zone_transition_ok", False),
                 "source_video": best_record.get("video_path", ""),
                 "source_frame_idx": int(best_record["frame_id"]),
                 "bbox_xmin": int(best_record["xmin"]),
@@ -516,6 +545,12 @@ def build_entry_events(
                     "best_head_crop": str(head_path),
                     "best_body_crop": str(body_path),
                     "direction": "IN",
+                    "direction_reason": direction_result.get("reason", ""),
+                    "direction_history_points": direction_result.get("history_points", 0),
+                    "direction_momentum_px": direction_result.get("momentum_px", 0.0),
+                    "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
+                    "direction_cross_in": direction_result.get("cross_in", False),
+                    "direction_zone_transition_ok": direction_result.get("zone_transition_ok", False),
                     "zone_id": spatial["zone_id"],
                     "zone_type": spatial["zone_type"],
                     "subzone_id": spatial["subzone_id"],
@@ -553,6 +588,10 @@ def build_entry_events(
                     "subzone_reason": spatial["subzone_reason"],
                     "zone_fallback_used": spatial["zone_fallback_used"],
                     "subzone_fallback_used": spatial["subzone_fallback_used"],
+                    "direction_reason": direction_result.get("reason", ""),
+                    "direction_history_points": direction_result.get("history_points", 0),
+                    "direction_momentum_px": direction_result.get("momentum_px", 0.0),
+                    "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
                     "best_shot_strategy": best_shot_meta.get("best_shot_strategy", ""),
                     "best_shot_reason": best_shot_meta.get("best_shot_reason", ""),
                     "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
@@ -686,54 +725,52 @@ def materialize_stage_inputs(project_root: Path, dataset_root: Path, wildtrack_c
 def build_entry_anchor_packets(camera_id, camera_cfg, camera_rows, line_threshold, transition_map):
     packets = []
     track_map = group_rows_by_track(camera_rows)
+    direction_cfg = camera_cfg.get("direction_filter", {})
     for local_track_id, records in track_map.items():
         if len(records) < 2:
             continue
-        for index in range(1, len(records)):
-            prev_row = records[index - 1]
-            curr_row = records[index]
-            if not test_entry_crossing(
-                {"x": prev_row["foot_x"], "y": prev_row["foot_y"]},
-                {"x": curr_row["foot_x"], "y": curr_row["foot_y"]},
-                camera_cfg["entry_line"],
-                camera_cfg["in_side_point"],
-                line_threshold,
-            ):
-                continue
-            spatial = resolve_spatial_context(camera_id, curr_row["foot_x"], curr_row["foot_y"], transition_map)
-            packets.append(
-                {
-                    "packet_type": "entry_anchor",
-                    "camera_id": camera_id,
-                    "frame_idx": int(curr_row["frame_id"]),
-                    "relative_sec": float(curr_row["relative_sec"]),
-                    "local_track_id": str(local_track_id),
-                    "global_gt_id": int(curr_row["global_gt_id"]),
-                    "direction": "IN",
-                    "bbox_xmin": int(curr_row["xmin"]),
-                    "bbox_ymin": int(curr_row["ymin"]),
-                    "bbox_xmax": int(curr_row["xmax"]),
-                    "bbox_ymax": int(curr_row["ymax"]),
-                    "bbox_area": int(curr_row["area"]),
-                    "foot_x": float(curr_row["foot_x"]),
-                    "foot_y": float(curr_row["foot_y"]),
-                    "zone_id": spatial["zone_id"],
-                    "subzone_id": spatial["subzone_id"],
-                    "zone_type": spatial["zone_type"],
-                    "subzone_type": spatial["subzone_type"],
-                    "crop_reference": {
-                        "frame_source_mode": curr_row.get("frame_source_mode", "image_subsets"),
-                        "video_path": curr_row.get("video_path", ""),
-                        "image_rel_path": curr_row.get("image_rel_path", ""),
-                    },
-                }
-            )
-            break
+        anchor, _anchor_reason = find_direction_anchor(records, camera_id, camera_cfg, transition_map, direction_cfg)
+        if anchor is None:
+            continue
+        curr_row = anchor["anchor_row"]
+        direction_result = anchor["direction_result"]
+        spatial = resolve_spatial_context(camera_id, curr_row["foot_x"], curr_row["foot_y"], transition_map)
+        packets.append(
+            {
+                "packet_type": "entry_anchor",
+                "camera_id": camera_id,
+                "frame_idx": int(curr_row["frame_id"]),
+                "relative_sec": float(curr_row["relative_sec"]),
+                "local_track_id": str(local_track_id),
+                "global_gt_id": int(curr_row["global_gt_id"]),
+                "direction": "IN",
+                "direction_reason": direction_result.get("reason", ""),
+                "direction_history_points": direction_result.get("history_points", 0),
+                "direction_momentum_px": direction_result.get("momentum_px", 0.0),
+                "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
+                "bbox_xmin": int(curr_row["xmin"]),
+                "bbox_ymin": int(curr_row["ymin"]),
+                "bbox_xmax": int(curr_row["xmax"]),
+                "bbox_ymax": int(curr_row["ymax"]),
+                "bbox_area": int(curr_row["area"]),
+                "foot_x": float(curr_row["foot_x"]),
+                "foot_y": float(curr_row["foot_y"]),
+                "zone_id": spatial["zone_id"],
+                "subzone_id": spatial["subzone_id"],
+                "zone_type": spatial["zone_type"],
+                "subzone_type": spatial["subzone_type"],
+                "crop_reference": {
+                    "frame_source_mode": curr_row.get("frame_source_mode", "image_subsets"),
+                    "video_path": curr_row.get("video_path", ""),
+                    "image_rel_path": curr_row.get("image_rel_path", ""),
+                },
+            }
+        )
     packets.sort(key=lambda row: (row["relative_sec"], row["camera_id"], row["local_track_id"]))
     return packets
 
 
-def build_offline_stage_inputs(offline_config, transition_map):
+def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_override=None):
     project_root = Path(offline_config["project_root"]).resolve()
     dataset_root = Path(offline_config["dataset"]["root"])
     if not dataset_root.is_absolute():
@@ -741,7 +778,7 @@ def build_offline_stage_inputs(offline_config, transition_map):
     wildtrack_config_path = Path(offline_config["wildtrack_demo_config"])
     if not wildtrack_config_path.is_absolute():
         wildtrack_config_path = (project_root / wildtrack_config_path).resolve()
-    wildtrack_config = load_json(wildtrack_config_path)
+    wildtrack_config = wildtrack_config_override or load_json(wildtrack_config_path)
     output_root = Path(offline_config["output_root"])
     if not output_root.is_absolute():
         output_root = (project_root / output_root).resolve()

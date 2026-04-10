@@ -70,14 +70,33 @@ def test_entry_event_builder_emits_in_event_with_zone_and_subzone(tmp_path):
     }
     wildtrack_config = {
         "selected_cameras": ["C5"],
-        "line_crossing_distance_threshold": 20,
         "best_shot_window_frames": 5,
         "head_crop": {"top_ratio": 0.02, "bottom_ratio": 0.45, "side_ratio": 0.18},
+        "direction_filter": {
+            "history_window": 4,
+            "minimum_points": 2,
+            "minimum_inward_motion_px": 5.0,
+            "minimum_inside_ratio": 1.0,
+            "require_zone_transition": False,
+            "allow_line_cross_only_when_history_short": True,
+            "inward_zone_types": ["exit", "interior", "overlap", "transit"],
+            "outward_zone_types": ["entry", "outer", "approach"],
+        },
         "cameras": {
             "C5": {
                 "role": "entry",
                 "entry_line": [[0, 60], [100, 60]],
                 "in_side_point": [50, 90],
+                "direction_filter": {
+                    "history_window": 4,
+                    "minimum_points": 2,
+                    "minimum_inward_motion_px": 5.0,
+                    "minimum_inside_ratio": 1.0,
+                    "require_zone_transition": False,
+                    "allow_line_cross_only_when_history_short": True,
+                    "inward_zone_types": ["exit", "interior", "overlap", "transit"],
+                    "outward_zone_types": ["entry", "outer", "approach"],
+                },
             }
         },
     }
@@ -156,7 +175,21 @@ def test_entry_anchor_packet_schema_is_lightweight():
     ]
     packets = build_entry_anchor_packets(
         "C5",
-        {"role": "entry", "entry_line": [[0, 60], [100, 60]], "in_side_point": [50, 90]},
+        {
+            "role": "entry",
+            "entry_line": [[0, 60], [100, 60]],
+            "in_side_point": [50, 90],
+            "direction_filter": {
+                "history_window": 4,
+                "minimum_points": 2,
+                "minimum_inward_motion_px": 5.0,
+                "minimum_inside_ratio": 1.0,
+                "require_zone_transition": False,
+                "allow_line_cross_only_when_history_short": True,
+                "inward_zone_types": ["exit", "interior", "overlap", "transit"],
+                "outward_zone_types": ["entry", "outer", "approach"],
+            },
+        },
         rows,
         20,
         {

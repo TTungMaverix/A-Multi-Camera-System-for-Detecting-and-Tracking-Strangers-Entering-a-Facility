@@ -18,6 +18,11 @@ def _camera_cfg(camera_id, transition_map):
     return (transition_map.get("cameras", {}) or {}).get(camera_id, {})
 
 
+def _fallback_disabled(transition_map):
+    runtime_policy = transition_map.get("runtime_policy", {}) or {}
+    return bool(runtime_policy.get("disallow_default_region_fallback", False))
+
+
 def _sorted_regions(regions):
     return sorted(
         regions or [],
@@ -32,6 +37,14 @@ def _sorted_regions(regions):
 
 
 def default_zone_for_camera(camera_id, transition_map):
+    if _fallback_disabled(transition_map):
+        return {
+            "zone_id": "",
+            "zone_type": "",
+            "matched_zone_region_id": "",
+            "zone_reason": "manual_zone_required",
+            "zone_fallback_used": False,
+        }
     camera_cfg = _camera_cfg(camera_id, transition_map)
     default_zone_id = camera_cfg.get("default_zone_id", "")
     zones = camera_cfg.get("zones", []) or []
@@ -52,6 +65,14 @@ def default_zone_for_camera(camera_id, transition_map):
 
 
 def default_subzone_for_camera(camera_id, transition_map, zone_id=""):
+    if _fallback_disabled(transition_map):
+        return {
+            "subzone_id": "",
+            "subzone_type": "",
+            "matched_subzone_region_id": "",
+            "subzone_reason": "manual_subzone_required",
+            "subzone_fallback_used": False,
+        }
     camera_cfg = _camera_cfg(camera_id, transition_map)
     default_subzone_id = camera_cfg.get("default_subzone_id", "")
     subzones = camera_cfg.get("subzones", []) or []
@@ -96,6 +117,14 @@ def _resolve_zone_for_point(camera_id, point_x, point_y, transition_map):
                 "zone_reason": "point_in_config_zone",
                 "zone_fallback_used": False,
             }
+    if _fallback_disabled(transition_map):
+        return {
+            "zone_id": "",
+            "zone_type": "",
+            "matched_zone_region_id": "",
+            "zone_reason": "point_outside_manual_zone",
+            "zone_fallback_used": False,
+        }
     fallback = default_zone_for_camera(camera_id, transition_map)
     if fallback["zone_id"]:
         fallback["zone_reason"] = "default_zone_outside_polygon"
@@ -123,6 +152,14 @@ def _resolve_subzone_for_point(camera_id, point_x, point_y, transition_map, zone
                 "subzone_reason": "point_in_config_subzone",
                 "subzone_fallback_used": False,
             }
+    if _fallback_disabled(transition_map):
+        return {
+            "subzone_id": "",
+            "subzone_type": "",
+            "matched_subzone_region_id": "",
+            "subzone_reason": "point_outside_manual_subzone",
+            "subzone_fallback_used": False,
+        }
     fallback = default_subzone_for_camera(camera_id, transition_map, zone_id=zone_id)
     if fallback["subzone_id"]:
         fallback["subzone_reason"] = "default_subzone_outside_polygon"
@@ -165,4 +202,8 @@ def build_event_assignment_audit_row(run_mode, event):
         "best_shot_subzone_id": event.get("best_shot_subzone_id", ""),
         "best_shot_subzone_type": event.get("best_shot_subzone_type", ""),
         "best_shot_frames_after_anchor": event.get("best_shot_frames_after_anchor", ""),
+        "direction_reason": event.get("direction_reason", ""),
+        "direction_history_points": event.get("direction_history_points", ""),
+        "direction_momentum_px": event.get("direction_momentum_px", ""),
+        "direction_inside_ratio": event.get("direction_inside_ratio", ""),
     }

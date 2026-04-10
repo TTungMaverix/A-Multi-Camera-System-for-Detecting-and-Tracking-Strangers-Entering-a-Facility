@@ -16,6 +16,11 @@ from offline_pipeline.event_builder import (
     write_csv,
 )
 from run_face_resolution_demo import main as run_face_resolution_main
+from scene_calibration import (
+    apply_scene_calibration_to_transition_map,
+    apply_scene_calibration_to_wildtrack_config,
+    load_runtime_scene_calibration,
+)
 
 
 def load_pipeline_config(config_path: Path):
@@ -58,6 +63,10 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
         runtime_config["camera_transition_map_config"] = str(
             resolve_path(project_root, offline_config["camera_transition_map_config"])
         )
+    if offline_config.get("scene_calibration_config"):
+        runtime_config["scene_calibration_config"] = str(
+            resolve_path(project_root, offline_config["scene_calibration_config"])
+        )
     if offline_config.get("known_gallery", {}).get("manifest_csv"):
         runtime_config["known_face_manifest_csv"] = str(
             resolve_path(project_root, offline_config["known_gallery"]["manifest_csv"])
@@ -69,6 +78,16 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     runtime_config_path = runtime_dir / "face_demo_runtime_config.json"
     runtime_config_path.write_text(json.dumps(runtime_config, ensure_ascii=False, indent=2), encoding="utf-8")
     return runtime_config_path
+
+
+def build_source_lookup(project_root: Path, offline_config):
+    lookup = {}
+    for camera_id, video_path in (offline_config.get("dataset", {}).get("video_sources", {}) or {}).items():
+        lookup[camera_id] = {
+            "source_type": "file",
+            "source": str(resolve_path(project_root, video_path)),
+        }
+    return lookup
 
 
 def sync_final_outputs(output_root: Path):
@@ -186,6 +205,17 @@ def run_offline_pipeline_multiprocess(config_path: Path, cli_overrides=None):
         config_path=offline_config.get("camera_transition_map_config", ""),
         base_dir=config_path.parent,
     )
+    scene_calibration_config = offline_config.get("scene_calibration_config", "")
+    scene_calibration, _runtime_cameras, scene_runtime = load_runtime_scene_calibration(
+        config_path=resolve_path(project_root, scene_calibration_config) if scene_calibration_config else None,
+        base_dir=config_path.parent,
+        camera_ids=wildtrack_config.get("selected_cameras", []),
+        source_lookup=build_source_lookup(project_root, offline_config),
+        required=True,
+    )
+    frame_sizes = scene_runtime.get("frame_sizes", {})
+    transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
+    wildtrack_config = apply_scene_calibration_to_wildtrack_config(wildtrack_config, scene_calibration, frame_sizes)
     dataset_root = resolve_path(project_root, offline_config["dataset"]["root"])
     frame_source_mode = offline_config.get("frame_source_mode", "video_files")
     low_load_cfg = offline_config.get("low_load", {})
@@ -304,6 +334,7 @@ def run_offline_pipeline_multiprocess(config_path: Path, cli_overrides=None):
         "stage_inputs": stage_inputs,
         "runtime_config_path": str(runtime_config_path),
         "camera_transition_map_runtime": transition_runtime,
+        "scene_calibration_runtime": scene_runtime,
         "multiprocessing_summary": multiproc_summary,
         "final_outputs": {
             "resolved_events_csv": str(output_root / "events" / "resolved_events.csv"),

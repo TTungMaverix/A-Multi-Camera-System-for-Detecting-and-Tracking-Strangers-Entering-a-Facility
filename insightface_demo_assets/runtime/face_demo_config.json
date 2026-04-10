@@ -9,6 +9,7 @@
   "unknown_profiles_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\unknown_profiles_template.csv",
   "association_policy_config": "config/association_policy.wildtrack_phase_f_tuned.yaml",
   "camera_transition_map_config": "config/camera_transition_map.example.yaml",
+  "scene_calibration_config": "config/manual_scene_calibration.wildtrack.json",
   "insightface_runtime": {
     "python_runtime_available": true,
     "model_pack_available": true,

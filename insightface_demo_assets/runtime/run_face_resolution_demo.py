@@ -36,6 +36,12 @@ from association_core import (
     write_jsonl as core_write_jsonl,
 )
 from offline_pipeline.event_builder import FrameSourceCache
+from offline_pipeline.direction_logic import evaluate_direction
+from scene_calibration import (
+    apply_scene_calibration_to_transition_map,
+    apply_scene_calibration_to_wildtrack_config,
+    load_runtime_scene_calibration,
+)
 
 CONFIG_DEFAULT = Path(__file__).with_name("face_demo_config.json")
 
@@ -729,15 +735,33 @@ def build_event_from_record(
 def find_entry_anchor(records, camera_cfg, line_threshold):
     if len(records) < 2:
         return None, "no_track"
-    line = camera_cfg["entry_line"]
-    in_side = camera_cfg["in_side_point"]
+    line = camera_cfg.get("entry_line") or []
+    in_side = camera_cfg.get("in_side_point") or []
+    direction_cfg = camera_cfg.get("direction_filter", {}) or {}
+    if not line or not in_side:
+        return None, "missing_manual_entry_line"
+    history_window = max(2, as_int(direction_cfg.get("history_window", 6), 6))
+    transition_map = camera_cfg.get("_transition_map")
+    camera_id = camera_cfg.get("_camera_id", "")
     for index in range(1, len(records)):
-        prev_row = records[index - 1]
-        curr_row = records[index]
-        prev_point = {"x": prev_row["foot_x"], "y": prev_row["foot_y"]}
-        curr_point = {"x": curr_row["foot_x"], "y": curr_row["foot_y"]}
-        if test_entry_crossing(prev_point, curr_point, line, in_side, line_threshold):
-            return {"crossing_index": index, "crossing_row": curr_row, "prev_row": prev_row}, "ok"
+        start_index = max(0, index - history_window + 1)
+        window_rows = records[start_index : index + 1]
+        points = [{"x": row["foot_x"], "y": row["foot_y"]} for row in window_rows]
+        spatial_history = []
+        if transition_map and camera_id:
+            spatial_history = [
+                core_resolve_spatial_context(camera_id, row.get("foot_x"), row.get("foot_y"), transition_map)
+                for row in window_rows
+            ]
+        result = evaluate_direction(points, line, in_side, spatial_history=spatial_history, config=direction_cfg)
+        if result["decision"] == "IN":
+            curr_row = records[index]
+            return {
+                "crossing_index": index,
+                "crossing_row": curr_row,
+                "prev_row": records[index - 1],
+                "direction_result": result,
+            }, "ok"
     return None, "filtered_by_direction"
 
 
@@ -766,7 +790,7 @@ def pick_observation_candidate(records, anchor_event, relation):
     return candidates[0][2], "ok"
 
 
-def build_baseline_stage_b(track_rows, queue_rows, config):
+def build_baseline_stage_b(track_rows, queue_rows, config, transition_map):
     selected_cameras = config["selected_cameras"]
     camera_cfgs = config["cameras"]
     line_threshold = float(config["line_crossing_distance_threshold"])
@@ -789,7 +813,10 @@ def build_baseline_stage_b(track_rows, queue_rows, config):
                 reason = "candidate_created"
                 event_id = queue_by_gt_camera[(gt_id, camera_id)][0]["event_id"]
             elif camera_cfgs[camera_id]["role"] == "entry":
-                anchor, anchor_reason = find_entry_anchor(records, camera_cfgs[camera_id], line_threshold)
+                camera_cfg = dict(camera_cfgs[camera_id])
+                camera_cfg["_camera_id"] = camera_id
+                camera_cfg["_transition_map"] = transition_map
+                anchor, anchor_reason = find_entry_anchor(records, camera_cfg, line_threshold)
                 if anchor_reason == "filtered_by_direction":
                     reason = "filtered_by_direction"
                 elif anchor is None:
@@ -865,7 +892,10 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                         }
                     )
                     continue
-                anchor, anchor_reason = find_entry_anchor(records, camera_cfgs[camera_id], line_threshold)
+                camera_cfg = dict(camera_cfgs[camera_id])
+                camera_cfg["_camera_id"] = camera_id
+                camera_cfg["_transition_map"] = transition_map
+                anchor, anchor_reason = find_entry_anchor(records, camera_cfg, line_threshold)
                 if anchor is None:
                     placeholder_rows.append(
                         {
@@ -918,6 +948,12 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                         "anchor_relative_sec": crossing_row["relative_sec"],
                         "relation_type": "entry",
                         "same_area_overlap": False,
+                        "direction_reason": anchor["direction_result"].get("reason", ""),
+                        "direction_history_points": anchor["direction_result"].get("history_points", 0),
+                        "direction_momentum_px": anchor["direction_result"].get("momentum_px", 0.0),
+                        "direction_inside_ratio": anchor["direction_result"].get("inside_ratio", 0.0),
+                        "direction_cross_in": anchor["direction_result"].get("cross_in", False),
+                        "direction_zone_transition_ok": anchor["direction_result"].get("zone_transition_ok", False),
                         **best_shot_meta,
                     },
                     transition_map,
@@ -1584,6 +1620,7 @@ def main(config_path: Path):
     base_dir = resolve_path(config_path.parent, config.get("project_root", str(config_path.parents[1])))
     association_policy_config = config.get("association_policy_config", "")
     camera_transition_map_config = config.get("camera_transition_map_config", "")
+    scene_calibration_config = config.get("scene_calibration_config", "")
     queue_csv = resolve_path(base_dir, config["wildtrack_identity_queue_csv"])
     wildtrack_config_path = resolve_path(
         base_dir,
@@ -1635,6 +1672,23 @@ def main(config_path: Path):
         config_path=camera_transition_map_config,
         base_dir=config_path.parent,
     )
+    scene_calibration, _runtime_cameras, scene_runtime = load_runtime_scene_calibration(
+        config_path=scene_calibration_config,
+        base_dir=config_path.parent,
+        camera_ids=wildtrack_config.get("selected_cameras", []),
+        required=True,
+    )
+    frame_sizes = scene_runtime.get("frame_sizes", {})
+    camera_transition_map = apply_scene_calibration_to_transition_map(
+        camera_transition_map,
+        scene_calibration,
+        frame_sizes,
+    )
+    wildtrack_config = apply_scene_calibration_to_wildtrack_config(
+        wildtrack_config,
+        scene_calibration,
+        frame_sizes,
+    )
 
     app = FaceAnalysis(
         name=config["insightface_runtime"].get("recommended_model_name", "buffalo_l"),
@@ -1653,7 +1707,7 @@ def main(config_path: Path):
     identity_means, _ = build_gallery_embeddings(app, manifest_rows, base_dir, known_embeddings_csv)
 
     stage_a, stage_a_rows, _ = build_timeline_audit(track_rows, wildtrack_config["selected_cameras"])
-    stage_b_baseline = build_baseline_stage_b(track_rows, queue_rows, wildtrack_config)
+    stage_b_baseline = build_baseline_stage_b(track_rows, queue_rows, wildtrack_config, camera_transition_map)
 
     baseline_events = []
     for row in queue_rows:
@@ -1884,6 +1938,7 @@ def main(config_path: Path):
         },
         "association_policy_runtime": association_policy_runtime,
         "camera_transition_map_runtime": camera_transition_map_runtime,
+        "scene_calibration_runtime": scene_runtime,
     }
     save_json(audit_stage_counts_json, stage_counts)
 
@@ -1895,6 +1950,7 @@ def main(config_path: Path):
         "mode_b_stream_unification_basis": "per_camera_event_projection_without_gt_crossstream_bridge",
         "association_policy_runtime": association_policy_runtime,
         "camera_transition_map_runtime": camera_transition_map_runtime,
+        "scene_calibration_runtime": scene_runtime,
         "association_logs": {
             "decision_log_jsonl": str(association_decisions_jsonl),
             "summary_json": str(association_summary_json),
@@ -1918,6 +1974,10 @@ def main(config_path: Path):
     print(
         "CAMERA_TRANSITION_MAP_SOURCE="
         + (camera_transition_map_runtime["source_path"] or "built_in_defaults")
+    )
+    print(
+        "SCENE_CALIBRATION_SOURCE="
+        + (scene_runtime["source_path"] or "preview_only_or_missing")
     )
     print(f"TOTAL_EVENTS={mode_b_metrics['total_event_count']}")
     print(f"UNKNOWN_EVENTS={mode_b_metrics['unknown_event_count']}")

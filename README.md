@@ -66,6 +66,7 @@ Additional docs:
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 - [docs/live_pipeline.md](docs/live_pipeline.md)
 - [docs/live_demo_ui.md](docs/live_demo_ui.md)
+- [docs/manual_scene_calibration.md](docs/manual_scene_calibration.md)
 
 ## Phase Status
 
@@ -75,6 +76,8 @@ Current code status:
 - `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py` is the offline end-to-end orchestrator entrypoint
 - `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
 - the offline orchestrator now supports both `sequential` and `multiprocessing` execution modes
+- manual scene calibration is now the required runtime ROI path through `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
+- deprecated auto/inferred ROI fallback is disabled in the runtime path; missing calibration now fails clearly instead of silently using old defaults
 - association core logic lives under `insightface_demo_assets/runtime/association_core/`
 - `insightface_demo_assets/runtime/run_association_tuning.py` now provides a cache-first threshold tuning workflow
 - association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
@@ -82,6 +85,8 @@ Current code status:
 - the current selected policy after Phase F is `insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml`
 - camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
 - entry-camera best-shot selection is now line-aware and subzone-aware through `wildtrack_demo/wildtrack_demo_config.json`
+- direction filtering now uses trajectory/momentum history plus line and zone context instead of one-frame line crossing only
+- ROI masks are now applied in the live path to reduce wasted detection work outside the calibrated processing polygon
 - offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 - association decision logs are exported under `association_logs/` in each offline run
 - event-generation audit now records best-shot strategy, subzone choice, and frames after anchor
@@ -91,6 +96,7 @@ Current code status:
 - live ingestion baseline now lives under `insightface_demo_assets/runtime/live_pipeline/`
 - live outputs are exported under `outputs/live_runs/`
 - lightweight web demo now reads the live event outputs through a small local HTTP server
+- the same lightweight web demo server now also exposes a manual calibration page at `/calibration.html`
 
 ## Project Scope
 

@@ -9,6 +9,7 @@ live_pipeline:
     gallery_root: insightface_demo_assets/known_faces
   association_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml
   camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml
+  scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json
   execution:
     start_method: spawn
     queue_max_size: 32

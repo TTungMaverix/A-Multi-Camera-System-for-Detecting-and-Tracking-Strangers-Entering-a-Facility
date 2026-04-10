@@ -1,0 +1,344 @@
+{
+  "scene_calibration": {
+    "version": 1,
+    "coordinate_space": "normalized",
+    "processing": {
+      "require_manual_calibration": true,
+      "roi_mask_enabled": true,
+      "mask_outside_polygon": true,
+      "preview_overlay_enabled": true,
+      "preview_interval_sec": 1.0
+    },
+    "direction_filter": {
+      "history_window": 6,
+      "minimum_points": 4,
+      "minimum_inward_motion_px": 18.0,
+      "minimum_inside_ratio": 0.55,
+      "require_zone_transition": false,
+      "allow_line_cross_only_when_history_short": false,
+      "inward_zone_types": [
+        "exit",
+        "interior",
+        "overlap",
+        "transit"
+      ],
+      "outward_zone_types": [
+        "entry",
+        "outer",
+        "approach"
+      ]
+    },
+    "cameras": {
+      "C3": {
+        "camera_id": "C3",
+        "role": "followup",
+        "description": "Manual calibration for wide follow-up view over the open plaza.",
+        "preview_source": "Wildtrack/cam3.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [0.166667, 0.157407],
+            [0.755208, 0.12963],
+            [0.947917, 0.888889],
+            [0.114583, 0.953704]
+          ]
+        },
+        "entry_line": {
+          "points": [],
+          "in_side_point": []
+        },
+        "default_zone_id": "c3_track_default",
+        "default_subzone_id": "c3_overlap_entry",
+        "entry_zones": ["c3_track_default"],
+        "exit_zones": ["c3_track_default"],
+        "zones": [
+          {
+            "zone_id": "c3_track_default",
+            "zone_type": "transit",
+            "priority": 10,
+            "description": "Main calibrated processing zone for C3 follow-up observations.",
+            "polygon": [
+              [0.166667, 0.157407],
+              [0.755208, 0.12963],
+              [0.947917, 0.888889],
+              [0.114583, 0.953704]
+            ]
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c3_overlap_entry",
+            "parent_zone_id": "c3_track_default",
+            "subzone_type": "overlap",
+            "priority": 100,
+            "description": "Primary overlap-side follow-up region.",
+            "allowed_transitions": [
+              "C5_to_C3_overlap",
+              "C6_to_C3_overlap",
+              "C7_to_C3_overlap"
+            ],
+            "polygon": [
+              [0.166667, 0.157407],
+              [0.536458, 0.138889],
+              [0.578125, 0.601852],
+              [0.130208, 0.703704]
+            ]
+          },
+          {
+            "subzone_id": "c3_far_exit",
+            "parent_zone_id": "c3_track_default",
+            "subzone_type": "exit",
+            "priority": 80,
+            "description": "Deeper follow-up region toward the far side of C3.",
+            "allowed_transitions": [
+              "C3_to_C7_overlap"
+            ],
+            "polygon": [
+              [0.536458, 0.138889],
+              [0.755208, 0.12963],
+              [0.947917, 0.888889],
+              [0.578125, 0.861111]
+            ]
+          }
+        ]
+      },
+      "C5": {
+        "camera_id": "C5",
+        "role": "entry",
+        "description": "Manual calibration for the front-facing entry camera.",
+        "preview_source": "Wildtrack/cam5.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [0.125, 0.157407],
+            [0.875, 0.157407],
+            [0.958333, 0.518519],
+            [0.057292, 0.62037]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.130208, 0.462963],
+            [0.869792, 0.462963]
+          ],
+          "in_side_point": [0.5, 0.564815]
+        },
+        "default_zone_id": "c5_entry_main",
+        "default_subzone_id": "c5_inner_exit",
+        "entry_zones": ["c5_entry_main"],
+        "exit_zones": ["c5_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c5_entry_main",
+            "zone_type": "entry",
+            "priority": 10,
+            "description": "Manual processing zone for the C5 entry corridor.",
+            "polygon": [
+              [0.125, 0.157407],
+              [0.875, 0.157407],
+              [0.958333, 0.518519],
+              [0.057292, 0.62037]
+            ]
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c5_outer_entry",
+            "parent_zone_id": "c5_entry_main",
+            "subzone_type": "entry",
+            "priority": 100,
+            "description": "Approach band before the inward crossing line on C5.",
+            "allowed_transitions": [],
+            "polygon": [
+              [0.130208, 0.166667],
+              [0.869792, 0.166667],
+              [0.911458, 0.388889],
+              [0.09375, 0.416667]
+            ]
+          },
+          {
+            "subzone_id": "c5_inner_exit",
+            "parent_zone_id": "c5_entry_main",
+            "subzone_type": "exit",
+            "priority": 110,
+            "description": "Interior band after crossing, preferred for best-shot selection.",
+            "allowed_transitions": [
+              "C5_to_C3_overlap",
+              "C5_to_C6_overlap",
+              "C5_to_C7_overlap"
+            ],
+            "polygon": [
+              [0.09375, 0.398148],
+              [0.911458, 0.388889],
+              [0.958333, 0.518519],
+              [0.057292, 0.62037]
+            ]
+          }
+        ]
+      },
+      "C6": {
+        "camera_id": "C6",
+        "role": "entry",
+        "description": "Manual calibration for the diagonal entry camera.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [0.510417, 0.148148],
+            [0.994792, 0.138889],
+            [0.994792, 0.638889],
+            [0.395833, 0.574074]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.541667, 0.314815],
+            [0.994792, 0.263889]
+          ],
+          "in_side_point": [0.864583, 0.518519]
+        },
+        "default_zone_id": "c6_entry_main",
+        "default_subzone_id": "c6_inner_exit",
+        "entry_zones": ["c6_entry_main"],
+        "exit_zones": ["c6_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c6_entry_main",
+            "zone_type": "entry",
+            "priority": 10,
+            "description": "Manual processing zone for the diagonal entry approach.",
+            "polygon": [
+              [0.510417, 0.148148],
+              [0.994792, 0.138889],
+              [0.994792, 0.638889],
+              [0.395833, 0.574074]
+            ]
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c6_outer_entry",
+            "parent_zone_id": "c6_entry_main",
+            "subzone_type": "entry",
+            "priority": 100,
+            "description": "Approach region before the tripwire on C6.",
+            "allowed_transitions": [],
+            "polygon": [
+              [0.510417, 0.148148],
+              [0.994792, 0.138889],
+              [0.994792, 0.277778],
+              [0.447917, 0.324074]
+            ]
+          },
+          {
+            "subzone_id": "c6_inner_exit",
+            "parent_zone_id": "c6_entry_main",
+            "subzone_type": "exit",
+            "priority": 110,
+            "description": "Interior band after crossing, preferred for stable IN events.",
+            "allowed_transitions": [
+              "C6_to_C3_overlap",
+              "C6_to_C5_overlap",
+              "C6_to_C7_overlap"
+            ],
+            "polygon": [
+              [0.447917, 0.324074],
+              [0.994792, 0.277778],
+              [0.994792, 0.638889],
+              [0.395833, 0.574074]
+            ]
+          }
+        ]
+      },
+      "C7": {
+        "camera_id": "C7",
+        "role": "followup",
+        "description": "Manual calibration for the wide right-side follow-up view.",
+        "preview_source": "Wildtrack/cam7.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [0.338542, 0.111111],
+            [0.953125, 0.111111],
+            [0.994792, 0.907407],
+            [0.489583, 0.981481]
+          ]
+        },
+        "entry_line": {
+          "points": [],
+          "in_side_point": []
+        },
+        "default_zone_id": "c7_track_default",
+        "default_subzone_id": "c7_overlap_entry",
+        "entry_zones": ["c7_track_default"],
+        "exit_zones": ["c7_track_default"],
+        "zones": [
+          {
+            "zone_id": "c7_track_default",
+            "zone_type": "transit",
+            "priority": 10,
+            "description": "Manual processing zone for C7 follow-up coverage.",
+            "polygon": [
+              [0.338542, 0.111111],
+              [0.953125, 0.111111],
+              [0.994792, 0.907407],
+              [0.489583, 0.981481]
+            ]
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c7_overlap_entry",
+            "parent_zone_id": "c7_track_default",
+            "subzone_type": "overlap",
+            "priority": 100,
+            "description": "Main overlap-side follow-up region on C7.",
+            "allowed_transitions": [
+              "C5_to_C7_overlap",
+              "C6_to_C7_overlap",
+              "C3_to_C7_overlap"
+            ],
+            "polygon": [
+              [0.395833, 0.12963],
+              [0.791667, 0.12037],
+              [0.833333, 0.62963],
+              [0.510417, 0.703704]
+            ]
+          },
+          {
+            "subzone_id": "c7_far_exit",
+            "parent_zone_id": "c7_track_default",
+            "subzone_type": "exit",
+            "priority": 80,
+            "description": "Far-side follow-up region on C7.",
+            "allowed_transitions": [
+              "C7_to_C3_overlap"
+            ],
+            "polygon": [
+              [0.791667, 0.12037],
+              [0.953125, 0.111111],
+              [0.994792, 0.907407],
+              [0.833333, 0.861111]
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

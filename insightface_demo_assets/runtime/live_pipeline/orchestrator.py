@@ -20,11 +20,12 @@ from association_core import (
     resolve_spatial_context,
 )
 from offline_pipeline.event_builder import (
+    camera_processing_polygon,
     get_head_rect,
-    test_entry_crossing,
     test_point_in_polygon,
     write_image_unicode,
 )
+from offline_pipeline.direction_logic import evaluate_direction
 from run_face_resolution_demo import (
     CONFIG_DEFAULT,
     analyze_event_crops,
@@ -32,6 +33,14 @@ from run_face_resolution_demo import (
     load_json,
     read_csv,
     save_json,
+)
+from scene_calibration import (
+    apply_processing_mask,
+    apply_scene_calibration_to_transition_map,
+    apply_scene_calibration_to_wildtrack_config,
+    draw_scene_overlay,
+    load_runtime_scene_calibration,
+    probe_frame_from_source,
 )
 
 
@@ -61,6 +70,10 @@ def build_face_runtime_config(live_config, project_root: Path):
         runtime_config["camera_transition_map_config"] = str(
             resolve_path(project_root, live_config["camera_transition_map_config"])
         )
+    if live_config.get("scene_calibration_config"):
+        runtime_config["scene_calibration_config"] = str(
+            resolve_path(project_root, live_config["scene_calibration_config"])
+        )
     if live_config.get("known_gallery", {}).get("manifest_csv"):
         runtime_config["known_face_manifest_csv"] = str(
             resolve_path(project_root, live_config["known_gallery"]["manifest_csv"])
@@ -70,6 +83,19 @@ def build_face_runtime_config(live_config, project_root: Path):
             resolve_path(project_root, live_config["known_gallery"]["gallery_root"])
         )
     return runtime_config
+
+
+def build_source_lookup(project_root: Path, live_config):
+    lookup = {}
+    for camera_id, source_cfg in (live_config.get("sources", {}) or {}).items():
+        source_value = source_cfg.get("source", "")
+        if source_cfg.get("source_type", "file") == "file":
+            source_value = str(resolve_path(project_root, source_value))
+        lookup[camera_id] = {
+            "source_type": source_cfg.get("source_type", "file"),
+            "source": source_value,
+        }
+    return lookup
 
 
 def _open_capture(source_cfg):
@@ -211,6 +237,8 @@ class SimpleTrack:
     prev_foot: dict | None = None
     last_foot: dict | None = None
     last_frame_idx: int = 0
+    foot_history: list | None = None
+    spatial_history: list | None = None
 
 
 class CentroidTracker:
@@ -254,6 +282,9 @@ class CentroidTracker:
                 "x": (det["xmin"] + det["xmax"]) / 2.0,
                 "y": float(det["ymax"]),
             }
+            if track.foot_history is None:
+                track.foot_history = []
+            track.foot_history.append(dict(track.last_foot))
             track.bbox = det
             track.last_frame_idx = frame_idx
             updated_ids.add(track_id)
@@ -269,6 +300,8 @@ class CentroidTracker:
                 prev_foot=None,
                 last_foot={"x": (det["xmin"] + det["xmax"]) / 2.0, "y": float(det["ymax"])},
                 last_frame_idx=frame_idx,
+                foot_history=[{"x": (det["xmin"] + det["xmax"]) / 2.0, "y": float(det["ymax"])}],
+                spatial_history=[],
             )
             self.tracks[self.next_track_id] = track
             updated_ids.add(self.next_track_id)
@@ -287,7 +320,33 @@ def _crop_rect(frame, rect):
     return frame[ymin:ymax, xmin:xmax]
 
 
-def _build_event_payload(camera_id, role, track, frame, frame_idx, relative_sec, head_cfg, transition_map, output_dir):
+def _append_track_spatial_context(track, camera_id, transition_map, history_window):
+    if track.last_foot is None:
+        return
+    if track.spatial_history is None:
+        track.spatial_history = []
+    if track.foot_history is None:
+        track.foot_history = []
+    if not track.foot_history or track.foot_history[-1] != track.last_foot:
+        track.foot_history.append(dict(track.last_foot))
+    spatial = resolve_spatial_context(camera_id, track.last_foot["x"], track.last_foot["y"], transition_map)
+    track.spatial_history.append(spatial)
+    keep = max(2, int(history_window))
+    track.foot_history = track.foot_history[-keep:]
+    track.spatial_history = track.spatial_history[-keep:]
+
+
+def _direction_result_for_track(camera_cfg, track, transition_map):
+    line = camera_cfg.get("entry_line") or []
+    in_side_point = camera_cfg.get("in_side_point") or []
+    direction_cfg = camera_cfg.get("direction_filter", {}) or {}
+    history = track.foot_history or []
+    spatial_history = track.spatial_history or []
+    result = evaluate_direction(history, line, in_side_point, spatial_history=spatial_history, config=direction_cfg)
+    return result
+
+
+def _build_event_payload(camera_id, role, track, frame, frame_idx, relative_sec, head_cfg, transition_map, output_dir, direction_meta=None):
     bbox = track.bbox
     body_crop = _crop_rect(frame, bbox)
     if body_crop is None or body_crop.size == 0:
@@ -351,6 +410,12 @@ def _build_event_payload(camera_id, role, track, frame, frame_idx, relative_sec,
         "foot_x": track.last_foot["x"],
         "foot_y": track.last_foot["y"],
         "direction": "IN" if role == "entry" else "FOLLOWUP",
+        "direction_reason": (direction_meta or {}).get("reason", ""),
+        "direction_history_points": (direction_meta or {}).get("history_points", 0),
+        "direction_momentum_px": (direction_meta or {}).get("momentum_px", 0.0),
+        "direction_inside_ratio": (direction_meta or {}).get("inside_ratio", 0.0),
+        "direction_cross_in": (direction_meta or {}).get("cross_in", False),
+        "direction_zone_transition_ok": (direction_meta or {}).get("zone_transition_ok", False),
     }
 
 
@@ -359,25 +424,48 @@ def _worker_should_emit(camera_cfg, track, frame_idx, transition_map, output_dir
     if role == "entry":
         line = camera_cfg.get("entry_line")
         in_side_point = camera_cfg.get("in_side_point")
-        if not line or not in_side_point or track.prev_foot is None or track.last_foot is None:
+        if not line or not in_side_point or track.last_foot is None:
             return None
         if track.emitted:
             return None
-        if test_entry_crossing(track.prev_foot, track.last_foot, line, in_side_point, mode_cfg["line_distance_threshold"]):
+        direction_meta = _direction_result_for_track(camera_cfg, track, transition_map)
+        if direction_meta.get("decision") == "IN":
             track.emitted = True
             relative_sec = time.time() - start_time
-            return _build_event_payload(camera_cfg["camera_id"], role, track, frame, frame_idx, relative_sec, mode_cfg["head_crop"], transition_map, output_dir)
+            return _build_event_payload(
+                camera_cfg["camera_id"],
+                role,
+                track,
+                frame,
+                frame_idx,
+                relative_sec,
+                mode_cfg["head_crop"],
+                transition_map,
+                output_dir,
+                direction_meta=direction_meta,
+            )
         return None
 
     if track.emitted or track.hits < mode_cfg["followup_emit_min_hits"]:
         return None
     track.emitted = True
     relative_sec = time.time() - start_time
-    return _build_event_payload(camera_cfg["camera_id"], role, track, frame, frame_idx, relative_sec, mode_cfg["head_crop"], transition_map, output_dir)
+    return _build_event_payload(
+        camera_cfg["camera_id"],
+        role,
+        track,
+        frame,
+        frame_idx,
+        relative_sec,
+        mode_cfg["head_crop"],
+        transition_map,
+        output_dir,
+        direction_meta={"reason": "followup_emit_min_hits", "history_points": len(track.foot_history or [])},
+    )
 
 
 def _filter_detections_by_roi(detections, camera_cfg):
-    polygon = camera_cfg.get("entry_roi") or camera_cfg.get("track_roi") or []
+    polygon = camera_processing_polygon(camera_cfg)
     if not polygon:
         return detections
     kept = []
@@ -444,10 +532,24 @@ def live_camera_worker(worker_context, queue):
                 continue
             last_emit = now
             processed_frames += 1
-            detections = detector.detect(frame, resize_width=int(worker_context["detector_cfg"].get("resize_width", 960)))
+            masked_frame = apply_processing_mask(
+                frame,
+                worker_context["camera_cfg"],
+                enabled=bool(worker_context["processing_cfg"].get("roi_mask_enabled", True)),
+            )
+            detections = detector.detect(
+                masked_frame,
+                resize_width=int(worker_context["detector_cfg"].get("resize_width", 960)),
+            )
             detections = _filter_detections_by_roi(detections, worker_context["camera_cfg"])
             tracks = tracker.update(detections, frame_idx)
             for track in tracks:
+                _append_track_spatial_context(
+                    track,
+                    worker_context["camera_cfg"]["camera_id"],
+                    worker_context["transition_map"],
+                    worker_context["camera_cfg"].get("direction_filter", {}).get("history_window", 6),
+                )
                 packet_event = _worker_should_emit(
                     worker_context["camera_cfg"],
                     track,
@@ -564,6 +666,17 @@ def run_live_pipeline(config_path: Path):
         config_path=transition_config_path,
         base_dir=project_root,
     )
+    scene_calibration_config = live_config.get("scene_calibration_config", "")
+    scene_calibration, runtime_cameras, scene_runtime = load_runtime_scene_calibration(
+        config_path=resolve_path(project_root, scene_calibration_config) if scene_calibration_config else None,
+        base_dir=project_root,
+        camera_ids=wildtrack_config.get("selected_cameras", []),
+        source_lookup=build_source_lookup(project_root, live_config),
+        required=True,
+    )
+    frame_sizes = scene_runtime.get("frame_sizes", {})
+    transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
+    wildtrack_config = apply_scene_calibration_to_wildtrack_config(wildtrack_config, scene_calibration, frame_sizes)
     policy_config_path = live_config.get("association_policy_config", "")
     if policy_config_path:
         policy_config_path = str(resolve_path(project_root, policy_config_path))
@@ -579,6 +692,15 @@ def run_live_pipeline(config_path: Path):
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
     identity_means = _load_known_gallery(runtime_config, app, project_root, output_root)
+    preview_dir = output_root / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    for camera_id, source_cfg in build_source_lookup(project_root, live_config).items():
+        try:
+            preview_frame = probe_frame_from_source(source_cfg.get("source_type", "file"), source_cfg.get("source", ""), frame_idx=0)
+            overlay = draw_scene_overlay(preview_frame, runtime_cameras.get(camera_id, wildtrack_config["cameras"][camera_id]))
+            write_image_unicode(preview_dir / f"{camera_id}_overlay.png", overlay)
+        except Exception:
+            pass
 
     mp.set_start_method((live_config.get("execution", {}) or {}).get("start_method", "spawn"), force=True)
     queue = mp.Queue(maxsize=max(8, int((live_config.get("execution", {}) or {}).get("queue_max_size", 64))))
@@ -598,6 +720,7 @@ def run_live_pipeline(config_path: Path):
             "line_threshold": float(wildtrack_config["line_crossing_distance_threshold"]),
             "head_crop": wildtrack_config["head_crop"],
             "live_cfg": live_config.get("live", {}),
+            "processing_cfg": wildtrack_config.get("processing", {}),
             "detector_cfg": live_config.get("detector", {}),
             "tracker_cfg": live_config.get("tracker", {}),
         }
@@ -702,6 +825,7 @@ def run_live_pipeline(config_path: Path):
         "errors": errors,
         "association_policy_runtime": policy_runtime,
         "camera_transition_map_runtime": transition_runtime,
+        "scene_calibration_runtime": scene_runtime,
     }
     save_json(output_root / "summaries" / "live_pipeline_summary.json", summary)
     save_json(output_root / "logs" / "live_worker_packets.json", logs)

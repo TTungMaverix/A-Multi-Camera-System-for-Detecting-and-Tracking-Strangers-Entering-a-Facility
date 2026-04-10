@@ -6,7 +6,7 @@ The current offline runnable pipeline is **video-file-first**, but the detect/tr
 
 - video sources: `Wildtrack/cam3.mp4`, `cam5.mp4`, `cam6.mp4`, `cam7.mp4`
 - per-camera track extraction: `Wildtrack/annotations_positions/*.json`
-- direction filter: entry-camera line crossing from `wildtrack_demo/wildtrack_demo_config.json`
+- direction filter: manual scene calibration + trajectory/momentum logic from `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
 - face matching + known/unknown + cross-camera association: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
 
 This keeps the thesis demo honest:
@@ -47,6 +47,7 @@ Important fields:
 
 - `dataset.video_sources`: 4 input videos
 - `wildtrack_demo_config`: dataset-specific ROI, line crossing, best-shot window
+- `scene_calibration_config`: required manual ROI/zone/subzone calibration
 - `wildtrack_demo_config.best_shot_selection`: line-aware best-shot policy
 - `known_gallery.manifest_csv`
 - `known_gallery.gallery_root`
@@ -75,7 +76,7 @@ Minimum event packet fields in the offline flow:
 Event creation rules in the current backend:
 
 1. keep rows whose foot point stays inside the configured ROI
-2. for entry cameras, detect line crossing into the protected side
+2. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
 3. only after line crossing, create `ENTRY_IN`
 4. select a best shot inside the configured frame window
 5. when enabled, prefer post-anchor frames in higher-priority subzones such as `exit` or `interior`

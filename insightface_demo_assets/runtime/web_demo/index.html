@@ -40,6 +40,11 @@
       color: var(--muted);
       max-width: 760px;
     }
+    .hero a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
     .summary {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -127,6 +132,7 @@
     <section class="hero">
       <h1>Realtime Stranger Event Demo</h1>
       <p>This page polls the live event output files and shows the latest known/unknown decisions, camera origin, subzone metadata, and snapshot evidence.</p>
+      <p><a href="/calibration.html">Open manual calibration tool</a></p>
     </section>
     <section class="summary" id="summary"></section>
     <section class="event-grid" id="events"></section>

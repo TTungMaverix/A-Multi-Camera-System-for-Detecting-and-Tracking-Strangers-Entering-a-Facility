@@ -18,6 +18,8 @@ The UI only needs to show:
 - which zone/subzone it belongs to
 - which snapshot was stored
 
+The same lightweight server now also provides a calibration page so ROI/zone/subzone geometry can be edited without adding a second demo app.
+
 ## Runtime Pieces
 
 Server script:
@@ -31,6 +33,7 @@ PowerShell wrapper:
 Static page:
 
 - `insightface_demo_assets/runtime/web_demo/index.html`
+- `insightface_demo_assets/runtime/web_demo/calibration.html`
 
 ## Data Source
 
@@ -48,8 +51,13 @@ The server validates that the requested file still stays inside the project root
 ## Endpoints
 
 - `/` or `/index.html`
+- `/calibration.html`
 - `/api/latest-events`
 - `/api/summary`
+- `/api/calibration/state`
+- `/api/calibration/preview?camera_id=...`
+- `/api/calibration/save`
+- `/api/calibration/reset`
 - `/artifact?path=...`
 
 ## Commands

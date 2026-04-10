@@ -8,6 +8,11 @@ import yaml
 from association_core import load_camera_transition_map
 from offline_pipeline.event_builder import build_offline_stage_inputs, load_json, save_json
 from run_face_resolution_demo import main as run_face_resolution_main
+from scene_calibration import (
+    apply_scene_calibration_to_transition_map,
+    apply_scene_calibration_to_wildtrack_config,
+    load_runtime_scene_calibration,
+)
 
 
 def load_pipeline_config(config_path: Path):
@@ -50,6 +55,10 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
         runtime_config["camera_transition_map_config"] = str(
             resolve_path(project_root, offline_config["camera_transition_map_config"])
         )
+    if offline_config.get("scene_calibration_config"):
+        runtime_config["scene_calibration_config"] = str(
+            resolve_path(project_root, offline_config["scene_calibration_config"])
+        )
     if offline_config.get("known_gallery", {}).get("manifest_csv"):
         runtime_config["known_face_manifest_csv"] = str(
             resolve_path(project_root, offline_config["known_gallery"]["manifest_csv"])
@@ -61,6 +70,16 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     runtime_config_path = runtime_dir / "face_demo_runtime_config.json"
     runtime_config_path.write_text(json.dumps(runtime_config, ensure_ascii=False, indent=2), encoding="utf-8")
     return runtime_config_path, runtime_config
+
+
+def build_source_lookup(project_root: Path, offline_config):
+    lookup = {}
+    for camera_id, video_path in (offline_config.get("dataset", {}).get("video_sources", {}) or {}).items():
+        lookup[camera_id] = {
+            "source_type": "file",
+            "source": str(resolve_path(project_root, video_path)),
+        }
+    return lookup
 
 
 def sync_final_outputs(output_root: Path):
@@ -128,8 +147,19 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         config_path=offline_config.get("camera_transition_map_config", ""),
         base_dir=config_path.parent,
     )
+    scene_calibration_config = offline_config.get("scene_calibration_config", "")
+    scene_calibration, _runtime_cameras, scene_runtime = load_runtime_scene_calibration(
+        config_path=resolve_path(project_root, scene_calibration_config) if scene_calibration_config else None,
+        base_dir=config_path.parent,
+        camera_ids=wildtrack_config.get("selected_cameras", []),
+        source_lookup=build_source_lookup(project_root, offline_config),
+        required=True,
+    )
+    frame_sizes = scene_runtime.get("frame_sizes", {})
+    transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
+    wildtrack_config = apply_scene_calibration_to_wildtrack_config(wildtrack_config, scene_calibration, frame_sizes)
 
-    stage_inputs = build_offline_stage_inputs(offline_config, transition_map)
+    stage_inputs = build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_override=wildtrack_config)
     runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
     run_face_resolution_main(runtime_config_path)
     sync_final_outputs(output_root)
@@ -143,9 +173,11 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         "stage_inputs": stage_inputs,
         "runtime_config_path": str(runtime_config_path),
         "camera_transition_map_runtime": transition_runtime,
+        "scene_calibration_runtime": scene_runtime,
         "face_runtime_config": {
             "association_policy_config": runtime_config.get("association_policy_config", ""),
             "camera_transition_map_config": runtime_config.get("camera_transition_map_config", ""),
+            "scene_calibration_config": runtime_config.get("scene_calibration_config", ""),
             "known_face_manifest_csv": runtime_config.get("known_face_manifest_csv", ""),
             "known_face_gallery_root": runtime_config.get("known_face_gallery_root", ""),
         },

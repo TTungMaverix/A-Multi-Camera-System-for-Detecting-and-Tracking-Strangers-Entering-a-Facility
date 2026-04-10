@@ -47,9 +47,10 @@ Worker responsibilities:
 
 - open `file / rtsp / webcam` source
 - keep only the latest frame when configured
+- load the manual scene calibration for that camera
 - detect people with OpenCV HOG
 - track with a lightweight centroid tracker
-- apply ROI filtering and direction logic
+- apply ROI masking/filtering and trajectory-aware direction logic
 - emit only event packets, not full frames
 
 Central process responsibilities:
@@ -87,6 +88,17 @@ For a live run, outputs go to:
 - `outputs/live_runs/<run_name>/association_logs/live_decision_stream.jsonl`
 - `outputs/live_runs/<run_name>/association_logs/latest_decision_log.json`
 - `outputs/live_runs/<run_name>/summaries/live_pipeline_summary.json`
+- `outputs/live_runs/<run_name>/preview/<camera_id>_overlay.png`
+
+## Manual Calibration Requirement
+
+Live runtime now depends on:
+
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
+
+Missing or invalid manual calibration is a runtime error.
+
+The old auto/inferred ROI fallback is no longer used in the live path.
 
 ## Commands
 
