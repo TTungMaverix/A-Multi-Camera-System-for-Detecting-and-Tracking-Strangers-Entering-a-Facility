@@ -1,6 +1,8 @@
+import copy
 import csv
 import json
 import math
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -217,10 +219,12 @@ class FrameSourceCache:
         if source_mode == "video_files" and record.get("video_path"):
             video_path = Path(record["video_path"])
             capture = self._video_capture(video_path)
-            capture.set(cv2.CAP_PROP_POS_FRAMES, as_int(record.get("frame_id")))
+            capture.set(cv2.CAP_PROP_POS_FRAMES, as_int(record.get("source_frame_id_actual", record.get("frame_id"))))
             ok, frame = capture.read()
             if not ok or frame is None:
-                raise RuntimeError(f"Failed to decode frame {record.get('frame_id')} from {video_path}")
+                raise RuntimeError(
+                    f"Failed to decode frame {record.get('source_frame_id_actual', record.get('frame_id'))} from {video_path}"
+                )
             return frame
         if record.get("source_image_path"):
             image_path = Path(record["source_image_path"])
@@ -311,6 +315,199 @@ def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, vi
             )
     rows.sort(key=lambda row: (row["frame_id"], row["global_gt_id"]))
     return rows
+
+
+def extract_inference_track_rows(
+    camera_id,
+    camera_cfg,
+    fps,
+    video_source: Path,
+    low_load_cfg,
+    frame_source_mode,
+    inference_cfg,
+):
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        raise RuntimeError(
+            "single_source sequential inference replay requires ultralytics to be installed in the active runtime."
+        ) from exc
+
+    model_name = inference_cfg.get("detector_model", "yolov8n.pt")
+    tracker_name = inference_cfg.get("tracker", "bytetrack.yaml")
+    person_class_id = int(inference_cfg.get("person_class_id", 0))
+    conf_threshold = float(inference_cfg.get("conf_threshold", 0.25))
+    iou_threshold = float(inference_cfg.get("iou_threshold", 0.5))
+    imgsz = int(inference_cfg.get("imgsz", 640))
+    device = str(inference_cfg.get("device", "cpu"))
+    verbose = bool(inference_cfg.get("verbose", False))
+    target_timeline_fps = float(inference_cfg.get("target_timeline_fps", fps))
+    polygon = camera_processing_polygon(camera_cfg)
+    start_frame = as_int(low_load_cfg.get("start_frame", 0))
+    end_frame_raw = low_load_cfg.get("end_frame")
+    end_frame = None if end_frame_raw in ("", None) else as_int(end_frame_raw)
+    frame_stride = max(1, as_int(low_load_cfg.get("frame_stride", 1), 1))
+
+    model = YOLO(model_name)
+    capture = cv2.VideoCapture(str(video_source))
+    if not capture.isOpened():
+        raise RuntimeError(f"Failed to open inference replay video source: {video_source}")
+
+    track_rows = []
+    processed_frames = 0
+    raw_detection_count = 0
+    emitted_track_rows = 0
+    runtime_started = time.perf_counter()
+    actual_video_fps = float(capture.get(cv2.CAP_PROP_FPS) or fps or 0.0)
+    frame_id = -1
+    synthetic_track_id = 1000000
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                break
+            frame_id += 1
+            if frame_id < start_frame:
+                continue
+            if end_frame is not None and frame_id > end_frame:
+                break
+            if ((frame_id - start_frame) % frame_stride) != 0:
+                continue
+
+            processed_frames += 1
+            result_list = model.track(
+                frame,
+                persist=True,
+                tracker=tracker_name,
+                classes=[person_class_id],
+                conf=conf_threshold,
+                iou=iou_threshold,
+                imgsz=imgsz,
+                device=device,
+                verbose=verbose,
+            )
+            if not result_list:
+                continue
+            result = result_list[0]
+            boxes = getattr(result, "boxes", None)
+            if boxes is None or boxes.xyxy is None or len(boxes) == 0:
+                continue
+
+            xyxy = boxes.xyxy.cpu().numpy().tolist()
+            ids = boxes.id.cpu().numpy().tolist() if boxes.id is not None else [None] * len(xyxy)
+            confs = boxes.conf.cpu().numpy().tolist() if boxes.conf is not None else [0.0] * len(xyxy)
+            raw_detection_count += len(xyxy)
+            for box, track_id_value, det_score in zip(xyxy, ids, confs):
+                xmin, ymin, xmax, ymax = [int(round(value)) for value in box]
+                xmin = max(0, xmin)
+                ymin = max(0, ymin)
+                xmax = max(xmin + 1, xmax)
+                ymax = max(ymin + 1, ymax)
+                width = xmax - xmin
+                height = ymax - ymin
+                if width <= 0 or height <= 0:
+                    continue
+                center_x = round((xmin + xmax) / 2.0, 2)
+                center_y = round((ymin + ymax) / 2.0, 2)
+                foot_x = center_x
+                foot_y = float(ymax)
+                if polygon and not test_point_in_polygon(foot_x, foot_y, polygon):
+                    continue
+                if track_id_value is None:
+                    track_id = synthetic_track_id
+                    synthetic_track_id += 1
+                else:
+                    track_id = int(track_id_value)
+                logical_frame_id = int(round((frame_id / max(actual_video_fps, 1e-9)) * target_timeline_fps))
+                frame_key = f"{logical_frame_id:08d}"
+                relative_sec = round(logical_frame_id / float(target_timeline_fps), 3)
+                emitted_track_rows += 1
+                track_rows.append(
+                    {
+                        "camera_id": camera_id,
+                        "role": camera_cfg.get("role", ""),
+                        "local_track_id": str(track_id),
+                        "global_gt_id": int(track_id),
+                        "source_track_surrogate_id": str(track_id),
+                        "position_id": "",
+                        "frame_id": logical_frame_id,
+                        "source_frame_id_actual": frame_id,
+                        "frame_key": frame_key,
+                        "relative_sec": relative_sec,
+                        "xmin": xmin,
+                        "ymin": ymin,
+                        "xmax": xmax,
+                        "ymax": ymax,
+                        "width": width,
+                        "height": height,
+                        "area": width * height,
+                        "center_x": center_x,
+                        "center_y": center_y,
+                        "foot_x": foot_x,
+                        "foot_y": foot_y,
+                        "image_rel_path": f"VideoReplay\\{camera_id}\\{frame_key}.png",
+                        "video_path": str(video_source),
+                        "frame_source_mode": frame_source_mode,
+                        "track_provider": "ultralytics_yolo_bytetrack",
+                        "detection_score": round(float(det_score), 4),
+                    }
+                )
+    finally:
+        capture.release()
+
+    track_rows.sort(key=lambda row: (row["frame_id"], row["global_gt_id"]))
+    elapsed_sec = max(time.perf_counter() - runtime_started, 1e-9)
+    runtime_info = {
+        "track_provider": "ultralytics_yolo_bytetrack",
+        "detector_model": model_name,
+        "tracker": tracker_name,
+        "device": device,
+        "conf_threshold": conf_threshold,
+        "iou_threshold": iou_threshold,
+        "imgsz": imgsz,
+        "person_class_id": person_class_id,
+        "video_path": str(video_source),
+        "start_frame": start_frame,
+        "end_frame": end_frame if end_frame is not None else "",
+        "frame_stride": frame_stride,
+        "processed_frames": processed_frames,
+        "raw_detection_count": raw_detection_count,
+        "emitted_track_rows": emitted_track_rows,
+        "elapsed_sec": round(elapsed_sec, 3),
+        "processed_fps": round(processed_frames / elapsed_sec, 3),
+        "actual_video_fps": round(actual_video_fps, 3),
+        "target_timeline_fps": round(target_timeline_fps, 3),
+        "actual_window_sec": round(((end_frame if end_frame is not None else frame_id) - start_frame) / max(actual_video_fps, 1e-9), 3),
+        "identity_seed_field": "source_track_surrogate_id",
+        "notes": [
+            "Track rows are generated from YOLO person detection plus ByteTrack on the real source video.",
+            "global_gt_id is reused as a source-track surrogate ID in this inference-backed replay mode for compatibility with downstream audit files.",
+            "GT-backed annotations are not used to create the source tracks in this mode.",
+            "frame_id and relative_sec are normalized onto the configured timeline FPS so fake travel-time logic stays consistent with the replay topology.",
+        ],
+    }
+    return track_rows, runtime_info
+
+
+def clone_track_rows_for_virtual_camera(source_rows, virtual_camera_id, virtual_role, time_offset_sec, frame_offset):
+    cloned_rows = []
+    for row in source_rows:
+        cloned = copy.deepcopy(row)
+        cloned["camera_id"] = virtual_camera_id
+        cloned["role"] = virtual_role
+        cloned["source_camera_id"] = row.get("camera_id", "")
+        cloned["virtual_camera_id"] = virtual_camera_id
+        cloned["replay_pass_index"] = ""
+        cloned["fake_time_offset_sec"] = round(float(time_offset_sec), 3)
+        cloned["fake_frame_offset"] = int(frame_offset)
+        cloned["source_local_track_id"] = str(row.get("local_track_id", ""))
+        cloned["local_track_id"] = f"{virtual_camera_id}_{row.get('local_track_id', '')}"
+        cloned["frame_id"] = int(row["frame_id"]) + int(frame_offset)
+        cloned["frame_key"] = f"{int(cloned['frame_id']):08d}"
+        cloned["relative_sec"] = round(float(row["relative_sec"]) + float(time_offset_sec), 3)
+        cloned_rows.append(cloned)
+    cloned_rows.sort(key=lambda item: (item["frame_id"], item["global_gt_id"]))
+    return cloned_rows
 
 
 def group_rows_by_track(rows):
@@ -436,6 +633,96 @@ def crop_event_from_record(frame_cache: FrameSourceCache, dataset_root: Path, cr
     return body_path, head_path
 
 
+DEFAULT_FACE_BUFFER = {
+    "enabled": True,
+    "window_frames": 30,
+    "max_frames": 8,
+    "min_frame_step": 3,
+}
+
+
+def merged_face_buffer_cfg(config):
+    merged = dict(DEFAULT_FACE_BUFFER)
+    if isinstance(config, dict):
+        merged.update({key: value for key, value in config.items() if value is not None})
+    merged["window_frames"] = max(1, as_int(merged.get("window_frames", 30), 30))
+    merged["max_frames"] = max(1, as_int(merged.get("max_frames", 8), 8))
+    merged["min_frame_step"] = max(1, as_int(merged.get("min_frame_step", 3), 3))
+    merged["enabled"] = bool(merged.get("enabled", True))
+    return merged
+
+
+def select_evidence_buffer_records(records, anchor_frame_id, preferred_record, buffer_cfg=None):
+    cfg = merged_face_buffer_cfg(buffer_cfg)
+    if not cfg["enabled"]:
+        return []
+    frame_min = max(0, as_int(anchor_frame_id))
+    frame_max = frame_min + int(cfg["window_frames"])
+    window_rows = []
+    seen_frames = set()
+    for row in records:
+        frame_id = as_int(row.get("frame_id"))
+        if frame_id < frame_min or frame_id > frame_max or frame_id in seen_frames:
+            continue
+        seen_frames.add(frame_id)
+        window_rows.append(row)
+    if not window_rows:
+        window_rows = [preferred_record]
+    selected = []
+    last_frame_id = None
+    preferred_frame_id = as_int(preferred_record.get("frame_id"))
+    for row in sorted(window_rows, key=lambda item: (item["frame_id"], -item["area"])):
+        frame_id = as_int(row.get("frame_id"))
+        if last_frame_id is not None and frame_id - last_frame_id < int(cfg["min_frame_step"]) and frame_id != preferred_frame_id:
+            continue
+        selected.append(row)
+        last_frame_id = frame_id
+        if len(selected) >= int(cfg["max_frames"]):
+            break
+    if all(as_int(row.get("frame_id")) != preferred_frame_id for row in selected):
+        selected.append(preferred_record)
+    selected.sort(key=lambda item: (item["frame_id"], -item["area"]))
+    return selected[: int(cfg["max_frames"])]
+
+
+def crop_event_buffer_records(
+    frame_cache: FrameSourceCache,
+    dataset_root: Path,
+    crop_root: Path,
+    event_id,
+    camera_id,
+    records,
+    head_cfg,
+):
+    buffer_rows = []
+    camera_dir = crop_root / camera_id
+    for index, record in enumerate(records, start=1):
+        frame = frame_cache.frame_for_record(record, dataset_root)
+        img_h, img_w = frame.shape[:2]
+        body_rect = clamp_rect(
+            {"x": record["xmin"], "y": record["ymin"], "width": record["width"], "height": record["height"]},
+            img_w,
+            img_h,
+        )
+        head_rect = get_head_rect(record, head_cfg, img_w, img_h)
+        head_path = camera_dir / f"{event_id}_buffer_{index:02d}_{int(record['frame_id']):08d}_head.png"
+        body_path = camera_dir / f"{event_id}_buffer_{index:02d}_{int(record['frame_id']):08d}_body.png"
+        frame_cache.crop_record(record, head_rect, head_path, dataset_root)
+        frame_cache.crop_record(record, body_rect, body_path, dataset_root)
+        buffer_rows.append(
+            {
+                "frame_id": int(record["frame_id"]),
+                "relative_sec": float(record["relative_sec"]),
+                "bbox_area": int(record["area"]),
+                "head_crop_path": str(head_path),
+                "body_crop_path": str(body_path),
+                "foot_x": float(record.get("foot_x", 0.0)),
+                "foot_y": float(record.get("foot_y", 0.0)),
+            }
+        )
+    return buffer_rows
+
+
 def build_entry_events(
     dataset_root: Path,
     wildtrack_config,
@@ -448,6 +735,7 @@ def build_entry_events(
     head_cfg = wildtrack_config["head_crop"]
     best_shot_cfg = wildtrack_config.get("best_shot_selection", {})
     direction_cfg = wildtrack_config.get("direction_filter", {})
+    face_buffer_cfg = merged_face_buffer_cfg(wildtrack_config.get("face_buffer", {}))
     event_rows = []
     queue_rows = []
     event_assignment_rows = []
@@ -479,6 +767,21 @@ def build_entry_events(
                 continue
             event_id = f"IN_{camera_id}_{local_track_id}_{crossing_row['frame_id']:08d}"
             body_path, head_path = crop_event_from_record(frame_cache, dataset_root, crop_root, event_id, best_record, head_cfg)
+            buffer_records = select_evidence_buffer_records(
+                records,
+                crossing_row["frame_id"],
+                best_record,
+                face_buffer_cfg,
+            )
+            evidence_buffer_rows = crop_event_buffer_records(
+                frame_cache,
+                dataset_root,
+                crop_root,
+                event_id,
+                camera_id,
+                buffer_records,
+                head_cfg,
+            )
             spatial = resolve_spatial_context(camera_id, best_record["foot_x"], best_record["foot_y"], transition_map)
             event = {
                 "event_id": event_id,
@@ -529,6 +832,8 @@ def build_entry_events(
                 "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
                 "best_shot_subzone_type": best_shot_meta.get("best_shot_subzone_type", ""),
                 "best_shot_frames_after_anchor": best_shot_meta.get("best_shot_frames_after_anchor", ""),
+                "evidence_buffer_count": len(evidence_buffer_rows),
+                "evidence_buffer_json": json.dumps(evidence_buffer_rows, ensure_ascii=False),
             }
             event_rows.append(event)
             queue_rows.append(
@@ -562,6 +867,8 @@ def build_entry_events(
                     "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
                     "best_shot_subzone_type": best_shot_meta.get("best_shot_subzone_type", ""),
                     "best_shot_frames_after_anchor": best_shot_meta.get("best_shot_frames_after_anchor", ""),
+                    "evidence_buffer_count": len(evidence_buffer_rows),
+                    "evidence_buffer_json": json.dumps(evidence_buffer_rows, ensure_ascii=False),
                     "matched_known_id": "",
                     "matched_known_score": "",
                     "unknown_global_id": "",
@@ -641,7 +948,19 @@ def build_global_gt_summary(track_rows):
     return rows
 
 
-def materialize_stage_inputs(project_root: Path, dataset_root: Path, wildtrack_config_path: Path, wildtrack_config, output_root: Path, track_rows_by_camera, frame_source_mode, low_load_cfg, transition_map):
+def materialize_stage_inputs(
+    project_root: Path,
+    dataset_root: Path,
+    wildtrack_config_path: Path,
+    wildtrack_config,
+    output_root: Path,
+    track_rows_by_camera,
+    frame_source_mode,
+    low_load_cfg,
+    transition_map,
+    pipeline_backend="wildtrack_gt_annotations",
+    extra_stage_summary=None,
+):
     tracks_dir = output_root / "tracks"
     events_dir = output_root / "events"
     crops_dir = output_root / "crops"
@@ -689,7 +1008,7 @@ def materialize_stage_inputs(project_root: Path, dataset_root: Path, wildtrack_c
         fieldnames_for_rows(assignment_rows, ["run_mode", "event_id"]),
     )
     stage_summary = {
-        "pipeline_backend": "wildtrack_gt_annotations",
+        "pipeline_backend": pipeline_backend,
         "project_root": str(project_root),
         "dataset_root": str(dataset_root),
         "wildtrack_config_path": str(wildtrack_config_path),
@@ -701,11 +1020,22 @@ def materialize_stage_inputs(project_root: Path, dataset_root: Path, wildtrack_c
         "identity_queue_rows": len(identity_queue_rows),
         "per_camera_rows": {camera_id: len(track_rows_by_camera[camera_id]) for camera_id in wildtrack_config["selected_cameras"]},
         "notes": [
-            "This offline stage uses Wildtrack annotations as a GT-backed detect/track provider for the thesis demo baseline.",
             "Direction filtering is applied before face matching and only ENTRY_IN candidates are exported to the identity queue.",
             "Frame crops are taken from the configured frame source mode for reproducible best-shot generation.",
         ],
     }
+    if pipeline_backend == "wildtrack_gt_annotations":
+        stage_summary["notes"].insert(
+            0,
+            "This offline stage uses GT-backed track rows as the detect/track provider for the thesis demo baseline.",
+        )
+    else:
+        stage_summary["notes"].insert(
+            0,
+            "This offline stage uses replayed source track rows from the configured provider instead of GT-backed track generation.",
+        )
+    if extra_stage_summary:
+        stage_summary.update(copy.deepcopy(extra_stage_summary))
     save_json(summaries_dir / "stage_input_summary.json", stage_summary)
     save_json(summaries_dir / "wildtrack_demo_config.runtime.json", wildtrack_config)
 
@@ -782,6 +1112,151 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
     output_root = Path(offline_config["output_root"])
     if not output_root.is_absolute():
         output_root = (project_root / output_root).resolve()
+
+    source_backend = offline_config.get("source_backend", "wildtrack_gt_annotations")
+    if source_backend == "single_source_sequential_replay":
+        replay_cfg = offline_config.get("single_source_replay", {}) or {}
+        track_provider = replay_cfg.get("track_provider", "inference_yolo_bytetrack")
+        source_template_path = Path(replay_cfg.get("source_template_config", ""))
+        if not source_template_path.is_absolute():
+            source_template_path = (project_root / source_template_path).resolve()
+        if not source_template_path.exists():
+            raise RuntimeError(f"Missing single_source_replay.source_template_config: {source_template_path}")
+        source_template = load_json(source_template_path)
+        source_camera_id = replay_cfg.get("source_camera_id", "")
+        if not source_camera_id:
+            raise RuntimeError("single_source_replay.source_camera_id is required.")
+        if source_camera_id not in source_template.get("cameras", {}):
+            raise RuntimeError(f"Source camera {source_camera_id} not found in {source_template_path}")
+        virtual_camera_ids = replay_cfg.get("virtual_camera_ids", []) or []
+        if not virtual_camera_ids:
+            raise RuntimeError("single_source_replay.virtual_camera_ids is required.")
+        if virtual_camera_ids != wildtrack_config.get("selected_cameras", []):
+            raise RuntimeError(
+                "single_source_replay.virtual_camera_ids must match wildtrack_config.selected_cameras for the sequential replay demo."
+            )
+        time_offsets = replay_cfg.get("virtual_time_offsets_sec", []) or []
+        if not time_offsets:
+            raise RuntimeError("single_source_replay.virtual_time_offsets_sec is required.")
+        if len(time_offsets) != len(virtual_camera_ids):
+            raise RuntimeError("single_source_replay.virtual_time_offsets_sec length must match virtual_camera_ids length.")
+        fps = float(wildtrack_config["assumed_video_fps"])
+        configured_frame_offsets = replay_cfg.get("virtual_frame_offsets", []) or []
+        if configured_frame_offsets and len(configured_frame_offsets) != len(virtual_camera_ids):
+            raise RuntimeError("single_source_replay.virtual_frame_offsets length must match virtual_camera_ids length.")
+        frame_offsets = (
+            [int(item) for item in configured_frame_offsets]
+            if configured_frame_offsets
+            else [int(round(float(item) * fps)) for item in time_offsets]
+        )
+        source_video_path = Path(replay_cfg.get("source_video", ""))
+        if not source_video_path.is_absolute():
+            source_video_path = (project_root / source_video_path).resolve()
+        if not source_video_path.exists():
+            raise RuntimeError(f"Missing single-source replay video: {source_video_path}")
+        frame_source_mode = offline_config.get("frame_source_mode", "video_files")
+        low_load_cfg = offline_config.get("low_load", {})
+        source_camera_cfg = copy.deepcopy(source_template["cameras"][source_camera_id])
+        first_virtual_camera = wildtrack_config["cameras"][virtual_camera_ids[0]]
+        if first_virtual_camera.get("processing_roi"):
+            source_camera_cfg["processing_roi"] = copy.deepcopy(first_virtual_camera.get("processing_roi", []))
+            source_camera_cfg["entry_roi"] = copy.deepcopy(first_virtual_camera.get("processing_roi", []))
+        source_track_runtime = {}
+        if track_provider == "gt_annotations":
+            source_rows = extract_camera_track_rows(
+                dataset_root,
+                source_camera_id,
+                source_camera_cfg,
+                fps,
+                source_video_path,
+                low_load_cfg,
+                frame_source_mode,
+            )
+            source_track_runtime = {
+                "track_provider": "gt_annotations",
+                "video_path": str(source_video_path),
+                "start_frame": as_int(low_load_cfg.get("start_frame", 0)),
+                "end_frame": low_load_cfg.get("end_frame", ""),
+                "frame_stride": max(1, as_int(low_load_cfg.get("frame_stride", 1), 1)),
+                "identity_seed_field": "global_gt_id",
+                "notes": [
+                    "This legacy mode seeds track rows directly from Wildtrack annotations.",
+                    "It is kept only as an explicit opt-in fallback for audit/regression, not as the default runnable path.",
+                ],
+            }
+        elif track_provider == "inference_yolo_bytetrack":
+            source_rows, source_track_runtime = extract_inference_track_rows(
+                source_camera_id,
+                source_camera_cfg,
+                fps,
+                source_video_path,
+                low_load_cfg,
+                frame_source_mode,
+                replay_cfg.get("inference", {}) or {},
+            )
+        else:
+            raise RuntimeError(
+                f"Unsupported single_source_replay.track_provider={track_provider!r}. "
+                "Expected 'inference_yolo_bytetrack' or explicit legacy opt-in 'gt_annotations'."
+            )
+        track_rows_by_camera = {}
+        replay_manifest_rows = []
+        for index, virtual_camera_id in enumerate(virtual_camera_ids):
+            cloned_rows = clone_track_rows_for_virtual_camera(
+                source_rows,
+                virtual_camera_id,
+                wildtrack_config["cameras"][virtual_camera_id].get("role", "entry"),
+                float(time_offsets[index]),
+                int(frame_offsets[index]),
+            )
+            for row in cloned_rows:
+                row["replay_pass_index"] = index + 1
+            track_rows_by_camera[virtual_camera_id] = cloned_rows
+            replay_manifest_rows.append(
+                {
+                    "virtual_camera_id": virtual_camera_id,
+                    "source_camera_id": source_camera_id,
+                    "source_video": str(source_video_path),
+                    "replay_pass_index": index + 1,
+                    "fake_time_offset_sec": round(float(time_offsets[index]), 3),
+                    "fake_frame_offset": int(frame_offsets[index]),
+                    "role": wildtrack_config["cameras"][virtual_camera_id].get("role", "entry"),
+                }
+            )
+        result = materialize_stage_inputs(
+            project_root,
+            dataset_root,
+            wildtrack_config_path,
+            wildtrack_config,
+            output_root,
+            track_rows_by_camera,
+            frame_source_mode,
+            low_load_cfg,
+            transition_map,
+            pipeline_backend="single_source_sequential_replay",
+            extra_stage_summary={
+                "single_source_replay": {
+                    "source_camera_id": source_camera_id,
+                    "track_provider": track_provider,
+                    "source_template_config": str(source_template_path),
+                    "source_video": str(source_video_path),
+                    "virtual_camera_ids": virtual_camera_ids,
+                    "virtual_time_offsets_sec": [round(float(item), 3) for item in time_offsets],
+                    "virtual_frame_offsets": [int(item) for item in frame_offsets],
+                    "source_track_runtime": source_track_runtime,
+                },
+                "notes": [
+                    "This run replays one real source video sequentially as multiple virtual cameras for the supervisor-approved sanity demo.",
+                    "All virtual cameras reuse the same source track rows with fake time offsets to test Unknown_Global_ID reuse in the easiest setting.",
+                    "The goal of this mode is to validate sequential cross-camera unknown reuse before returning to harder real multi-camera overlap scenarios.",
+                ],
+            },
+        )
+        save_json(output_root / "summaries" / "single_source_replay_manifest.json", replay_manifest_rows)
+        result["video_sources"] = {camera_id: str(source_video_path) for camera_id in virtual_camera_ids}
+        result["replay_manifest_json"] = str(output_root / "summaries" / "single_source_replay_manifest.json")
+        result["source_backend"] = "single_source_sequential_replay"
+        return result
 
     frame_source_mode = offline_config.get("frame_source_mode", "video_files")
     video_sources = {}

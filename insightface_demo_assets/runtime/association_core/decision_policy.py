@@ -263,6 +263,7 @@ def _build_decision_log(
     gallery_id_after,
     thresholds_used,
     margin_used,
+    pending_info=None,
 ):
     candidate_set_before_filter = [candidate["candidate_unknown_global_id"] for candidate in candidate_scores if candidate["candidate_unknown_global_id"]]
     candidate_set_after_filter = [
@@ -298,6 +299,8 @@ def _build_decision_log(
                 "acceptance_reason": candidate.get("acceptance_reason", ""),
                 "reason_code": candidate.get("reason_code", ""),
                 "quality_gate_pass": candidate["quality_gate_pass"],
+                "face_available": candidate.get("face_available", False),
+                "body_available": candidate.get("body_available", False),
                 "face_score": candidate["face_score"],
                 "body_score": candidate["body_score"],
                 "face_ref_score": candidate.get("face_ref_score", ""),
@@ -318,7 +321,7 @@ def _build_decision_log(
                 and candidate["candidate_unknown_global_id"] == selected_candidate["candidate_unknown_global_id"],
             }
         )
-    return {
+    log_row = {
         "timestamp_sec": float(event["relative_sec"]),
         "relative_time": float(event["relative_sec"]),
         "camera_id": event["camera_id"],
@@ -382,6 +385,163 @@ def _build_decision_log(
         "gallery_id_before": gallery_id_before,
         "gallery_id_after": gallery_id_after,
         "candidate_evaluations": candidate_details,
+    }
+    if pending_info:
+        log_row.update(
+            {
+                "pending_used": True,
+                "pending_resolution": pending_info.get("resolution", ""),
+                "pending_duration_frames": pending_info.get("duration_frames", 0),
+                "pending_duration_sec": pending_info.get("duration_sec", 0.0),
+                "pending_buffer_items": pending_info.get("buffer_items", 0),
+                "pending_initial_score": pending_info.get("initial_score", 0.0),
+                "pending_initial_margin": pending_info.get("initial_margin", 0.0),
+                "pending_best_score": pending_info.get("best_score", 0.0),
+                "pending_best_margin": pending_info.get("best_margin", 0.0),
+                "pending_selected_frame": pending_info.get("selected_frame", ""),
+            }
+        )
+    else:
+        log_row.update(
+            {
+                "pending_used": False,
+                "pending_resolution": "",
+                "pending_duration_frames": 0,
+                "pending_duration_sec": 0.0,
+                "pending_buffer_items": 0,
+                "pending_initial_score": 0.0,
+                "pending_initial_margin": 0.0,
+                "pending_best_score": 0.0,
+                "pending_best_margin": 0.0,
+                "pending_selected_frame": "",
+            }
+        )
+    return log_row
+
+
+def _score_candidates_for_item(item, profiles, topology, merged_policy, decision_cfg):
+    quality = evaluate_quality_gate(item, merged_policy["quality_gate"])
+    candidate_scores = []
+    for profile in profiles:
+        candidate = evaluate_profile_candidate(item, profile, topology, merged_policy)
+        allowed, acceptance_reason, threshold_info = _candidate_acceptance(candidate, decision_cfg)
+        candidate["acceptance_pass"] = allowed
+        candidate["acceptance_reason"] = acceptance_reason
+        candidate["thresholds_used"] = threshold_info
+        candidate["ranking_key"] = json.dumps(_ranking_key(candidate))
+        candidate_scores.append(candidate)
+    candidate_scores.sort(key=_ranking_key, reverse=True)
+
+    top1 = candidate_scores[0] if candidate_scores else None
+    top2 = candidate_scores[1] if len(candidate_scores) > 1 else None
+    selected = None
+    margin = _primary_margin(top1, top2) if top1 else 0.0
+    required_margin = 0.0
+    selected_thresholds = {}
+
+    if quality["gate_pass"] and top1 and top1["acceptance_pass"]:
+        required_margin = float(
+            decision_cfg["margin_by_relation"].get(
+                top1["relation_type"],
+                decision_cfg["margin_by_relation"]["weak_link"],
+            )
+        )
+        selected_thresholds = top1.get("thresholds_used", {})
+        if margin >= required_margin:
+            selected = top1
+            selected["decision_reason"] = "unknown_reuse"
+            selected["reason_code"] = "unknown_reuse"
+        else:
+            top1["decision_reason"] = "ambiguous_margin_reject"
+            top1["reason_code"] = "ambiguous"
+
+    return {
+        "quality": quality,
+        "candidate_scores": candidate_scores,
+        "top1": top1,
+        "top2": top2,
+        "selected": selected,
+        "margin": margin,
+        "required_margin": required_margin,
+        "selected_thresholds": selected_thresholds,
+    }
+
+
+def _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg, initial_bundle):
+    pending_cfg = decision_cfg.get("pending_policy", {})
+    if not pending_cfg.get("enabled", True):
+        return None
+    top1 = initial_bundle.get("top1")
+    if not top1 or top1.get("reason_code") != "ambiguous":
+        return None
+    buffer_items = item.get("pending_buffer_items") or []
+    if not buffer_items:
+        return None
+
+    event = item["event"]
+    base_frame = int(event.get("frame_id", 0))
+    base_sec = float(event.get("relative_sec", 0.0))
+    max_frame = base_frame + int(pending_cfg.get("window_frames", 30))
+    max_sec = base_sec + float(pending_cfg.get("window_sec", 1.0))
+    max_buffer_items = max(1, int(pending_cfg.get("max_buffer_items", 8)))
+
+    filtered_items = []
+    for buffered_item in buffer_items:
+        buffered_event = buffered_item.get("event", {})
+        buffered_frame = int(buffered_event.get("pending_buffer_frame_id", buffered_event.get("frame_id", base_frame)))
+        buffered_sec = float(buffered_event.get("pending_buffer_relative_sec", buffered_event.get("relative_sec", base_sec)))
+        if buffered_frame < base_frame:
+            continue
+        if buffered_frame > max_frame or buffered_sec > max_sec:
+            continue
+        filtered_items.append(buffered_item)
+        if len(filtered_items) >= max_buffer_items:
+            break
+    if not filtered_items:
+        return None
+
+    best_bundle = initial_bundle
+    best_item = item
+    for buffered_item in filtered_items:
+        buffered_bundle = _score_candidates_for_item(buffered_item, profiles, topology, merged_policy, decision_cfg)
+        candidate = buffered_bundle.get("selected") or buffered_bundle.get("top1")
+        if candidate is None:
+            continue
+        best_candidate = best_bundle.get("selected") or best_bundle.get("top1")
+        if best_candidate is None or _ranking_key(candidate) > _ranking_key(best_candidate):
+            best_bundle = buffered_bundle
+            best_item = buffered_item
+        if buffered_bundle.get("selected") is not None:
+            break
+
+    selected_bundle = best_bundle
+    selected_item = best_item
+    selected_candidate = selected_bundle.get("selected")
+    selected_event = selected_item["event"]
+    return {
+        "resolution": "reuse_existing_unknown" if selected_candidate is not None else "create_new_unknown",
+        "selected_item": selected_item,
+        "quality": selected_bundle["quality"],
+        "candidate_scores": selected_bundle["candidate_scores"],
+        "top1": selected_bundle["top1"],
+        "selected_candidate": selected_candidate,
+        "margin": selected_bundle["margin"],
+        "required_margin": selected_bundle["required_margin"],
+        "selected_thresholds": selected_bundle["selected_thresholds"],
+        "duration_frames": max(0, int(selected_event.get("pending_buffer_frame_id", base_frame)) - base_frame),
+        "duration_sec": round(
+            max(0.0, float(selected_event.get("pending_buffer_relative_sec", base_sec)) - base_sec),
+            3,
+        ),
+        "buffer_items": len(filtered_items),
+        "initial_score": round(float(top1.get("appearance_primary", 0.0)), 4),
+        "initial_margin": round(float(initial_bundle.get("margin", 0.0)), 4),
+        "best_score": round(
+            float((selected_candidate or selected_bundle.get("top1") or {}).get("appearance_primary", 0.0)),
+            4,
+        ),
+        "best_margin": round(float(selected_bundle.get("margin", 0.0)), 4),
+        "selected_frame": selected_event.get("pending_buffer_frame_id", ""),
     }
 
 
@@ -533,48 +693,37 @@ def assign_model_identities(
             )
             continue
 
-        quality = evaluate_quality_gate(item, merged_policy["quality_gate"])
-        candidate_scores = []
-        for profile in profiles:
-            candidate = evaluate_profile_candidate(item, profile, topology, merged_policy)
-            allowed, acceptance_reason, threshold_info = _candidate_acceptance(candidate, decision_cfg)
-            candidate["acceptance_pass"] = allowed
-            candidate["acceptance_reason"] = acceptance_reason
-            candidate["thresholds_used"] = threshold_info
-            candidate["ranking_key"] = json.dumps(_ranking_key(candidate))
-            candidate_scores.append(candidate)
-        candidate_scores.sort(key=_ranking_key, reverse=True)
+        score_bundle = _score_candidates_for_item(item, profiles, topology, merged_policy, decision_cfg)
+        quality = score_bundle["quality"]
+        candidate_scores = score_bundle["candidate_scores"]
+        top1 = score_bundle["top1"]
+        selected = score_bundle["selected"]
+        margin = score_bundle["margin"]
+        required_margin = score_bundle["required_margin"]
+        selected_thresholds = score_bundle["selected_thresholds"]
+        effective_item = item
+        pending_info = None
 
-        top1 = candidate_scores[0] if candidate_scores else None
-        top2 = candidate_scores[1] if len(candidate_scores) > 1 else None
-        selected = None
-        margin = _primary_margin(top1, top2) if top1 else 0.0
-        required_margin = 0.0
-        selected_thresholds = {}
-
-        if quality["gate_pass"] and top1 and top1["acceptance_pass"]:
-            required_margin = float(
-                decision_cfg["margin_by_relation"].get(
-                    top1["relation_type"],
-                    decision_cfg["margin_by_relation"]["weak_link"],
-                )
-            )
-            selected_thresholds = top1.get("thresholds_used", {})
-            if margin >= required_margin:
-                selected = top1
-                selected["decision_reason"] = "unknown_reuse"
-                selected["reason_code"] = "unknown_reuse"
-            else:
-                top1["decision_reason"] = "ambiguous_margin_reject"
-                top1["reason_code"] = "ambiguous"
+        if selected is None and quality["gate_pass"] and top1 and top1.get("reason_code") == "ambiguous":
+            pending_info = _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg, score_bundle)
+            if pending_info is not None:
+                effective_item = pending_info["selected_item"]
+                quality = pending_info["quality"]
+                candidate_scores = pending_info["candidate_scores"]
+                top1 = pending_info["top1"]
+                selected = pending_info["selected_candidate"]
+                margin = pending_info["margin"]
+                required_margin = pending_info["required_margin"]
+                selected_thresholds = pending_info["selected_thresholds"]
 
         if selected is not None:
             profile = next(profile for profile in profiles if profile["unknown_global_id"] == selected["candidate_unknown_global_id"])
-            update_unknown_profile(profile, item, policy=gallery_cfg)
+            resolved_event = effective_item["event"]
+            update_unknown_profile(profile, effective_item, policy=gallery_cfg)
             resolved_rows.append(
                 _build_resolved_row(
-                    event,
-                    item,
+                    resolved_event,
+                    effective_item,
                     unknown_global_id=profile["unknown_global_id"],
                     decision_type="reuse_unknown",
                     reason_code="unknown_reuse",
@@ -609,6 +758,7 @@ def assign_model_identities(
                     gallery_id_after=profile["unknown_global_id"],
                     thresholds_used={**selected_thresholds, "required_margin": required_margin},
                     margin_used={"actual_margin": margin, "required_margin": required_margin},
+                    pending_info=pending_info,
                 )
             )
             continue
@@ -786,12 +936,20 @@ def assign_model_identities(
                 create_reason = top1.get("acceptance_reason") or top1.get("candidate_reason") or "below_threshold"
         elif not had_previous_profiles:
             create_reason = "no_previous_unknown_profiles"
-        profile = create_unknown_profile(unknown_global_id, item, policy=gallery_cfg)
+        if pending_info is not None and pending_info.get("resolution") == "create_new_unknown":
+            effective_item = pending_info["selected_item"]
+            quality = pending_info["quality"]
+            candidate_scores = pending_info["candidate_scores"]
+            top1 = pending_info["top1"]
+            margin = pending_info["margin"]
+            required_margin = pending_info["required_margin"]
+        profile = create_unknown_profile(unknown_global_id, effective_item, policy=gallery_cfg)
         profiles.append(profile)
+        resolved_event = effective_item["event"]
         resolved_rows.append(
             _build_resolved_row(
-                event,
-                item,
+                resolved_event,
+                effective_item,
                 unknown_global_id=unknown_global_id,
                 decision_type="create_unknown",
                 reason_code=create_reason,
@@ -806,7 +964,11 @@ def assign_model_identities(
                 face_unusable_reason=(
                     top1.get("face_unusable_reason", "")
                     if top1
-                    else ("face_embedding_missing" if item.get("face_embedding") is None else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else ""))
+                    else (
+                        "face_embedding_missing"
+                        if effective_item.get("face_embedding") is None
+                        else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                    )
                 ),
             )
         )
@@ -908,6 +1070,7 @@ def assign_model_identities(
                     if top1
                     else "",
                 },
+                pending_info=pending_info,
             )
         )
     debug_bundle = {"policy": merged_policy, "decision_logs": decision_logs}

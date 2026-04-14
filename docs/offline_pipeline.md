@@ -2,40 +2,57 @@
 
 ## Current Backend
 
-The current offline runnable pipeline is **video-file-first**, but the detect/track stage is still a **GT-backed Wildtrack provider**:
+The default offline runnable pipeline is now the **single-source sequential replay inference proof phase**.
 
-- video sources: `Wildtrack/cam3.mp4`, `cam5.mp4`, `cam6.mp4`, `cam7.mp4`
-- per-camera track extraction: `Wildtrack/annotations_positions/*.json`
-- direction filter: manual scene calibration + trajectory/momentum logic from `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
+- one physical source video: `Wildtrack/cam6.mp4`
+- four virtual camera passes: `C1`, `C2`, `C3`, `C4`
+- fake timestamp offsets between passes to simulate travel time
+- per-camera track extraction: real `YOLOv8n + ByteTrack` inference on `Wildtrack/cam6.mp4`
+- direction filter: manual scene calibration + trajectory/momentum logic from `insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json`
 - face matching + known/unknown + cross-camera association: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
 
-This keeps the thesis demo honest:
-
-- there is now one offline orchestration flow
-- direction filtering and event creation are in that flow
-- the current tracking backend is still annotation-backed, not a heavy detector+tracker inference stack
+The older Wildtrack 4-source mode still exists as a reference backend, but it is not the default rescue-demo path.
 
 ## Entry Point
 
 Main offline command:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
-```
-
-Compatibility command:
-
-```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
 ```
 
-Both currently resolve to the same offline orchestrator.
+Direct video-phase command:
+
+```cmd
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_single_source_sequential_video_phase.ps1"
+```
+
+Direct Python:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml"
+```
+
+The generic orchestrator wrapper still exists, but the default defense/demo path now resolves to the single-source sequential replay config.
 
 ## Config
 
-Main config:
+Main verified inference video-phase config:
+
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+
+Longer stress config that currently exceeds the local verification timeout:
+
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`
+
+Earlier short sanity config:
+
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
+
+Reference Wildtrack multi-source config:
 
 - `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 
@@ -45,7 +62,13 @@ Low-load config:
 
 Important fields:
 
-- `dataset.video_sources`: 4 input videos
+- `dataset.video_sources`: current input source paths for the run
+- `single_source_replay.source_camera_id`
+- `single_source_replay.source_video`
+- `single_source_replay.replay_count`
+- `single_source_replay.virtual_camera_ids`
+- `single_source_replay.virtual_time_offsets_sec`
+- `single_source_replay.virtual_frame_offsets`
 - `wildtrack_demo_config`: dataset-specific ROI, line crossing, best-shot window
 - `scene_calibration_config`: required manual ROI/zone/subzone calibration
 - `wildtrack_demo_config.best_shot_selection`: line-aware best-shot policy
@@ -55,6 +78,12 @@ Important fields:
 - `camera_transition_map_config`
 - `execution.mode`
 - `low_load`
+
+For the rescue demo, the most important extra files are:
+
+- `wildtrack_demo/single_source_sequential_c6_demo_config.json`
+- `insightface_demo_assets/runtime/config/camera_transition_map.single_source_sequential_c6.yaml`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json`
 
 ## Event Creation Conditions
 
@@ -75,13 +104,15 @@ Minimum event packet fields in the offline flow:
 
 Event creation rules in the current backend:
 
-1. keep rows whose foot point stays inside the configured ROI
-2. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
-3. only after line crossing, create `ENTRY_IN`
-4. select a best shot inside the configured frame window
-5. when enabled, prefer post-anchor frames in higher-priority subzones such as `exit` or `interior`
-6. create best-shot body/head crops
-7. send that event to face matching and then to cross-camera association
+1. run YOLO person detection plus ByteTrack on the single source video
+2. project the inferred source tracks into virtual cameras with configured fake frame and time offsets
+3. keep rows whose foot point stays inside the configured ROI
+4. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
+5. only after line crossing, create `ENTRY_IN`
+6. select a best shot inside the configured frame window
+7. when enabled, prefer post-anchor frames in higher-priority subzones
+8. create best-shot body/head crops
+9. send that event to face matching and then to cross-camera association
 
 ## Output Layout
 
@@ -99,11 +130,13 @@ For each offline run:
 Main final files:
 
 - `events/resolved_events.csv`
+- `events/unknown_id_mapping.csv`
 - `timelines/stream_identity_timeline.csv`
 - `summaries/face_resolution_summary.json`
+- `summaries/single_source_replay_manifest.json`
 - `association_logs/association_decisions.jsonl`
 - `audit/audit_report.md`
 - `audit/entry_event_assignment_audit.csv`
 - `audit/audit_event_generation_subzones.csv`
 
-The audit CSV files now include line-aware best-shot metadata so event creation can be debugged without rerunning the full pipeline.
+The audit CSV files include line-aware best-shot metadata so event creation and unknown ID reuse can be debugged without rerunning the full pipeline. The summaries directory now also exports `face_body_usage_summary.json` for video-phase face-vs-body evidence.

@@ -238,6 +238,89 @@ def test_ambiguous_margin_creates_new_unknown_by_policy():
     assert "ambiguous" in debug["decision_logs"][2]["reason_code"]
 
 
+def test_pending_buffer_can_turn_ambiguous_case_into_reuse():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    items[2]["pending_buffer_items"] = [
+        {
+            "event": {
+                **items[2]["event"],
+                "pending_buffer_frame_id": 4,
+                "pending_buffer_relative_sec": 0.4,
+            },
+            "face_embedding": None,
+            "face_status": "missing",
+            "face_count": 0,
+            "face_det_score": 0.0,
+            "face_bbox": "",
+            "face_message": "missing",
+            "used_face_crop": "",
+            "used_face_crop_path": "",
+            "body_embedding": np.asarray([0.98, 0.02], dtype=np.float32),
+            "body_status": "ok",
+            "body_message": "ok",
+            "body_shape": "64x128",
+        }
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["unknown_global_id"] == rows[0]["unknown_global_id"]
+    assert debug["decision_logs"][2]["pending_used"] is True
+    assert debug["decision_logs"][2]["pending_resolution"] == "reuse_existing_unknown"
+    assert debug["decision_logs"][2]["decision"] == "unknown_reuse"
+
+
+def test_pending_buffer_can_still_end_with_create_new():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    items[2]["pending_buffer_items"] = [
+        {
+            "event": {
+                **items[2]["event"],
+                "pending_buffer_frame_id": 4,
+                "pending_buffer_relative_sec": 0.4,
+            },
+            "face_embedding": None,
+            "face_status": "missing",
+            "face_count": 0,
+            "face_det_score": 0.0,
+            "face_bbox": "",
+            "face_message": "missing",
+            "used_face_crop": "",
+            "used_face_crop_path": "",
+            "body_embedding": np.asarray([0.705, 0.709], dtype=np.float32),
+            "body_status": "ok",
+            "body_message": "ok",
+            "body_shape": "64x128",
+        }
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["resolution_source"] == "model_unknown_new_profile"
+    assert debug["decision_logs"][2]["pending_used"] is True
+    assert debug["decision_logs"][2]["pending_resolution"] == "create_new_unknown"
+
+
 def test_body_fallback_reuses_when_face_is_low_quality():
     items = [
         make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),

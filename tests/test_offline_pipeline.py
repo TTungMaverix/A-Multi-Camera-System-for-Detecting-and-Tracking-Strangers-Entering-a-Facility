@@ -4,7 +4,13 @@ import cv2
 import numpy as np
 import yaml
 
-from offline_pipeline.event_builder import FrameSourceCache, build_entry_anchor_packets, build_entry_events, select_best_record
+from offline_pipeline.event_builder import (
+    FrameSourceCache,
+    build_entry_anchor_packets,
+    build_entry_events,
+    clone_track_rows_for_virtual_camera,
+    select_best_record,
+)
 from offline_pipeline.orchestrator import load_pipeline_config
 
 
@@ -21,6 +27,77 @@ def test_offline_pipeline_example_has_four_video_sources():
     config = load_pipeline_config(config_path)
     assert config["source_backend"] == "wildtrack_gt_annotations"
     assert sorted(config["dataset"]["video_sources"].keys()) == ["C3", "C5", "C6", "C7"]
+
+
+def test_single_source_sequential_offline_pipeline_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["single_source_replay"]["source_camera_id"] == "C6"
+    assert config["single_source_replay"]["virtual_camera_ids"] == ["C1", "C2", "C3", "C4"]
+    assert config["face_demo_overrides"]["demo_auto_enroll_count"] == 0
+
+
+def test_single_source_sequential_video_phase_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_3min.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["low_load"]["start_frame"] == 0
+    assert config["low_load"]["end_frame"] == 1800
+    assert config["single_source_replay"]["virtual_time_offsets_sec"] == [0, 6, 12, 18]
+
+
+def test_single_source_sequential_inference_phase_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_5min.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["single_source_replay"]["track_provider"] == "inference_yolo_bytetrack"
+    assert config["low_load"]["end_frame"] == 3000
+    assert config["low_load"]["frame_stride"] == 3
+
+
+def test_single_source_sequential_inference_90s_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["single_source_replay"]["track_provider"] == "inference_yolo_bytetrack"
+    assert config["low_load"]["end_frame"] == 5394
+    assert config["low_load"]["frame_stride"] == 6
+
+
+def test_single_source_sequential_inference_50s_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["single_source_replay"]["track_provider"] == "inference_yolo_bytetrack"
+    assert config["low_load"]["end_frame"] == 3000
+    assert config["low_load"]["frame_stride"] == 6
+
+
+def test_clone_track_rows_for_virtual_camera_applies_offsets():
+    source_rows = [
+        {
+            "camera_id": "C6",
+            "role": "entry",
+            "local_track_id": "7",
+            "global_gt_id": 7,
+            "frame_id": 120,
+            "frame_key": "00000120",
+            "relative_sec": 12.0,
+            "video_path": "cam6.mp4",
+            "image_rel_path": "Image_subsets\\C6\\00000120.png",
+        }
+    ]
+    cloned = clone_track_rows_for_virtual_camera(source_rows, "C2", "entry", 6.0, 60)
+    assert len(cloned) == 1
+    assert cloned[0]["camera_id"] == "C2"
+    assert cloned[0]["source_camera_id"] == "C6"
+    assert cloned[0]["source_local_track_id"] == "7"
+    assert cloned[0]["local_track_id"] == "C2_7"
+    assert cloned[0]["frame_id"] == 180
+    assert cloned[0]["relative_sec"] == 18.0
+    assert cloned[0]["fake_time_offset_sec"] == 6.0
+    assert cloned[0]["fake_frame_offset"] == 60
 
 
 def test_entry_event_builder_emits_in_event_with_zone_and_subzone(tmp_path):

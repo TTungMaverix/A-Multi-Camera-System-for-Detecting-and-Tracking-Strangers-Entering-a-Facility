@@ -57,6 +57,12 @@ DEFAULT_ASSOCIATION_POLICY = {
         "known_margin_threshold": 0.02,
         "unknown_reuse_threshold": 0.18,
         "create_rule": "create_new_unknown_when_no_safe_match",
+        "pending_policy": {
+            "enabled": True,
+            "window_frames": 30,
+            "window_sec": 1.0,
+            "max_buffer_items": 8,
+        },
         "defer_policy": {
             "quality_reliability_max": 0.35,
             "quality_gate_fail_action": "defer",

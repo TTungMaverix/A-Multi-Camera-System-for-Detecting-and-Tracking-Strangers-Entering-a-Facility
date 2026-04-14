@@ -35,7 +35,12 @@ from association_core import (
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
 )
-from offline_pipeline.event_builder import FrameSourceCache
+from offline_pipeline.event_builder import (
+    FrameSourceCache,
+    crop_event_buffer_records,
+    merged_face_buffer_cfg,
+    select_evidence_buffer_records,
+)
 from offline_pipeline.direction_logic import evaluate_direction
 from scene_calibration import (
     apply_scene_calibration_to_transition_map,
@@ -389,6 +394,8 @@ def resolve_zone_for_record(record, transition_map):
 
 
 def enroll_demo_authorized_identities(app, queue_rows, known_root: Path, count=2):
+    if int(count or 0) <= 0:
+        return []
     counts = Counter(row["global_gt_id"] for row in queue_rows)
     ordered_rows = sorted(
         queue_rows,
@@ -474,40 +481,134 @@ def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Pat
     return identity_means, per_image_rows
 
 
+def _laplacian_variance(image_path: Path):
+    image = load_image_unicode(image_path)
+    if image is None:
+        return 0.0
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def _parse_evidence_buffer_rows(event):
+    raw_value = event.get("evidence_buffer_json", "[]")
+    if isinstance(raw_value, list):
+        rows = raw_value
+    else:
+        try:
+            rows = json.loads(raw_value or "[]")
+        except json.JSONDecodeError:
+            rows = []
+    if rows:
+        return rows
+    return [
+        {
+            "frame_id": as_int(event.get("best_shot_frame"), as_int(event.get("frame_id"))),
+            "relative_sec": as_float(event.get("best_shot_sec"), as_float(event.get("relative_sec"))),
+            "bbox_area": as_int(event.get("bbox_area", 0)),
+            "head_crop_path": event.get("best_head_crop", ""),
+            "body_crop_path": event.get("best_body_crop", ""),
+        }
+    ]
+
+
+def _buffer_face_quality(face_result, buffer_row):
+    if face_result.get("status") != "ok":
+        return -1.0
+    blur_score = min(_laplacian_variance(Path(buffer_row["head_crop_path"])), 500.0)
+    bbox_bonus = min(float(buffer_row.get("bbox_area", 0)), 40000.0) / 40000.0
+    return round((float(face_result.get("det_score", 0.0)) * 100.0) + (blur_score / 25.0) + bbox_bonus, 4)
+
+
 def analyze_event_crops(app, events):
     analyzed = []
     for event in events:
-        best_face = None
-        used_crop = ""
-        for crop_key in ("best_head_crop", "best_body_crop"):
-            crop_path = Path(event[crop_key])
-            emb = extract_embedding_from_image(app, crop_path)
-            if best_face is None:
-                best_face = dict(emb)
-                best_face["crop_key"] = crop_key
-                best_face["crop_path"] = str(crop_path)
-            if emb["status"] == "ok":
-                best_face = dict(emb)
-                best_face["crop_key"] = crop_key
-                best_face["crop_path"] = str(crop_path)
-                used_crop = crop_key
+        buffer_rows = _parse_evidence_buffer_rows(event)
+        analyzed_buffer = []
+        face_detected_in_buffer = 0
+        face_embedding_created_in_buffer = 0
+        for index, buffer_row in enumerate(buffer_rows, start=1):
+            head_path = Path(buffer_row.get("head_crop_path", ""))
+            body_path = Path(buffer_row.get("body_crop_path", event.get("best_body_crop", "")))
+            face_result = extract_embedding_from_image(app, head_path)
+            body_result = extract_body_feature(body_path)
+            if face_result.get("face_count", 0) > 0:
+                face_detected_in_buffer += 1
+            if face_result.get("embedding") is not None:
+                face_embedding_created_in_buffer += 1
+            analyzed_buffer.append(
+                {
+                    "buffer_index": index,
+                    "frame_id": as_int(buffer_row.get("frame_id")),
+                    "relative_sec": as_float(buffer_row.get("relative_sec")),
+                    "bbox_area": as_int(buffer_row.get("bbox_area", 0)),
+                    "head_crop_path": str(head_path),
+                    "body_crop_path": str(body_path),
+                    "face_result": face_result,
+                    "body_result": body_result,
+                    "face_quality_score": _buffer_face_quality(face_result, buffer_row),
+                }
+            )
+
+        selected_face = None
+        for candidate in sorted(analyzed_buffer, key=lambda item: item["face_quality_score"], reverse=True):
+            if candidate["face_result"].get("status") == "ok":
+                selected_face = candidate
                 break
-        body = extract_body_feature(Path(event["best_body_crop"]))
+        if selected_face is None and analyzed_buffer:
+            selected_face = analyzed_buffer[0]
+
+        best_body = extract_body_feature(Path(event["best_body_crop"]))
+        pending_buffer_items = []
+        for candidate in analyzed_buffer:
+            candidate_event = dict(event)
+            candidate_event["pending_parent_event_id"] = event["event_id"]
+            candidate_event["pending_buffer_index"] = candidate["buffer_index"]
+            candidate_event["pending_buffer_frame_id"] = candidate["frame_id"]
+            candidate_event["pending_buffer_relative_sec"] = candidate["relative_sec"]
+            candidate_event["pending_buffer_bbox_area"] = candidate["bbox_area"]
+            candidate_event["best_head_crop"] = candidate["head_crop_path"]
+            candidate_event["best_body_crop"] = candidate["body_crop_path"]
+            pending_buffer_items.append(
+                {
+                    "event": candidate_event,
+                    "face_embedding": candidate["face_result"].get("embedding"),
+                    "face_status": candidate["face_result"].get("status", "missing"),
+                    "face_count": candidate["face_result"].get("face_count", 0),
+                    "face_det_score": candidate["face_result"].get("det_score", 0.0),
+                    "face_bbox": candidate["face_result"].get("bbox", ""),
+                    "face_message": candidate["face_result"].get("message", ""),
+                    "used_face_crop": "face_buffer_head",
+                    "used_face_crop_path": candidate["head_crop_path"],
+                    "body_embedding": candidate["body_result"].get("embedding"),
+                    "body_status": candidate["body_result"].get("status", "missing"),
+                    "body_message": candidate["body_result"].get("message", ""),
+                    "body_shape": candidate["body_result"].get("shape", ""),
+                    "buffer_quality_score": candidate["face_quality_score"],
+                }
+            )
+
         analyzed.append(
             {
                 "event": event,
-                "face_embedding": best_face["embedding"] if best_face else None,
-                "face_status": best_face["status"] if best_face else "missing",
-                "face_count": best_face["face_count"] if best_face else 0,
-                "face_det_score": best_face["det_score"] if best_face else 0.0,
-                "face_bbox": best_face["bbox"] if best_face else "",
-                "face_message": best_face["message"] if best_face else "missing",
-                "used_face_crop": used_crop or (best_face["crop_key"] if best_face else ""),
-                "used_face_crop_path": best_face["crop_path"] if best_face else "",
-                "body_embedding": body["embedding"],
-                "body_status": body["status"],
-                "body_message": body["message"],
-                "body_shape": body["shape"],
+                "face_embedding": selected_face["face_result"]["embedding"] if selected_face else None,
+                "face_status": selected_face["face_result"]["status"] if selected_face else "missing",
+                "face_count": selected_face["face_result"]["face_count"] if selected_face else 0,
+                "face_det_score": selected_face["face_result"]["det_score"] if selected_face else 0.0,
+                "face_bbox": selected_face["face_result"]["bbox"] if selected_face else "",
+                "face_message": selected_face["face_result"]["message"] if selected_face else "missing",
+                "used_face_crop": "face_buffer_head" if selected_face else "",
+                "used_face_crop_path": selected_face["head_crop_path"] if selected_face else "",
+                "body_embedding": best_body["embedding"],
+                "body_status": best_body["status"],
+                "body_message": best_body["message"],
+                "body_shape": best_body["shape"],
+                "evidence_buffer_count": len(analyzed_buffer),
+                "face_buffer_detected_count": face_detected_in_buffer,
+                "face_buffer_embedding_count": face_embedding_created_in_buffer,
+                "face_best_shot_selected": bool(selected_face and selected_face["face_result"].get("status") == "ok"),
+                "face_best_shot_frame": selected_face["frame_id"] if selected_face else "",
+                "face_best_shot_quality": selected_face["face_quality_score"] if selected_face else "",
+                "pending_buffer_items": pending_buffer_items,
             }
         )
     return analyzed
@@ -665,12 +766,14 @@ def build_event_from_record(
     event_type,
     record,
     best_record,
+    all_records,
     dataset_root: Path,
     crop_root: Path,
     head_cfg,
     extra,
     transition_map,
     frame_cache=None,
+    face_buffer_cfg=None,
 ):
     image_path = dataset_root / best_record["image_rel_path"]
     active_frame_cache = frame_cache or FrameSourceCache()
@@ -692,6 +795,20 @@ def build_event_from_record(
     ok_head, head_message = crop_and_save_from_record(active_frame_cache, dataset_root, best_record, head_rect, head_path)
     if not ok_body or not ok_head:
         return None, f"crop_failure:{body_message}|{head_message}"
+    evidence_buffer_rows = crop_event_buffer_records(
+        active_frame_cache,
+        dataset_root,
+        crop_root,
+        event_id,
+        record["camera_id"],
+        select_evidence_buffer_records(
+            all_records,
+            extra.get("anchor_frame_id", record["frame_id"]),
+            best_record,
+            face_buffer_cfg,
+        ),
+        head_cfg,
+    )
     spatial_meta = resolve_zone_for_record(record, transition_map)
     event = {
         "event_id": event_id,
@@ -727,6 +844,8 @@ def build_event_from_record(
         "matched_subzone_region_id": spatial_meta["matched_subzone_region_id"],
         "assignment_point_x": spatial_meta["assignment_point_x"],
         "assignment_point_y": spatial_meta["assignment_point_y"],
+        "evidence_buffer_count": len(evidence_buffer_rows),
+        "evidence_buffer_json": json.dumps(evidence_buffer_rows, ensure_ascii=False),
     }
     event.update(extra)
     return event, "ok"
@@ -849,6 +968,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
     line_threshold = float(config["line_crossing_distance_threshold"])
     best_shot_window = int(config["best_shot_window_frames"])
     best_shot_cfg = config.get("best_shot_selection", {})
+    face_buffer_cfg = merged_face_buffer_cfg(config.get("face_buffer", {}))
     topology = build_topology(transition_map)
     for src_camera, targets in topology.items():
         for dst_camera, info in targets.items():
@@ -939,6 +1059,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     "ENTRY_IN",
                     crossing_row,
                     best_record,
+                    records,
                     dataset_root,
                     crop_root,
                     config["head_crop"],
@@ -958,6 +1079,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     },
                     transition_map,
                     frame_cache=frame_cache,
+                    face_buffer_cfg=face_buffer_cfg,
                 )
                 if event is None:
                     placeholder_rows.append(
@@ -1070,6 +1192,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     event_type,
                     best_option["candidate_row"],
                     best_record,
+                    records,
                     dataset_root,
                     crop_root,
                     config["head_crop"],
@@ -1087,6 +1210,7 @@ def build_fixed_candidate_events(track_rows, config, dataset_root: Path, crop_ro
                     },
                     transition_map,
                     frame_cache=frame_cache,
+                    face_buffer_cfg=face_buffer_cfg,
                 )
                 if event is None:
                     placeholder["drop_reason"] = "low_quality_crop"
@@ -1403,6 +1527,68 @@ def summarize_mode(resolved_rows, stage_b_rows, stage_a, gt_bridge_active, true_
     return metrics
 
 
+def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, profiles):
+    face_status_counts = Counter()
+    face_unusable_reason_counts = Counter()
+    modality_primary_counts = Counter()
+    resolution_source_counts = Counter()
+    unknown_ids_by_gt = defaultdict(set)
+
+    for item in analyzed_items:
+        face_status_counts[item.get("face_status") or "missing"] += 1
+
+    for row in decision_logs:
+        modality_primary_counts[row.get("modality_primary") or ""] += 1
+        reason = row.get("face_unusable_reason") or ""
+        if reason:
+            face_unusable_reason_counts[reason] += 1
+
+    for row in resolved_rows:
+        resolution_source_counts[row.get("resolution_source") or ""] += 1
+        if row.get("identity_status") == "unknown" and row.get("global_gt_id") and row.get("unknown_global_id"):
+            unknown_ids_by_gt[str(row["global_gt_id"])].add(row["unknown_global_id"])
+
+    split_gt_count = sum(1 for unknown_ids in unknown_ids_by_gt.values() if len(unknown_ids) > 1)
+    resolved_by_event_id = {row.get("event_id"): row for row in resolved_rows}
+
+    return {
+        "analyzed_event_count": len(analyzed_items),
+        "face_detected_count": sum(1 for item in analyzed_items if item.get("face_buffer_detected_count", 0) > 0),
+        "face_buffered_count": sum(1 for item in analyzed_items if item.get("evidence_buffer_count", 0) > 0),
+        "best_shot_selected_count": sum(1 for item in analyzed_items if item.get("face_best_shot_selected")),
+        "face_embedding_available_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
+        "face_embedding_created_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
+        "face_reference_stored_count": sum(
+            1
+            for item in analyzed_items
+            if item.get("face_embedding") is not None
+            and resolved_by_event_id.get(item["event"]["event_id"], {}).get("identity_status") == "unknown"
+        ),
+        "face_reference_retrieved_count": sum(
+            1
+            for row in decision_logs
+            if any(candidate.get("face_available") for candidate in row.get("candidate_evaluations", []))
+        ),
+        "face_usable_event_count": sum(1 for row in decision_logs if not row.get("face_unusable_reason")),
+        "face_primary_decision_count": sum(1 for row in decision_logs if row.get("modality_primary") == "face"),
+        "body_primary_decision_count": sum(1 for row in decision_logs if row.get("modality_primary") == "body"),
+        "body_fallback_used_count": sum(1 for row in decision_logs if row.get("body_fallback_used")),
+        "pending_count": sum(1 for row in decision_logs if row.get("pending_used")),
+        "pending_to_reuse_count": sum(1 for row in decision_logs if row.get("pending_resolution") == "reuse_existing_unknown"),
+        "pending_to_create_count": sum(1 for row in decision_logs if row.get("pending_resolution") == "create_new_unknown"),
+        "known_face_match_success_count": sum(
+            1
+            for row in resolved_rows
+            if row.get("identity_status") == "known" and row.get("resolution_source") == "model_face_match"
+        ),
+        "face_status_counts": dict(sorted(face_status_counts.items())),
+        "face_unusable_reason_counts": dict(sorted(face_unusable_reason_counts.items())),
+        "modality_primary_counts": dict(sorted((key or "none", value) for key, value in modality_primary_counts.items())),
+        "resolution_source_counts": dict(sorted(resolution_source_counts.items())),
+        "split_gt_count": split_gt_count,
+    }
+
+
 def build_coverage_and_failures(stage_a_rows, stage_b_baseline, stage_b_fixed, resolved_baseline, resolved_fixed):
     baseline_events_by_gt = defaultdict(list)
     fixed_events_by_gt = defaultdict(list)
@@ -1640,6 +1826,7 @@ def main(config_path: Path):
     mode_b_resolved_csv = runtime_dir / "resolved_events_mode_b_true_assoc.csv"
     mode_b_timeline_csv = runtime_dir / "stream_identity_timeline_mode_b.csv"
     summary_json = runtime_dir / "face_resolution_summary.json"
+    face_body_summary_json = runtime_dir / "face_body_usage_summary.json"
     unknown_profiles_csv = resolve_path(base_dir, config["unknown_profiles_csv"])
     fixed_event_csv = runtime_dir / "generated_candidate_events_mode_b.csv"
     fixed_crop_root = runtime_dir / "generated_event_crops"
@@ -1697,7 +1884,8 @@ def main(config_path: Path):
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
 
-    auto_enrolled = enroll_demo_authorized_identities(app, queue_rows, known_root, count=2)
+    auto_enroll_count = max(0, as_int(config.get("demo_auto_enroll_count", 2), 2))
+    auto_enrolled = enroll_demo_authorized_identities(app, queue_rows, known_root, count=auto_enroll_count)
     manifest_rows = base_manifest_rows + auto_enrolled
     write_csv(
         runtime_manifest_csv,
@@ -1772,6 +1960,8 @@ def main(config_path: Path):
                 "best_shot_subzone_id": row.get("best_shot_subzone_id", ""),
                 "best_shot_subzone_type": row.get("best_shot_subzone_type", ""),
                 "best_shot_frames_after_anchor": row.get("best_shot_frames_after_anchor", ""),
+                "evidence_buffer_count": as_int(row.get("evidence_buffer_count", 0)),
+                "evidence_buffer_json": row.get("evidence_buffer_json", "[]"),
             }
         )
     analyzed_baseline = analyze_event_crops(app, baseline_events)
@@ -1801,6 +1991,7 @@ def main(config_path: Path):
     )
     association_decision_logs = association_debug["decision_logs"]
     association_summary = core_summarize_decision_logs(association_decision_logs)
+    face_body_summary = summarize_face_body_usage(analyzed_fixed, mode_b_resolved_rows, association_decision_logs, profiles)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
     event_assignment_audit_rows = [
@@ -1906,6 +2097,7 @@ def main(config_path: Path):
             "camera_transition_map": camera_transition_map,
         },
     )
+    save_json(face_body_summary_json, face_body_summary)
     write_csv(audit_overlap_cases_csv, overlap_rows, fieldnames_for_rows(overlap_rows, ["global_gt_id"]))
     write_csv(audit_gt_split_merge_csv, split_merge_rows, fieldnames_for_rows(split_merge_rows, ["run_mode"]))
     write_csv(
@@ -1956,6 +2148,10 @@ def main(config_path: Path):
             "summary_json": str(association_summary_json),
             "policy_runtime_json": str(association_policy_runtime_json),
             "camera_transition_map_runtime_json": str(camera_transition_map_runtime_json),
+        },
+        "face_body_usage": {
+            "summary_json": str(face_body_summary_json),
+            "metrics": face_body_summary,
         },
         "event_generation_audit": {
             "subzone_assignment_csv": str(audit_event_generation_subzones_csv),

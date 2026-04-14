@@ -25,6 +25,9 @@ def summarize_decision_logs(decision_logs):
         "fallback_without_subzone_count": 0,
         "body_fallback_used_count": 0,
         "face_unusable_event_count": 0,
+        "pending_count": 0,
+        "pending_to_reuse_count": 0,
+        "pending_to_create_count": 0,
     }
     for row in decision_logs:
         decision = row.get("decision", "")
@@ -54,4 +57,10 @@ def summarize_decision_logs(decision_logs):
             summary["body_fallback_used_count"] += 1
         if row.get("face_unusable_reason"):
             summary["face_unusable_event_count"] += 1
+        if row.get("pending_used"):
+            summary["pending_count"] += 1
+            if row.get("pending_resolution") == "reuse_existing_unknown":
+                summary["pending_to_reuse_count"] += 1
+            elif row.get("pending_resolution") == "create_new_unknown":
+                summary["pending_to_create_count"] += 1
     return summary

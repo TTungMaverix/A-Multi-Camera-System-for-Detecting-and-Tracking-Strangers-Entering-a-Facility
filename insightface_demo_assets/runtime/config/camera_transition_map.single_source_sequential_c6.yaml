@@ -1,0 +1,85 @@
+camera_transition_map:
+  cameras:
+    C1:
+      role: entry
+      description: Virtual replay pass 1 from source camera C6.
+      default_zone_id: c1_entry_main
+      default_subzone_id: c1_inner_exit
+      entry_zones: [c1_entry_main]
+      exit_zones: [c1_entry_main]
+      zones: []
+      subzones: []
+    C2:
+      role: entry
+      description: Virtual replay pass 2 from source camera C6.
+      default_zone_id: c2_entry_main
+      default_subzone_id: c2_inner_exit
+      entry_zones: [c2_entry_main]
+      exit_zones: [c2_entry_main]
+      zones: []
+      subzones: []
+    C3:
+      role: entry
+      description: Virtual replay pass 3 from source camera C6.
+      default_zone_id: c3_entry_main
+      default_subzone_id: c3_inner_exit
+      entry_zones: [c3_entry_main]
+      exit_zones: [c3_entry_main]
+      zones: []
+      subzones: []
+    C4:
+      role: entry
+      description: Virtual replay pass 4 from source camera C6.
+      default_zone_id: c4_entry_main
+      default_subzone_id: c4_inner_exit
+      entry_zones: [c4_entry_main]
+      exit_zones: [c4_entry_main]
+      zones: []
+      subzones: []
+
+  transitions:
+    - transition_id: C1_to_C2_seq
+      src_camera_id: C1
+      dst_camera_id: C2
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 4.0
+      avg_travel_time_sec: 6.0
+      max_travel_time_sec: 8.0
+      allowed_exit_zones: [c1_entry_main]
+      allowed_entry_zones: [c2_entry_main]
+      allowed_exit_subzones: [c1_inner_exit]
+      allowed_entry_subzones: [c2_inner_exit]
+      weak_link_support: false
+      description: Virtual travel from replay pass 1 to pass 2.
+    - transition_id: C2_to_C3_seq
+      src_camera_id: C2
+      dst_camera_id: C3
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 4.0
+      avg_travel_time_sec: 6.0
+      max_travel_time_sec: 8.0
+      allowed_exit_zones: [c2_entry_main]
+      allowed_entry_zones: [c3_entry_main]
+      allowed_exit_subzones: [c2_inner_exit]
+      allowed_entry_subzones: [c3_inner_exit]
+      weak_link_support: false
+      description: Virtual travel from replay pass 2 to pass 3.
+    - transition_id: C3_to_C4_seq
+      src_camera_id: C3
+      dst_camera_id: C4
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 4.0
+      avg_travel_time_sec: 6.0
+      max_travel_time_sec: 8.0
+      allowed_exit_zones: [c3_entry_main]
+      allowed_entry_zones: [c4_entry_main]
+      allowed_exit_subzones: [c3_inner_exit]
+      allowed_entry_subzones: [c4_inner_exit]
+      weak_link_support: false
+      description: Virtual travel from replay pass 3 to pass 4.

@@ -1,0 +1,57 @@
+{
+  "dataset_root": "..\\Wildtrack",
+  "assumed_video_fps": 10,
+  "selected_cameras": ["C1", "C2", "C3", "C4"],
+  "best_shot_window_frames": 80,
+  "line_crossing_distance_threshold": 140,
+  "best_shot_selection": {
+    "enabled": true,
+    "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
+    "minimum_frames_after_anchor": {
+      "entry": 3,
+      "overlap": 8,
+      "sequential": 4,
+      "weak_link": 4
+    }
+  },
+  "face_buffer": {
+    "enabled": true,
+    "window_frames": 30,
+    "max_frames": 8,
+    "min_frame_step": 3
+  },
+  "head_crop": {
+    "top_ratio": 0.02,
+    "bottom_ratio": 0.45,
+    "side_ratio": 0.18
+  },
+  "camera_topology": {
+    "C1": {
+      "C2": { "relation": "sequential", "min_frame_gap": 40, "max_frame_gap": 80 }
+    },
+    "C2": {
+      "C3": { "relation": "sequential", "min_frame_gap": 40, "max_frame_gap": 80 }
+    },
+    "C3": {
+      "C4": { "relation": "sequential", "min_frame_gap": 40, "max_frame_gap": 80 }
+    }
+  },
+  "cameras": {
+    "C1": {
+      "role": "entry",
+      "description": "Virtual pass 1 replayed from source camera C6."
+    },
+    "C2": {
+      "role": "entry",
+      "description": "Virtual pass 2 replayed from source camera C6."
+    },
+    "C3": {
+      "role": "entry",
+      "description": "Virtual pass 3 replayed from source camera C6."
+    },
+    "C4": {
+      "role": "entry",
+      "description": "Virtual pass 4 replayed from source camera C6."
+    }
+  }
+}

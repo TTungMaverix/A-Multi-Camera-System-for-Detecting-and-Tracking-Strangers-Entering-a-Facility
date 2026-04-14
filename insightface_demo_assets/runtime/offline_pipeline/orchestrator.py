@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import shutil
 from pathlib import Path
@@ -47,6 +48,8 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
             "known_face_embeddings_csv": str(runtime_dir / "known_face_embeddings_template.csv"),
         }
     )
+    if offline_config.get("face_demo_overrides"):
+        runtime_config.update(dict(offline_config["face_demo_overrides"]))
     if offline_config.get("association_policy_config"):
         runtime_config["association_policy_config"] = str(
             resolve_path(project_root, offline_config["association_policy_config"])
@@ -97,6 +100,7 @@ def sync_final_outputs(output_root: Path):
         (runtime_dir / "stream_identity_timeline.csv", timelines_dir / "stream_identity_timeline.csv"),
         (runtime_dir / "unknown_profiles_template.csv", timelines_dir / "unknown_profiles.csv"),
         (runtime_dir / "face_resolution_summary.json", summaries_dir / "face_resolution_summary.json"),
+        (runtime_dir / "face_body_usage_summary.json", summaries_dir / "face_body_usage_summary.json"),
     ]
     for src, dst in copy_pairs:
         if src.exists():
@@ -110,6 +114,48 @@ def sync_final_outputs(output_root: Path):
         for path in runtime_association_dir.iterdir():
             if path.is_file():
                 shutil.copy2(path, association_logs_dir / path.name)
+
+
+def export_unknown_id_mapping(output_root: Path):
+    resolved_events_path = output_root / "events" / "resolved_events.csv"
+    if not resolved_events_path.exists():
+        return ""
+    with resolved_events_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    mapping_rows = []
+    for row in rows:
+        if row.get("identity_status") != "unknown" or not row.get("unknown_global_id"):
+            continue
+        mapping_rows.append(
+            {
+                "event_id": row.get("event_id", ""),
+                "camera_id": row.get("camera_id", ""),
+                "frame_id": row.get("frame_id", ""),
+                "relative_sec": row.get("relative_sec", ""),
+                "global_gt_id_for_audit": row.get("global_gt_id", ""),
+                "anchor_camera_id": row.get("anchor_camera_id", ""),
+                "anchor_relative_sec": row.get("anchor_relative_sec", ""),
+                "relation_type": row.get("relation_type", ""),
+                "unknown_global_id": row.get("unknown_global_id", ""),
+                "resolved_global_id": row.get("resolved_global_id", ""),
+                "resolution_source": row.get("resolution_source", ""),
+                "decision_reason": row.get("decision_reason", ""),
+                "reason_code": row.get("reason_code", ""),
+                "best_head_crop": row.get("best_head_crop", ""),
+                "best_body_crop": row.get("best_body_crop", ""),
+            }
+        )
+    output_path = output_root / "events" / "unknown_id_mapping.csv"
+    if not mapping_rows:
+        output_path.write_text("event_id,camera_id,relative_sec,unknown_global_id,resolved_global_id\r\n", encoding="utf-8-sig")
+        return str(output_path)
+    fieldnames = list(mapping_rows[0].keys())
+    with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in mapping_rows:
+            writer.writerow(row)
+    return str(output_path)
 
 
 def run_offline_pipeline(config_path: Path, cli_overrides=None):
@@ -142,9 +188,10 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
 
     wildtrack_config_path = resolve_path(project_root, offline_config["wildtrack_demo_config"])
     wildtrack_config = load_json(wildtrack_config_path)
+    transition_config_path = offline_config.get("camera_transition_map_config", "")
     transition_map, transition_runtime = load_camera_transition_map(
         wildtrack_config,
-        config_path=offline_config.get("camera_transition_map_config", ""),
+        config_path=str(resolve_path(project_root, transition_config_path)) if transition_config_path else "",
         base_dir=config_path.parent,
     )
     scene_calibration_config = offline_config.get("scene_calibration_config", "")
@@ -163,6 +210,7 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
     run_face_resolution_main(runtime_config_path)
     sync_final_outputs(output_root)
+    unknown_id_mapping_csv = export_unknown_id_mapping(output_root)
 
     pipeline_summary = {
         "pipeline_name": offline_config.get("pipeline_name", "offline_multicam_pipeline"),
@@ -183,8 +231,10 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         },
         "final_outputs": {
             "resolved_events_csv": str(output_root / "events" / "resolved_events.csv"),
+            "unknown_id_mapping_csv": unknown_id_mapping_csv,
             "stream_identity_timeline_csv": str(output_root / "timelines" / "stream_identity_timeline.csv"),
             "summary_json": str(output_root / "summaries" / "face_resolution_summary.json"),
+            "face_body_usage_summary_json": str(output_root / "summaries" / "face_body_usage_summary.json"),
             "association_logs_dir": str(output_root / "association_logs"),
             "audit_dir": str(output_root / "audit"),
         },

@@ -12,21 +12,23 @@ Graduation project repository for a multi-camera security pipeline that:
 
 ## Current Status
 
-The current runnable vertical slice is video-file-first:
+The current default runnable vertical slice is the supervisor-approved Cam6 video proof phase:
 
-1. run one offline orchestrator over 4 selected Wildtrack video sources
-2. generate GT-backed per-camera track rows and entry events
-3. run face matching with InsightFace and a known gallery
-4. run paper-grounded cross-camera association through a compatibility entrypoint
-5. create or reuse unknown IDs
-6. export resolved events, timelines, and audit logs into a single run folder
+1. take one source video from `C6`
+2. replay it sequentially 4 times as virtual cameras `C1 -> C2 -> C3 -> C4`
+3. inject fake travel-time offsets between the 4 passes
+4. process a verified `~50` second actual-video window from the source as the current proof window
+4. keep only inward-direction entry events
+5. run face-first known matching and unknown creation
+6. reuse `Unknown_Global_ID` across the 4 virtual passes through the current association core
+7. export resolved events, timelines, mapping tables, and audit logs into a single run folder
 
-Video files remain the primary thesis validation path, but a lightweight live ingestion baseline now exists for demo preparation.
+This phase is intentionally simpler than the harder real multi-camera case. The goal is to prove that the core reuse logic works in the easiest sequential sanity scenario before returning to more difficult multi-camera conditions.
 
 Important limitation:
 
-- the current offline detect/track stage is still a Wildtrack annotation-backed provider for the thesis demo baseline
-- the repo now has a real offline end-to-end flow, but it is not yet a production detector+tracker inference stack
+- the default offline replay path now uses real detector+tracker inference, but it is still CPU-bound on this laptop
+- a longer `90` second actual-video config exists for the same replay mode, but it exceeded the current local timeout budget during verification
 
 ## Association Source of Truth
 
@@ -62,6 +64,7 @@ Additional docs:
 - [docs/phase_f_body_fallback.md](docs/phase_f_body_fallback.md)
 - [docs/phase_f_tuning_rerun.md](docs/phase_f_tuning_rerun.md)
 - [docs/offline_pipeline.md](docs/offline_pipeline.md)
+- [docs/single_source_sequential_sanity_demo.md](docs/single_source_sequential_sanity_demo.md)
 - [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 - [docs/live_pipeline.md](docs/live_pipeline.md)
@@ -75,6 +78,8 @@ Current code status:
 - `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the face-resolution compatibility entrypoint
 - `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py` is the offline end-to-end orchestrator entrypoint
 - `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
+- the current default offline demo backend is `single_source_sequential_replay`
+- the old Wildtrack 4-source flow remains available as a reference backend, but it is no longer the default defense/demo command
 - the offline orchestrator now supports both `sequential` and `multiprocessing` execution modes
 - manual scene calibration is now the required runtime ROI path through `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
 - deprecated auto/inferred ROI fallback is disabled in the runtime path; missing calibration now fails clearly instead of silently using old defaults
@@ -87,7 +92,10 @@ Current code status:
 - entry-camera best-shot selection is now line-aware and subzone-aware through `wildtrack_demo/wildtrack_demo_config.json`
 - direction filtering now uses trajectory/momentum history plus line and zone context instead of one-frame line crossing only
 - ROI masks are now applied in the live path to reduce wasted detection work outside the calibrated processing polygon
-- offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
+- the current verified inference video-phase config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+- a longer unverified stress config also lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`
+- the earlier short sanity config still lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
+- a reference Wildtrack multi-source config still lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 - association decision logs are exported under `association_logs/` in each offline run
 - event-generation audit now records best-shot strategy, subzone choice, and frames after anchor
 - body-first fallback is now part of the default association flow when face is missing or unreliable
@@ -121,63 +129,79 @@ Out of scope for now:
 From `cmd`:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
 ```
+
+Default Cam6 replay video-phase demo:
+
+```cmd
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_single_source_sequential_video_phase.ps1"
+```
+
+That command runs one physical source video, replays it sequentially as virtual cameras `C1`, `C2`, `C3`, `C4`, and injects fake travel-time offsets from the verified inference `~50` second config.
 
 Direct offline orchestrator:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
+```
+
+Direct Python invocation for the same video-phase config:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml"
 ```
 
 Low-load sanity run:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.low_load.yaml"
 ```
 
 Live file-sanity run:
 
 ```cmd
-cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_live_multicam_demo.ps1"
 ```
 
 Direct live orchestrator:
 
 ```cmd
-cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
 ```
 
 Start the lightweight web demo:
 
 ```cmd
-cd /d "D:\Äá»’ ÃN Tá»T NGHIá»†P"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
 ```
 
 Low-load multiprocessing sanity run:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.multiprocessing.low_load.yaml"
 ```
 
 Run association tuning from cached candidate events:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_association_tuning.py" --config ".\insightface_demo_assets\runtime\config\association_tuning_grid.example.yaml"
 ```
 
 To run only the face-resolution stage:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_face_resolution_demo.py"
 ```
 
@@ -188,6 +212,8 @@ Main outputs:
 - `outputs/offline_runs/<run_name>/summaries/`
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
+- `outputs/offline_runs/<run_name>/events/unknown_id_mapping.csv`
+- `outputs/offline_runs/<run_name>/summaries/face_body_usage_summary.json`
 - `outputs/live_runs/<run_name>/events/`
 - `outputs/live_runs/<run_name>/association_logs/`
 - `outputs/live_runs/<run_name>/summaries/`
@@ -198,7 +224,7 @@ Main outputs:
 Run the lightweight tests:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests\test_association_core.py tests\test_offline_pipeline.py
 ```
 

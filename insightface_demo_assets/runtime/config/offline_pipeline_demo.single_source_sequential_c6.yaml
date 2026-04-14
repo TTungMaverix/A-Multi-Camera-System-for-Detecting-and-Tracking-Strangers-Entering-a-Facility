@@ -1,0 +1,41 @@
+offline_pipeline:
+  project_root: .
+  pipeline_name: single_source_sequential_c6_sanity_demo
+  source_backend: single_source_sequential_replay
+  output_root: outputs/offline_runs/single_source_sequential_c6_sanity
+  frame_source_mode: video_files
+  low_load:
+    enabled: true
+    start_frame: 20
+    end_frame: 50
+    frame_stride: 1
+  execution:
+    mode: sequential
+    packet_batch_size: 256
+    queue_max_size: 64
+    start_method: spawn
+  dataset:
+    root: Wildtrack
+    video_sources:
+      C1: Wildtrack/cam6.mp4
+      C2: Wildtrack/cam6.mp4
+      C3: Wildtrack/cam6.mp4
+      C4: Wildtrack/cam6.mp4
+  single_source_replay:
+    source_camera_id: C6
+    source_template_config: wildtrack_demo/wildtrack_demo_config.json
+    source_video: Wildtrack/cam6.mp4
+    replay_count: 4
+    virtual_camera_ids: [C1, C2, C3, C4]
+    virtual_time_offsets_sec: [0, 6, 12, 18]
+    virtual_frame_offsets: [0, 60, 120, 180]
+  wildtrack_demo_config: wildtrack_demo/single_source_sequential_c6_demo_config.json
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  face_demo_overrides:
+    demo_auto_enroll_count: 0
+  known_gallery:
+    manifest_csv: insightface_demo_assets/known_face_manifest.csv
+    gallery_root: insightface_demo_assets/known_faces
+  association_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.single_source_sequential_c6.yaml
+  scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json
