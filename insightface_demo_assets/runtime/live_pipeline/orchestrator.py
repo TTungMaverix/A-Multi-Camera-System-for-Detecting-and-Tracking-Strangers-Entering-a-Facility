@@ -628,11 +628,14 @@ def _load_known_gallery(runtime_config, app, project_root: Path, output_root: Pa
 def _build_live_event_view(latest_row, event, latest_log, pipeline_start_time):
     event_time = pipeline_start_time + float(latest_row["relative_sec"])
     latency_sec = max(0.0, time.time() - event_time)
+    identity_state = latest_row.get("ui_identity_state", latest_row["identity_status"])
     return {
         "timestamp": time.time(),
         "camera_id": latest_row["camera_id"],
-        "identity_type": latest_row["identity_status"],
+        "identity_type": identity_state,
         "identity_id": latest_row["resolved_global_id"] or latest_row["matched_known_id"] or "",
+        "identity_label": latest_row.get("ui_identity_label", latest_row["resolved_global_id"] or latest_row["matched_known_id"] or ""),
+        "ui_box_style": latest_row.get("ui_box_style", ""),
         "direction": event.get("direction", ""),
         "zone_id": latest_row.get("zone_id", ""),
         "subzone_id": latest_row.get("subzone_id", ""),
@@ -687,7 +690,7 @@ def run_live_pipeline(config_path: Path):
     topology = build_topology_index(transition_map)
     app = __import__("insightface.app", fromlist=["FaceAnalysis"]).FaceAnalysis(
         name=runtime_config["insightface_runtime"].get("recommended_model_name", "buffalo_l"),
-        root=runtime_config["insightface_runtime"].get("recommended_model_root", "C:/Users/Admin/.insightface"),
+        root=runtime_config["insightface_runtime"].get("recommended_model_root", str(Path.home() / ".insightface")),
         providers=[runtime_config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
@@ -739,6 +742,7 @@ def run_live_pipeline(config_path: Path):
     counters = {
         "known_event_count": 0,
         "unknown_event_count": 0,
+        "pending_event_count": 0,
         "body_fallback_used_count": 0,
         "dropped_frames_total": 0,
         "queue_dropped_packets_total": 0,
@@ -756,7 +760,7 @@ def run_live_pipeline(config_path: Path):
         packet_type = packet["packet_type"]
         if packet_type == "live_event":
             event = packet["event"]
-            analyzed = analyze_event_crops(app, [event])[0]
+            analyzed = analyze_event_crops(app, [event], quality_policy=policy.get("quality_gate"))[0]
             analyzed_events.append(analyzed)
             analyzed_events.sort(key=lambda item: float(item["event"]["relative_sec"]))
             resolved_rows, _profiles, _trace_rows, debug = assign_model_identities(
@@ -775,6 +779,8 @@ def run_live_pipeline(config_path: Path):
             latency_values.append(float(live_event["latency_sec"]))
             if live_event["identity_type"] == "known":
                 counters["known_event_count"] += 1
+            elif live_event["identity_type"] == "pending":
+                counters["pending_event_count"] += 1
             else:
                 counters["unknown_event_count"] += 1
             if live_event["body_fallback_used"]:
@@ -815,6 +821,7 @@ def run_live_pipeline(config_path: Path):
         "live_event_count": len(latest_state),
         "known_event_count": counters["known_event_count"],
         "unknown_event_count": counters["unknown_event_count"],
+        "pending_event_count": counters["pending_event_count"],
         "body_fallback_used_count": counters["body_fallback_used_count"],
         "dropped_frames_total": counters["dropped_frames_total"],
         "queue_dropped_packets_total": counters["queue_dropped_packets_total"],

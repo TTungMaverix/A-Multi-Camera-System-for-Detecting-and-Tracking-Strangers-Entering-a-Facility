@@ -217,7 +217,7 @@ def test_quality_gate_fail_defer():
     assert debug["decision_logs"][0]["decision"] == "defer"
 
 
-def test_ambiguous_margin_creates_new_unknown_by_policy():
+def test_ambiguous_margin_enters_pending_instead_of_creating_new_immediately():
     items = [
         make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
         make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
@@ -233,9 +233,9 @@ def test_ambiguous_margin_creates_new_unknown_by_policy():
         policy=policy,
         return_debug_bundle=True,
     )
-    assert rows[2]["resolution_source"] == "model_unknown_new_profile"
-    assert debug["decision_logs"][2]["decision"] == "create_new"
-    assert "ambiguous" in debug["decision_logs"][2]["reason_code"]
+    assert rows[2]["identity_status"] == "pending"
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "pending_gc" and log["reason_code"] == "pending_timeout_gc" for log in debug["decision_logs"])
 
 
 def test_pending_buffer_can_turn_ambiguous_case_into_reuse():
@@ -275,9 +275,8 @@ def test_pending_buffer_can_turn_ambiguous_case_into_reuse():
         return_debug_bundle=True,
     )
     assert rows[2]["unknown_global_id"] == rows[0]["unknown_global_id"]
-    assert debug["decision_logs"][2]["pending_used"] is True
-    assert debug["decision_logs"][2]["pending_resolution"] == "reuse_existing_unknown"
-    assert debug["decision_logs"][2]["decision"] == "unknown_reuse"
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "unknown_reuse" and log.get("pending_resolution") == "reuse_existing_unknown" for log in debug["decision_logs"])
 
 
 def test_pending_buffer_can_still_end_with_create_new():
@@ -317,8 +316,29 @@ def test_pending_buffer_can_still_end_with_create_new():
         return_debug_bundle=True,
     )
     assert rows[2]["resolution_source"] == "model_unknown_new_profile"
-    assert debug["decision_logs"][2]["pending_used"] is True
-    assert debug["decision_logs"][2]["pending_resolution"] == "create_new_unknown"
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "create_new" and log.get("pending_resolution") == "create_new_unknown" for log in debug["decision_logs"])
+
+
+def test_pending_without_future_evidence_is_garbage_collected():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    rows, profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["identity_status"] == "pending"
+    assert len(profiles) == 2
+    assert debug["pending_runtime"]["stale_pending_count_remaining"] == 0
+    assert any(log["decision"] == "pending_gc" for log in debug["decision_logs"])
 
 
 def test_body_fallback_reuses_when_face_is_low_quality():

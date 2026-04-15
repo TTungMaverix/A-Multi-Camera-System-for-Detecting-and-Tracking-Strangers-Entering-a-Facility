@@ -11,6 +11,11 @@ DEFAULT_ASSOCIATION_POLICY = {
         "full_body_area": 22000.0,
         "reliable_face_det_score": 0.20,
         "strong_face_det_score": 0.35,
+        "min_face_blur_score": 45.0,
+        "max_abs_yaw_deg": 30.0,
+        "max_abs_pitch_deg": 20.0,
+        "max_abs_roll_deg": 20.0,
+        "require_landmarks_for_face_buffer": True,
     },
     "topology_filter": {
         "relation_priors": {
@@ -62,6 +67,7 @@ DEFAULT_ASSOCIATION_POLICY = {
             "window_frames": 30,
             "window_sec": 1.0,
             "max_buffer_items": 8,
+            "stale_timeout_sec": 2.0,
         },
         "defer_policy": {
             "quality_reliability_max": 0.35,

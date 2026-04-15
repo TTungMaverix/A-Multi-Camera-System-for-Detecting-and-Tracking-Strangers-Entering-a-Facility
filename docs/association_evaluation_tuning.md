@@ -9,7 +9,7 @@ It uses cached candidate events, cached crops, and repeated policy sweeps over t
 ## Entry Point
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_association_tuning.py" --config ".\insightface_demo_assets\runtime\config\association_tuning_grid.example.yaml"
 ```
 

@@ -1,5 +1,5 @@
 offline_pipeline:
-  project_root: .
+  project_root: ../../..
   pipeline_name: single_source_sequential_c6_video_phase_3min
   source_backend: single_source_sequential_replay
   output_root: outputs/offline_runs/single_source_sequential_c6_video_phase_3min

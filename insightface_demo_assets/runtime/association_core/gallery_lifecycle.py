@@ -147,3 +147,19 @@ def expire_profiles(profiles, current_sec):
         else:
             expired_profiles.append(profile)
     return active_profiles, expired_profiles
+
+
+def cleanup_stale_ids(pending_entries, current_sec, timeout_sec):
+    active_entries = []
+    stale_entries = []
+    timeout_sec = float(timeout_sec or 0.0)
+    for entry in pending_entries:
+        last_seen = float(entry.get("last_seen_timestamp", entry.get("pending_created_timestamp", current_sec)) or current_sec)
+        stale_age_sec = float(current_sec) - last_seen
+        if stale_age_sec >= timeout_sec:
+            stale_copy = dict(entry)
+            stale_copy["stale_age_sec"] = round(max(0.0, stale_age_sec), 4)
+            stale_entries.append(stale_copy)
+            continue
+        active_entries.append(entry)
+    return active_entries, stale_entries

@@ -1,5 +1,5 @@
 offline_pipeline:
-  project_root: .
+  project_root: ../../..
   pipeline_name: single_source_sequential_c6_inference_phase_50s
   source_backend: single_source_sequential_replay
   output_root: outputs/offline_runs/single_source_sequential_c6_inference_phase_50s
@@ -40,6 +40,12 @@ offline_pipeline:
       person_class_id: 0
       target_timeline_fps: 10
       verbose: false
+      tracklet_linking:
+        enabled: true
+        max_gap_frames: 12
+        min_iou: 0.15
+        max_normalized_center_distance: 0.65
+        min_motion_continuity: 0.25
   wildtrack_demo_config: wildtrack_demo/single_source_sequential_c6_demo_config.json
   face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
   face_demo_overrides:

@@ -21,13 +21,19 @@ The current default runnable vertical slice is the supervisor-approved Cam6 vide
 4. keep only inward-direction entry events
 5. run face-first known matching and unknown creation
 6. reuse `Unknown_Global_ID` across the 4 virtual passes through the current association core
-7. export resolved events, timelines, mapping tables, and audit logs into a single run folder
+7. run short-gap tracklet linking after ByteTrack so fragmented intra-camera tracklets are cleaned before association
+8. reject face frames with bad pose before they enter the best-shot buffer
+9. keep ambiguous cross-camera candidates in `PENDING` until they resolve or time out cleanly
+10. export resolved events, timelines, mapping tables, and audit logs into a single run folder
 
 This phase is intentionally simpler than the harder real multi-camera case. The goal is to prove that the core reuse logic works in the easiest sequential sanity scenario before returning to more difficult multi-camera conditions.
 
 Important limitation:
 
 - the default offline replay path now uses real detector+tracker inference, but it is still CPU-bound on this laptop
+- the replay path now adds short-gap intra-camera tracklet linking immediately after ByteTrack to reduce downstream ID noise
+- face best-shot buffering is now pose-aware: sharp frames with `|yaw| > 30°` or `|pitch| > 20°` are rejected before embedding / gallery storage
+- pending association entries are now garbage-collected after `2s` if they never gather enough evidence, and the live demo keeps them in an `Analyzing...` state instead of showing a final ID too early
 - a longer `90` second actual-video config exists for the same replay mode, but it exceeded the current local timeout budget during verification
 
 ## Association Source of Truth
@@ -319,7 +325,7 @@ Near-term implementation should proceed in small runnable phases:
 Current demo runtime depends on:
 
 - Python venv at `.venv_insightface_demo`
-- InsightFace model cache at `C:\Users\Admin\.insightface\models\buffalo_l`
+- InsightFace model cache at `%USERPROFILE%\.insightface\models\buffalo_l` on Windows, or `~/.insightface/models/buffalo_l` on Unix-like systems
 - Wildtrack demo assets already exported in this repo
 
 If new dependencies or configs are added in future phases, they must be documented and committed together with sample config files.

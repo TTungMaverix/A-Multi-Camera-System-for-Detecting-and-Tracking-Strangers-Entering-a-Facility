@@ -35,6 +35,7 @@ from association_core import (
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
 )
+from association_core.quality_gate import evaluate_buffered_face_gate
 from offline_pipeline.event_builder import (
     FrameSourceCache,
     crop_event_buffer_records,
@@ -170,6 +171,7 @@ def extract_embedding_from_image(app, image_path: Path):
         "face_count": 0,
         "det_score": 0.0,
         "bbox": "",
+        "landmarks": None,
         "message": "",
     }
     if not image_path or not image_path.exists():
@@ -194,6 +196,7 @@ def extract_embedding_from_image(app, image_path: Path):
             "embedding": embedding,
             "det_score": float(face.det_score or 0.0),
             "bbox": json.dumps(bbox),
+            "landmarks": np.asarray(getattr(face, "kps", None)).tolist() if getattr(face, "kps", None) is not None else None,
             "message": "ok",
         }
     )
@@ -519,21 +522,32 @@ def _buffer_face_quality(face_result, buffer_row):
     return round((float(face_result.get("det_score", 0.0)) * 100.0) + (blur_score / 25.0) + bbox_bonus, 4)
 
 
-def analyze_event_crops(app, events):
+def analyze_event_crops(app, events, quality_policy=None):
     analyzed = []
     for event in events:
         buffer_rows = _parse_evidence_buffer_rows(event)
         analyzed_buffer = []
         face_detected_in_buffer = 0
         face_embedding_created_in_buffer = 0
+        accepted_into_buffer_count = 0
+        landmarks_available_count = 0
+        reject_counts = Counter()
         for index, buffer_row in enumerate(buffer_rows, start=1):
             head_path = Path(buffer_row.get("head_crop_path", ""))
             body_path = Path(buffer_row.get("body_crop_path", event.get("best_body_crop", "")))
             face_result = extract_embedding_from_image(app, head_path)
             body_result = extract_body_feature(body_path)
+            blur_score = _laplacian_variance(head_path) if head_path else 0.0
+            face_gate = evaluate_buffered_face_gate(face_result, blur_score, policy=quality_policy)
             if face_result.get("face_count", 0) > 0:
                 face_detected_in_buffer += 1
-            if face_result.get("embedding") is not None:
+            if face_gate.get("landmarks_available"):
+                landmarks_available_count += 1
+            if face_gate.get("accepted_into_buffer"):
+                accepted_into_buffer_count += 1
+            else:
+                reject_counts[face_gate.get("reject_reason") or "other_reject"] += 1
+            if face_result.get("embedding") is not None and face_gate.get("accepted_into_buffer"):
                 face_embedding_created_in_buffer += 1
             analyzed_buffer.append(
                 {
@@ -545,21 +559,25 @@ def analyze_event_crops(app, events):
                     "body_crop_path": str(body_path),
                     "face_result": face_result,
                     "body_result": body_result,
-                    "face_quality_score": _buffer_face_quality(face_result, buffer_row),
+                    "face_blur_score": round(float(blur_score), 4),
+                    "face_gate": face_gate,
+                    "face_quality_score": _buffer_face_quality(face_result, buffer_row)
+                    if face_gate.get("accepted_into_buffer")
+                    else -1.0,
                 }
             )
 
         selected_face = None
         for candidate in sorted(analyzed_buffer, key=lambda item: item["face_quality_score"], reverse=True):
-            if candidate["face_result"].get("status") == "ok":
+            if candidate["face_result"].get("status") == "ok" and candidate["face_gate"].get("accepted_into_buffer"):
                 selected_face = candidate
                 break
-        if selected_face is None and analyzed_buffer:
-            selected_face = analyzed_buffer[0]
+        dominant_reject_reason = reject_counts.most_common(1)[0][0] if reject_counts else ""
 
         best_body = extract_body_feature(Path(event["best_body_crop"]))
         pending_buffer_items = []
         for candidate in analyzed_buffer:
+            face_gate = candidate["face_gate"]
             candidate_event = dict(event)
             candidate_event["pending_parent_event_id"] = event["event_id"]
             candidate_event["pending_buffer_index"] = candidate["buffer_index"]
@@ -571,12 +589,21 @@ def analyze_event_crops(app, events):
             pending_buffer_items.append(
                 {
                     "event": candidate_event,
-                    "face_embedding": candidate["face_result"].get("embedding"),
-                    "face_status": candidate["face_result"].get("status", "missing"),
+                    "face_embedding": candidate["face_result"].get("embedding") if face_gate.get("accepted_into_buffer") else None,
+                    "face_status": candidate["face_result"].get("status", "missing")
+                    if face_gate.get("accepted_into_buffer")
+                    else (face_gate.get("reject_reason") or candidate["face_result"].get("status", "missing")),
                     "face_count": candidate["face_result"].get("face_count", 0),
                     "face_det_score": candidate["face_result"].get("det_score", 0.0),
                     "face_bbox": candidate["face_result"].get("bbox", ""),
                     "face_message": candidate["face_result"].get("message", ""),
+                    "face_landmarks_available": face_gate.get("landmarks_available", False),
+                    "face_yaw_deg": face_gate.get("yaw_deg", 0.0),
+                    "face_pitch_deg": face_gate.get("pitch_deg", 0.0),
+                    "face_roll_deg": face_gate.get("roll_deg", 0.0),
+                    "face_blur_score": candidate.get("face_blur_score", 0.0),
+                    "face_pose_pass": face_gate.get("accepted_into_buffer", False),
+                    "face_gate_reject_reason": face_gate.get("reject_reason", ""),
                     "used_face_crop": "face_buffer_head",
                     "used_face_crop_path": candidate["head_crop_path"],
                     "body_embedding": candidate["body_result"].get("embedding"),
@@ -591,11 +618,18 @@ def analyze_event_crops(app, events):
             {
                 "event": event,
                 "face_embedding": selected_face["face_result"]["embedding"] if selected_face else None,
-                "face_status": selected_face["face_result"]["status"] if selected_face else "missing",
+                "face_status": selected_face["face_result"]["status"] if selected_face else (dominant_reject_reason or "missing"),
                 "face_count": selected_face["face_result"]["face_count"] if selected_face else 0,
                 "face_det_score": selected_face["face_result"]["det_score"] if selected_face else 0.0,
                 "face_bbox": selected_face["face_result"]["bbox"] if selected_face else "",
-                "face_message": selected_face["face_result"]["message"] if selected_face else "missing",
+                "face_message": selected_face["face_result"]["message"] if selected_face else (dominant_reject_reason or "missing"),
+                "face_landmarks_available": selected_face["face_gate"]["landmarks_available"] if selected_face else False,
+                "face_yaw_deg": selected_face["face_gate"]["yaw_deg"] if selected_face else 0.0,
+                "face_pitch_deg": selected_face["face_gate"]["pitch_deg"] if selected_face else 0.0,
+                "face_roll_deg": selected_face["face_gate"]["roll_deg"] if selected_face else 0.0,
+                "face_blur_score": selected_face["face_gate"]["blur_score"] if selected_face else 0.0,
+                "face_pose_pass": bool(selected_face and selected_face["face_gate"].get("accepted_into_buffer")),
+                "face_gate_reject_reason": "" if selected_face else (dominant_reject_reason or ("no_face_buffer_candidate" if analyzed_buffer else "missing")),
                 "used_face_crop": "face_buffer_head" if selected_face else "",
                 "used_face_crop_path": selected_face["head_crop_path"] if selected_face else "",
                 "body_embedding": best_body["embedding"],
@@ -604,7 +638,14 @@ def analyze_event_crops(app, events):
                 "body_shape": best_body["shape"],
                 "evidence_buffer_count": len(analyzed_buffer),
                 "face_buffer_detected_count": face_detected_in_buffer,
+                "face_buffer_landmarks_available_count": landmarks_available_count,
+                "face_buffer_accept_count": accepted_into_buffer_count,
                 "face_buffer_embedding_count": face_embedding_created_in_buffer,
+                "face_buffer_reject_blur_count": int(reject_counts.get("blur_reject", 0)),
+                "face_buffer_reject_yaw_count": int(reject_counts.get("yaw_reject", 0)),
+                "face_buffer_reject_pitch_count": int(reject_counts.get("pitch_reject", 0)),
+                "face_buffer_reject_roll_count": int(reject_counts.get("roll_reject", 0)),
+                "face_buffer_reject_missing_landmarks_count": int(reject_counts.get("missing_landmarks", 0)),
                 "face_best_shot_selected": bool(selected_face and selected_face["face_result"].get("status") == "ok"),
                 "face_best_shot_frame": selected_face["frame_id"] if selected_face else "",
                 "face_best_shot_quality": selected_face["face_quality_score"] if selected_face else "",
@@ -1555,6 +1596,8 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "analyzed_event_count": len(analyzed_items),
         "face_detected_count": sum(1 for item in analyzed_items if item.get("face_buffer_detected_count", 0) > 0),
         "face_buffered_count": sum(1 for item in analyzed_items if item.get("evidence_buffer_count", 0) > 0),
+        "face_landmarks_available_count": sum(item.get("face_buffer_landmarks_available_count", 0) for item in analyzed_items),
+        "face_buffer_accept_count": sum(item.get("face_buffer_accept_count", 0) for item in analyzed_items),
         "best_shot_selected_count": sum(1 for item in analyzed_items if item.get("face_best_shot_selected")),
         "face_embedding_available_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
         "face_embedding_created_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
@@ -1576,10 +1619,18 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "pending_count": sum(1 for row in decision_logs if row.get("pending_used")),
         "pending_to_reuse_count": sum(1 for row in decision_logs if row.get("pending_resolution") == "reuse_existing_unknown"),
         "pending_to_create_count": sum(1 for row in decision_logs if row.get("pending_resolution") == "create_new_unknown"),
+        "pending_garbage_collected_count": sum(1 for row in decision_logs if row.get("decision") == "pending_gc"),
         "known_face_match_success_count": sum(
             1
             for row in resolved_rows
             if row.get("identity_status") == "known" and row.get("resolution_source") == "model_face_match"
+        ),
+        "face_reject_blur_count": sum(item.get("face_buffer_reject_blur_count", 0) for item in analyzed_items),
+        "face_reject_yaw_count": sum(item.get("face_buffer_reject_yaw_count", 0) for item in analyzed_items),
+        "face_reject_pitch_count": sum(item.get("face_buffer_reject_pitch_count", 0) for item in analyzed_items),
+        "face_reject_roll_count": sum(item.get("face_buffer_reject_roll_count", 0) for item in analyzed_items),
+        "face_reject_missing_landmarks_count": sum(
+            item.get("face_buffer_reject_missing_landmarks_count", 0) for item in analyzed_items
         ),
         "face_status_counts": dict(sorted(face_status_counts.items())),
         "face_unusable_reason_counts": dict(sorted(face_unusable_reason_counts.items())),
@@ -1587,6 +1638,41 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "resolution_source_counts": dict(sorted(resolution_source_counts.items())),
         "split_gt_count": split_gt_count,
     }
+
+
+def build_face_buffer_audit_rows(analyzed_items):
+    rows = []
+    for item in analyzed_items:
+        event = item["event"]
+        rows.append(
+            {
+                "event_id": event.get("event_id", ""),
+                "camera_id": event.get("camera_id", ""),
+                "frame_id": event.get("frame_id", ""),
+                "relative_sec": event.get("relative_sec", ""),
+                "face_buffer_detected_count": item.get("face_buffer_detected_count", 0),
+                "face_buffer_landmarks_available_count": item.get("face_buffer_landmarks_available_count", 0),
+                "face_buffer_accept_count": item.get("face_buffer_accept_count", 0),
+                "face_buffer_embedding_count": item.get("face_buffer_embedding_count", 0),
+                "face_buffer_reject_blur_count": item.get("face_buffer_reject_blur_count", 0),
+                "face_buffer_reject_yaw_count": item.get("face_buffer_reject_yaw_count", 0),
+                "face_buffer_reject_pitch_count": item.get("face_buffer_reject_pitch_count", 0),
+                "face_buffer_reject_roll_count": item.get("face_buffer_reject_roll_count", 0),
+                "face_buffer_reject_missing_landmarks_count": item.get("face_buffer_reject_missing_landmarks_count", 0),
+                "face_best_shot_selected": item.get("face_best_shot_selected", False),
+                "face_best_shot_frame": item.get("face_best_shot_frame", ""),
+                "face_best_shot_quality": item.get("face_best_shot_quality", ""),
+                "face_status": item.get("face_status", ""),
+                "face_message": item.get("face_message", ""),
+                "face_yaw_deg": item.get("face_yaw_deg", 0.0),
+                "face_pitch_deg": item.get("face_pitch_deg", 0.0),
+                "face_roll_deg": item.get("face_roll_deg", 0.0),
+                "face_blur_score": item.get("face_blur_score", 0.0),
+                "face_gate_reject_reason": item.get("face_gate_reject_reason", ""),
+                "used_face_crop_path": item.get("used_face_crop_path", ""),
+            }
+        )
+    return rows
 
 
 def build_coverage_and_failures(stage_a_rows, stage_b_baseline, stage_b_fixed, resolved_baseline, resolved_fixed):
@@ -1840,6 +1926,7 @@ def main(config_path: Path):
     audit_gt_split_merge_csv = runtime_dir / "audit_gt_split_merge.csv"
     audit_expected_reid_failures_csv = runtime_dir / "audit_expected_reid_failures.csv"
     audit_event_generation_subzones_csv = runtime_dir / "audit_event_generation_subzones.csv"
+    audit_face_buffer_csv = runtime_dir / "audit_face_buffer.csv"
     audit_report_md = runtime_dir / "audit_report.md"
     association_logs_dir = runtime_dir / "association_logs"
     association_decisions_jsonl = association_logs_dir / "association_decisions.jsonl"
@@ -1879,7 +1966,7 @@ def main(config_path: Path):
 
     app = FaceAnalysis(
         name=config["insightface_runtime"].get("recommended_model_name", "buffalo_l"),
-        root=str(Path(config["insightface_runtime"].get("recommended_model_root", "C:/Users/Admin/.insightface"))),
+        root=str(Path(config["insightface_runtime"].get("recommended_model_root", str(Path.home() / ".insightface")))),
         providers=[config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
@@ -1964,7 +2051,7 @@ def main(config_path: Path):
                 "evidence_buffer_json": row.get("evidence_buffer_json", "[]"),
             }
         )
-    analyzed_baseline = analyze_event_crops(app, baseline_events)
+    analyzed_baseline = analyze_event_crops(app, baseline_events, quality_policy=association_policy.get("quality_gate"))
     baseline_assignments = build_baseline_assignments(
         analyzed_baseline,
         identity_means,
@@ -1979,7 +2066,7 @@ def main(config_path: Path):
         track_rows, wildtrack_config, dataset_root, fixed_crop_root, camera_transition_map
     )
     write_csv(fixed_event_csv, fixed_events, fieldnames_for_rows(fixed_events, ["event_id"]))
-    analyzed_fixed = analyze_event_crops(app, fixed_events)
+    analyzed_fixed = analyze_event_crops(app, fixed_events, quality_policy=association_policy.get("quality_gate"))
     mode_b_resolved_rows, profiles, association_trace_rows, association_debug = assign_model_identities(
         analyzed_fixed,
         identity_means,
@@ -1992,6 +2079,11 @@ def main(config_path: Path):
     association_decision_logs = association_debug["decision_logs"]
     association_summary = core_summarize_decision_logs(association_decision_logs)
     face_body_summary = summarize_face_body_usage(analyzed_fixed, mode_b_resolved_rows, association_decision_logs, profiles)
+    face_body_summary["stale_pending_count_remaining"] = association_debug.get("pending_runtime", {}).get(
+        "stale_pending_count_remaining",
+        0,
+    )
+    face_buffer_audit_rows = build_face_buffer_audit_rows(analyzed_fixed)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
     event_assignment_audit_rows = [
@@ -2109,6 +2201,11 @@ def main(config_path: Path):
         audit_event_generation_subzones_csv,
         event_assignment_audit_rows,
         fieldnames_for_rows(event_assignment_audit_rows, ["run_mode", "event_id"]),
+    )
+    write_csv(
+        audit_face_buffer_csv,
+        face_buffer_audit_rows,
+        fieldnames_for_rows(face_buffer_audit_rows, ["event_id"]),
     )
 
     root_cause_lines = [

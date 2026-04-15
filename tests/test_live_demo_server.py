@@ -30,6 +30,23 @@ def test_load_latest_events_adds_snapshot_urls(tmp_path):
     assert events[0]["head_snapshot_url"].startswith("/artifact?path=")
 
 
+def test_build_browser_event_keeps_pending_identity_state():
+    payload = build_browser_event(
+        {
+            "camera_id": "C5",
+            "identity_type": "pending",
+            "identity_label": "Analyzing...",
+            "identity_id": "",
+            "snapshot_path": "",
+            "head_snapshot_path": "",
+            "ui_box_style": "pending_gray_dashed",
+        }
+    )
+    assert payload["identity_type"] == "pending"
+    assert payload["identity_label"] == "Analyzing..."
+    assert payload["ui_box_style"] == "pending_gray_dashed"
+
+
 def test_is_within_root_rejects_parent_escape(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()

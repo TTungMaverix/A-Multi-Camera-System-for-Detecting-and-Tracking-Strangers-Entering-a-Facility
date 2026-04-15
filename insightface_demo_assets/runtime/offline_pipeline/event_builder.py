@@ -317,6 +317,230 @@ def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, vi
     return rows
 
 
+def _track_bbox(row):
+    return {
+        "xmin": float(row["xmin"]),
+        "ymin": float(row["ymin"]),
+        "xmax": float(row["xmax"]),
+        "ymax": float(row["ymax"]),
+    }
+
+
+def _bbox_iou(box_a, box_b):
+    inter_x1 = max(float(box_a["xmin"]), float(box_b["xmin"]))
+    inter_y1 = max(float(box_a["ymin"]), float(box_b["ymin"]))
+    inter_x2 = min(float(box_a["xmax"]), float(box_b["xmax"]))
+    inter_y2 = min(float(box_a["ymax"]), float(box_b["ymax"]))
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area <= 0.0:
+        return 0.0
+    area_a = max(1.0, (float(box_a["xmax"]) - float(box_a["xmin"])) * (float(box_a["ymax"]) - float(box_a["ymin"])))
+    area_b = max(1.0, (float(box_b["xmax"]) - float(box_b["xmin"])) * (float(box_b["ymax"]) - float(box_b["ymin"])))
+    return inter_area / max(1.0, area_a + area_b - inter_area)
+
+
+def _bbox_center(box):
+    return (
+        (float(box["xmin"]) + float(box["xmax"])) / 2.0,
+        (float(box["ymin"]) + float(box["ymax"])) / 2.0,
+    )
+
+
+def _bbox_diagonal(box):
+    width = max(1.0, float(box["xmax"]) - float(box["xmin"]))
+    height = max(1.0, float(box["ymax"]) - float(box["ymin"]))
+    return math.sqrt((width * width) + (height * height))
+
+
+def _shift_bbox(box, delta_x, delta_y):
+    return {
+        "xmin": float(box["xmin"]) + float(delta_x),
+        "ymin": float(box["ymin"]) + float(delta_y),
+        "xmax": float(box["xmax"]) + float(delta_x),
+        "ymax": float(box["ymax"]) + float(delta_y),
+    }
+
+
+def _tracklet_summary(track_id, rows):
+    ordered = sorted(rows, key=lambda item: (item["frame_id"], item.get("source_frame_id_actual", item["frame_id"])))
+    centers = [_bbox_center(_track_bbox(row)) for row in ordered[-2:]]
+    return {
+        "track_id": str(track_id),
+        "rows": ordered,
+        "start_frame": int(ordered[0]["frame_id"]),
+        "end_frame": int(ordered[-1]["frame_id"]),
+        "start_bbox": _track_bbox(ordered[0]),
+        "end_bbox": _track_bbox(ordered[-1]),
+        "start_center": _bbox_center(_track_bbox(ordered[0])),
+        "end_center": _bbox_center(_track_bbox(ordered[-1])),
+        "last_centers": centers,
+    }
+
+
+def _predict_tracklet_bbox(summary, gap_frames):
+    # ByteTrack fragmentation after short occlusion often creates a new ID a few frames later.
+    # We extrapolate the last observed bbox with a constant-velocity model from the final two
+    # centers. This is deliberately simple: it keeps the linker cheap while still checking
+    # motion continuity instead of relying on IoU alone.
+    velocity_x = 0.0
+    velocity_y = 0.0
+    centers = summary.get("last_centers", [])
+    if len(centers) >= 2:
+        velocity_x = centers[-1][0] - centers[-2][0]
+        velocity_y = centers[-1][1] - centers[-2][1]
+    delta_x = velocity_x * float(gap_frames)
+    delta_y = velocity_y * float(gap_frames)
+    predicted_bbox = _shift_bbox(summary["end_bbox"], delta_x, delta_y)
+    predicted_center = _bbox_center(predicted_bbox)
+    return predicted_bbox, predicted_center, (velocity_x, velocity_y)
+
+
+def link_short_gap_tracklets(track_rows, linking_cfg=None):
+    default_cfg = {
+        "enabled": True,
+        "max_gap_frames": 12,
+        "min_iou": 0.15,
+        "max_normalized_center_distance": 0.65,
+        "min_motion_continuity": 0.25,
+        "score_weights": {
+            "iou": 0.65,
+            "motion": 0.30,
+            "gap_penalty": 0.05,
+        },
+    }
+    cfg = copy.deepcopy(default_cfg)
+    for key, value in (linking_cfg or {}).items():
+        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+            cfg[key].update(value)
+        else:
+            cfg[key] = value
+
+    if not cfg.get("enabled", True) or len(track_rows) < 2:
+        return track_rows, {
+            "enabled": bool(cfg.get("enabled", True)),
+            "original_tracklet_count": len({str(row.get("local_track_id", "")) for row in track_rows}),
+            "linked_tracklet_count": len({str(row.get("local_track_id", "")) for row in track_rows}),
+            "links_applied": 0,
+            "candidate_pairs_considered": 0,
+            "link_details": [],
+        }
+
+    grouped = defaultdict(list)
+    for row in track_rows:
+        grouped[str(row.get("local_track_id", ""))].append(row)
+    summaries = [_tracklet_summary(track_id, rows) for track_id, rows in grouped.items()]
+    summaries.sort(key=lambda item: (item["start_frame"], item["end_frame"], item["track_id"]))
+
+    canonical_ids = {summary["track_id"]: summary["track_id"] for summary in summaries}
+    predecessor_taken = set()
+    candidate_pairs_considered = 0
+    links_applied = 0
+    link_details = []
+
+    for current in summaries:
+        best_match = None
+        for previous in summaries:
+            if previous["track_id"] == current["track_id"]:
+                continue
+            if previous["track_id"] in predecessor_taken:
+                continue
+            gap_frames = current["start_frame"] - previous["end_frame"]
+            if gap_frames <= 0 or gap_frames > int(cfg["max_gap_frames"]):
+                continue
+
+            candidate_pairs_considered += 1
+            predicted_bbox, predicted_center, velocity = _predict_tracklet_bbox(previous, gap_frames)
+            raw_iou = _bbox_iou(previous["end_bbox"], current["start_bbox"])
+            predicted_iou = _bbox_iou(predicted_bbox, current["start_bbox"])
+            effective_iou = max(raw_iou, predicted_iou)
+
+            start_center = current["start_center"]
+            center_distance = math.sqrt(
+                ((predicted_center[0] - start_center[0]) ** 2) + ((predicted_center[1] - start_center[1]) ** 2)
+            )
+            normalized_center_distance = center_distance / max(
+                1.0,
+                _bbox_diagonal(previous["end_bbox"]),
+                _bbox_diagonal(current["start_bbox"]),
+            )
+            motion_continuity = max(
+                0.0,
+                1.0 - (normalized_center_distance / max(float(cfg["max_normalized_center_distance"]), 1e-6)),
+            )
+
+            if effective_iou < float(cfg["min_iou"]) and normalized_center_distance > float(cfg["max_normalized_center_distance"]):
+                continue
+            if motion_continuity < float(cfg["min_motion_continuity"]):
+                continue
+
+            score = (
+                (float(cfg["score_weights"]["iou"]) * effective_iou)
+                + (float(cfg["score_weights"]["motion"]) * motion_continuity)
+                - (float(cfg["score_weights"]["gap_penalty"]) * (gap_frames / max(1.0, float(cfg["max_gap_frames"]))))
+            )
+            candidate = {
+                "previous_track_id": previous["track_id"],
+                "current_track_id": current["track_id"],
+                "gap_frames": gap_frames,
+                "raw_iou": round(raw_iou, 4),
+                "predicted_iou": round(predicted_iou, 4),
+                "effective_iou": round(effective_iou, 4),
+                "center_distance_px": round(center_distance, 4),
+                "normalized_center_distance": round(normalized_center_distance, 4),
+                "motion_continuity": round(motion_continuity, 4),
+                "velocity_px": [round(float(velocity[0]), 4), round(float(velocity[1]), 4)],
+                "score": round(score, 4),
+            }
+            if best_match is None or candidate["score"] > best_match["score"]:
+                best_match = candidate
+
+        if best_match is None:
+            continue
+
+        root_track_id = canonical_ids.get(best_match["previous_track_id"], best_match["previous_track_id"])
+        canonical_ids[current["track_id"]] = root_track_id
+        predecessor_taken.add(best_match["previous_track_id"])
+        links_applied += 1
+        best_match["linked_track_id"] = root_track_id
+        link_details.append(best_match)
+
+    rewritten_rows = []
+    for row in track_rows:
+        original_track_id = str(row.get("local_track_id", ""))
+        linked_track_id = canonical_ids.get(original_track_id, original_track_id)
+        rewritten = dict(row)
+        rewritten["bytetrack_track_id"] = original_track_id
+        rewritten["linked_track_id"] = linked_track_id
+        rewritten["tracklet_linked"] = linked_track_id != original_track_id
+        rewritten["source_track_surrogate_id"] = linked_track_id
+        rewritten["local_track_id"] = linked_track_id
+        if linked_track_id.isdigit():
+            rewritten["global_gt_id"] = int(linked_track_id)
+        rewritten_rows.append(rewritten)
+
+    rewritten_rows.sort(key=lambda row: (row["frame_id"], row["global_gt_id"], row.get("source_frame_id_actual", row["frame_id"])))
+    runtime_info = {
+        "enabled": True,
+        "original_tracklet_count": len(summaries),
+        "linked_tracklet_count": len(set(canonical_ids.values())),
+        "links_applied": links_applied,
+        "candidate_pairs_considered": candidate_pairs_considered,
+        "max_gap_frames": int(cfg["max_gap_frames"]),
+        "min_iou": float(cfg["min_iou"]),
+        "max_normalized_center_distance": float(cfg["max_normalized_center_distance"]),
+        "min_motion_continuity": float(cfg["min_motion_continuity"]),
+        "link_details": link_details[:20],
+        "notes": [
+            "Short-gap linking runs immediately after ByteTrack and before downstream event generation.",
+            "A candidate link must survive both spatial continuity checks and a bounded gap window.",
+            "IoU is measured between the last bbox of the old tracklet and the first bbox of the new one, with an additional predicted-IoU check after constant-velocity extrapolation.",
+        ],
+    }
+    return rewritten_rows, runtime_info
+
+
 def extract_inference_track_rows(
     camera_id,
     camera_cfg,
@@ -456,6 +680,12 @@ def extract_inference_track_rows(
         capture.release()
 
     track_rows.sort(key=lambda row: (row["frame_id"], row["global_gt_id"]))
+    linking_started = time.perf_counter()
+    track_rows, linking_runtime = link_short_gap_tracklets(
+        track_rows,
+        linking_cfg=(inference_cfg or {}).get("tracklet_linking"),
+    )
+    linking_runtime["elapsed_sec"] = round(max(time.perf_counter() - linking_started, 1e-9), 6)
     elapsed_sec = max(time.perf_counter() - runtime_started, 1e-9)
     runtime_info = {
         "track_provider": "ultralytics_yolo_bytetrack",
@@ -479,8 +709,10 @@ def extract_inference_track_rows(
         "target_timeline_fps": round(target_timeline_fps, 3),
         "actual_window_sec": round(((end_frame if end_frame is not None else frame_id) - start_frame) / max(actual_video_fps, 1e-9), 3),
         "identity_seed_field": "source_track_surrogate_id",
+        "tracklet_linking": linking_runtime,
         "notes": [
             "Track rows are generated from YOLO person detection plus ByteTrack on the real source video.",
+            "ByteTrack output is passed through a short-gap intra-camera linker before the replay flow continues.",
             "global_gt_id is reused as a source-track surrogate ID in this inference-backed replay mode for compatibility with downstream audit files.",
             "GT-backed annotations are not used to create the source tracks in this mode.",
             "frame_id and relative_sec are normalized onto the configured timeline FPS so fake travel-time logic stays consistent with the replay topology.",

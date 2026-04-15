@@ -105,14 +105,14 @@ The old auto/inferred ROI fallback is no longer used in the live path.
 Default file-sanity run:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_live_multicam_demo.ps1"
 ```
 
 Direct Python run:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
 ```
 

@@ -89,14 +89,18 @@ The flow is:
 
 1. load one real source stream from `C6`
 2. run YOLO person detection plus ByteTrack on that source
-3. clone the inferred source tracks into 4 virtual cameras
-4. shift each virtual pass by configured fake timestamps and frame offsets
-5. run the normal offline event-builder flow
-6. keep only inward-direction entry events
-7. create head/body crops
-8. run face-first known matching
-9. for unknowns, reuse `Unknown_Global_ID` through the existing association core
-10. export events, timelines, mapping files, and association logs
+3. link short-gap tracklets after ByteTrack so short occlusion/crossing breaks do not flood downstream association with fresh IDs
+4. clone the inferred source tracks into 4 virtual cameras
+5. shift each virtual pass by configured fake timestamps and frame offsets
+6. run the normal offline event-builder flow
+7. keep only inward-direction entry events
+8. create head/body crops
+9. send buffered face crops through blur + pose gates before best-shot selection
+10. run face-first known matching
+11. if unknown association is ambiguous, keep it in `PENDING` instead of creating a new ID immediately
+12. garbage-collect stale pending entries after `2s`
+13. for unknowns that resolve safely, reuse `Unknown_Global_ID` through the existing association core
+14. export events, timelines, mapping files, and association logs
 
 ## Expected Output
 

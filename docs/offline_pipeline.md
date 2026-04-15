@@ -105,14 +105,22 @@ Minimum event packet fields in the offline flow:
 Event creation rules in the current backend:
 
 1. run YOLO person detection plus ByteTrack on the single source video
-2. project the inferred source tracks into virtual cameras with configured fake frame and time offsets
+2. run a short-gap tracklet linker on top of ByteTrack so short occlusion / crossing fragmentation is reduced before downstream logic
+3. project the inferred source tracks into virtual cameras with configured fake frame and time offsets
 3. keep rows whose foot point stays inside the configured ROI
 4. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
 5. only after line crossing, create `ENTRY_IN`
 6. select a best shot inside the configured frame window
-7. when enabled, prefer post-anchor frames in higher-priority subzones
-8. create best-shot body/head crops
-9. send that event to face matching and then to cross-camera association
+7. reject buffered face frames that fail blur or landmark-based pose gates before they can become the best shot
+8. when enabled, prefer post-anchor frames in higher-priority subzones
+9. create best-shot body/head crops
+10. send that event to face matching and then to cross-camera association
+
+Current guard rails:
+
+- `tracklet_linking` lives inside the replay inference config and runs immediately after ByteTrack
+- pose-aware face filtering uses InsightFace 5 landmarks with hard gates at `|yaw| <= 30°` and `|pitch| <= 20°`
+- ambiguous association cases can enter `PENDING`, but stale pending entries are garbage-collected after `2s`
 
 ## Output Layout
 

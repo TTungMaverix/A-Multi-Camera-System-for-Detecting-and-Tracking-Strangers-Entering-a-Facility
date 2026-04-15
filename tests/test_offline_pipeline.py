@@ -9,6 +9,7 @@ from offline_pipeline.event_builder import (
     build_entry_anchor_packets,
     build_entry_events,
     clone_track_rows_for_virtual_camera,
+    link_short_gap_tracklets,
     select_best_record,
 )
 from offline_pipeline.orchestrator import load_pipeline_config
@@ -20,6 +21,35 @@ def _write_dummy_png(path: Path):
     ok, encoded = cv2.imencode(".png", image)
     assert ok
     encoded.tofile(str(path))
+
+
+def _track_row(track_id, frame_id, xmin, ymin, xmax, ymax, camera_id="C6"):
+    width = xmax - xmin
+    height = ymax - ymin
+    return {
+        "camera_id": camera_id,
+        "role": "entry",
+        "local_track_id": str(track_id),
+        "global_gt_id": int(track_id),
+        "frame_id": int(frame_id),
+        "frame_key": f"{int(frame_id):08d}",
+        "relative_sec": round(float(frame_id) / 10.0, 3),
+        "xmin": int(xmin),
+        "ymin": int(ymin),
+        "xmax": int(xmax),
+        "ymax": int(ymax),
+        "width": int(width),
+        "height": int(height),
+        "area": int(width * height),
+        "center_x": round((xmin + xmax) / 2.0, 2),
+        "center_y": round((ymin + ymax) / 2.0, 2),
+        "foot_x": round((xmin + xmax) / 2.0, 2),
+        "foot_y": float(ymax),
+        "image_rel_path": f"VideoReplay\\{camera_id}\\{int(frame_id):08d}.png",
+        "video_path": "cam6.mp4",
+        "frame_source_mode": "video_files",
+        "track_provider": "ultralytics_yolo_bytetrack",
+    }
 
 
 def test_offline_pipeline_example_has_four_video_sources():
@@ -72,6 +102,87 @@ def test_single_source_sequential_inference_50s_config_is_present():
     assert config["single_source_replay"]["track_provider"] == "inference_yolo_bytetrack"
     assert config["low_load"]["end_frame"] == 3000
     assert config["low_load"]["frame_stride"] == 6
+    assert config["single_source_replay"]["inference"]["tracklet_linking"]["enabled"] is True
+
+
+def test_tracklet_linking_reconnects_short_occlusion():
+    rows = [
+        _track_row(10, 0, 10, 10, 50, 110),
+        _track_row(10, 1, 20, 10, 60, 110),
+        _track_row(10, 2, 30, 10, 70, 110),
+        _track_row(11, 6, 70, 10, 110, 110),
+        _track_row(11, 7, 80, 10, 120, 110),
+        _track_row(30, 0, 180, 10, 220, 110),
+        _track_row(30, 1, 182, 10, 222, 110),
+    ]
+    linked_rows, runtime = link_short_gap_tracklets(
+        rows,
+        {
+            "enabled": True,
+            "max_gap_frames": 8,
+            "min_iou": 0.05,
+            "max_normalized_center_distance": 0.8,
+            "min_motion_continuity": 0.1,
+        },
+    )
+    linked_ids = {row["local_track_id"] for row in linked_rows}
+    assert runtime["original_tracklet_count"] == 3
+    assert runtime["linked_tracklet_count"] == 2
+    assert runtime["links_applied"] == 1
+    assert "10" in linked_ids
+    assert not any(row["local_track_id"] == "11" for row in linked_rows)
+
+
+def test_tracklet_linking_handles_crossing_without_false_merge():
+    rows = [
+        _track_row(1, 0, 10, 20, 50, 120),
+        _track_row(1, 1, 20, 20, 60, 120),
+        _track_row(1, 2, 30, 20, 70, 120),
+        _track_row(2, 0, 120, 20, 160, 120),
+        _track_row(2, 1, 110, 20, 150, 120),
+        _track_row(2, 2, 100, 20, 140, 120),
+        _track_row(2, 3, 90, 20, 130, 120),
+        _track_row(3, 4, 50, 20, 90, 120),
+        _track_row(3, 5, 60, 20, 100, 120),
+    ]
+    linked_rows, runtime = link_short_gap_tracklets(
+        rows,
+        {
+            "enabled": True,
+            "max_gap_frames": 6,
+            "min_iou": 0.05,
+            "max_normalized_center_distance": 0.75,
+            "min_motion_continuity": 0.1,
+        },
+    )
+    remapped_rows = [row for row in linked_rows if row.get("bytetrack_track_id") == "3"]
+    assert runtime["links_applied"] == 1
+    assert remapped_rows
+    assert {row["local_track_id"] for row in remapped_rows} == {"1"}
+    assert any(row["local_track_id"] == "2" for row in linked_rows)
+
+
+def test_tracklet_linking_keeps_close_parallel_people_separate_when_motion_breaks():
+    rows = [
+        _track_row(5, 0, 10, 15, 50, 115),
+        _track_row(5, 1, 20, 15, 60, 115),
+        _track_row(6, 0, 55, 15, 95, 115),
+        _track_row(6, 1, 65, 15, 105, 115),
+        _track_row(7, 4, 150, 15, 190, 115),
+        _track_row(7, 5, 160, 15, 200, 115),
+    ]
+    linked_rows, runtime = link_short_gap_tracklets(
+        rows,
+        {
+            "enabled": True,
+            "max_gap_frames": 6,
+            "min_iou": 0.1,
+            "max_normalized_center_distance": 0.55,
+            "min_motion_continuity": 0.2,
+        },
+    )
+    assert runtime["links_applied"] == 0
+    assert {row["local_track_id"] for row in linked_rows} == {"5", "6", "7"}
 
 
 def test_clone_track_rows_for_virtual_camera_applies_offsets():

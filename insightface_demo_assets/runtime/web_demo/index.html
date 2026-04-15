@@ -113,6 +113,15 @@
       background: rgba(13, 107, 76, 0.12);
       color: var(--accent);
     }
+    .pill.pending {
+      background: rgba(107, 118, 111, 0.18);
+      color: #4d5550;
+      border: 1px dashed #8f9992;
+    }
+    .event-card.pending {
+      border-style: dashed;
+      background: rgba(255,255,255,0.75);
+    }
     .meta {
       color: var(--muted);
       font-size: 13px;
@@ -157,6 +166,7 @@
         metric("Live Events", summary.live_event_count || 0),
         metric("Unknown", summary.unknown_event_count || 0),
         metric("Known", summary.known_event_count || 0),
+        metric("Pending", summary.pending_event_count || 0),
         metric("Body Fallback", summary.body_fallback_used_count || 0),
         metric("Avg Latency", `${summary.avg_latency_sec || 0}s`),
         metric("Dropped Frames", summary.dropped_frames_total || 0),
@@ -171,15 +181,19 @@
         return;
       }
       root.innerHTML = events.slice().reverse().map((event) => {
-        const badgeClass = event.identity_type === "known" ? "known" : "unknown";
+        const badgeClass = event.identity_type === "known" ? "known" : (event.identity_type === "pending" ? "pending" : "unknown");
+        const cardClass = event.identity_type === "pending" ? "event-card pending" : "event-card";
+        const label = event.identity_type === "pending"
+          ? (event.identity_label || "Analyzing...")
+          : `${event.identity_type.toUpperCase()} ${event.identity_id || ""}`.trim();
         const imageHtml = event.snapshot_url
           ? `<img src="${event.snapshot_url}" alt="snapshot">`
           : `<img alt="no snapshot">`;
         return `
-          <article class="event-card">
+          <article class="${cardClass}">
             ${imageHtml}
             <div class="event-info">
-              <div class="pill ${badgeClass}">${event.identity_type.toUpperCase()} ${event.identity_id || ""}</div>
+              <div class="pill ${badgeClass}">${label}</div>
               <strong>${event.camera_id} · ${event.direction || "N/A"}</strong>
               <div class="meta">zone=${event.zone_id || "-"} · subzone=${event.subzone_id || "-"}</div>
               <div class="meta">primary=${event.modality_primary || "-"} · secondary=${event.modality_secondary || "-"}</div>

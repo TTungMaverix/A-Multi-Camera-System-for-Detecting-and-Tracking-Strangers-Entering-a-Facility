@@ -2,7 +2,7 @@ import json
 
 from .appearance_evidence import cosine_similarity, evaluate_appearance_evidence
 from .config_loader import DEFAULT_ASSOCIATION_POLICY, deep_merge
-from .gallery_lifecycle import create_unknown_profile, expire_profiles, update_unknown_profile
+from .gallery_lifecycle import cleanup_stale_ids, create_unknown_profile, expire_profiles, update_unknown_profile
 from .quality_gate import evaluate_quality_gate
 from .topology_filter import evaluate_profile_topology
 
@@ -182,14 +182,26 @@ def _build_resolved_row(
         identity_status = "known"
         matched_known_id = known_match["identity_id"]
         resolved_global_id = known_match["identity_id"]
+        ui_label = known_match["identity_id"]
+        ui_box_style = "known_green"
     elif decision_type == "defer":
         identity_status = "deferred"
         matched_known_id = ""
         resolved_global_id = ""
+        ui_label = "Deferred"
+        ui_box_style = "deferred_muted"
+    elif decision_type == "pending":
+        identity_status = "pending"
+        matched_known_id = ""
+        resolved_global_id = ""
+        ui_label = "Analyzing..."
+        ui_box_style = "pending_gray_dashed"
     else:
         identity_status = "unknown"
         matched_known_id = ""
         resolved_global_id = unknown_global_id
+        ui_label = unknown_global_id
+        ui_box_style = "unknown_red"
     return {
         "run_mode": "mode_b_true_assoc",
         "event_id": event["event_id"],
@@ -212,6 +224,9 @@ def _build_resolved_row(
         "best_head_crop": event["best_head_crop"],
         "best_body_crop": event["best_body_crop"],
         "identity_status": identity_status,
+        "ui_identity_state": identity_status,
+        "ui_identity_label": ui_label,
+        "ui_box_style": ui_box_style,
         "matched_known_id": matched_known_id,
         "matched_known_score": round(known_match["score"], 4) if known_match else "",
         "unknown_global_id": unknown_global_id,
@@ -371,9 +386,12 @@ def _build_decision_log(
             top_candidate.get("face_unusable_reason", "")
             if top_candidate
             else (
-                "face_embedding_missing"
-                if not quality.get("face_available", False)
-                else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                quality.get("face_pose_reject_reason", "")
+                or (
+                    "face_embedding_missing"
+                    if not quality.get("face_available", False)
+                    else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                )
             )
         ),
         "face_score": top_candidate["face_score"] if top_candidate else "",
@@ -467,7 +485,16 @@ def _score_candidates_for_item(item, profiles, topology, merged_policy, decision
     }
 
 
-def _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg, initial_bundle):
+def _pending_reassessment(
+    item,
+    profiles,
+    topology,
+    merged_policy,
+    decision_cfg,
+    initial_bundle,
+    available_until_frame=None,
+    available_until_sec=None,
+):
     pending_cfg = decision_cfg.get("pending_policy", {})
     if not pending_cfg.get("enabled", True):
         return None
@@ -493,6 +520,10 @@ def _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg,
         if buffered_frame < base_frame:
             continue
         if buffered_frame > max_frame or buffered_sec > max_sec:
+            continue
+        if available_until_frame is not None and buffered_frame > int(available_until_frame):
+            continue
+        if available_until_sec is not None and buffered_sec > float(available_until_sec):
             continue
         filtered_items.append(buffered_item)
         if len(filtered_items) >= max_buffer_items:
@@ -545,6 +576,106 @@ def _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg,
     }
 
 
+def _pending_window_bounds(item, decision_cfg):
+    pending_cfg = decision_cfg.get("pending_policy", {})
+    event = item["event"]
+    base_frame = int(event.get("frame_id", 0))
+    base_sec = float(event.get("relative_sec", 0.0))
+    return {
+        "base_frame": base_frame,
+        "base_sec": base_sec,
+        "deadline_frame": base_frame + int(pending_cfg.get("window_frames", 30)),
+        "deadline_sec": base_sec + float(pending_cfg.get("window_sec", 1.0)),
+        "stale_timeout_sec": float(pending_cfg.get("stale_timeout_sec", 2.0)),
+    }
+
+
+def _build_pending_entry(item, initial_bundle, decision_cfg):
+    bounds = _pending_window_bounds(item, decision_cfg)
+    event = item["event"]
+    return {
+        "pending_id": f"pending::{event['event_id']}",
+        "event_id": event["event_id"],
+        "item": item,
+        "initial_bundle": initial_bundle,
+        "pending_created_timestamp": bounds["base_sec"],
+        "last_seen_timestamp": bounds["base_sec"],
+        "deadline_frame": bounds["deadline_frame"],
+        "deadline_sec": bounds["deadline_sec"],
+        "stale_timeout_sec": bounds["stale_timeout_sec"],
+    }
+
+
+def _upsert_resolved_row(resolved_rows, resolved_index, row):
+    event_id = row["event_id"]
+    existing_index = resolved_index.get(event_id)
+    if existing_index is None:
+        resolved_index[event_id] = len(resolved_rows)
+        resolved_rows.append(row)
+        return
+    resolved_rows[existing_index] = row
+
+
+def _build_pending_gc_log(entry):
+    event = entry["item"]["event"]
+    return {
+        "timestamp_sec": float(event["relative_sec"]),
+        "relative_time": float(event["relative_sec"]),
+        "camera_id": event["camera_id"],
+        "observation_id": event["event_id"],
+        "event_type": event["event_type"],
+        "zone_id": event.get("zone_id", ""),
+        "zone_type": event.get("zone_type", ""),
+        "subzone_id": event.get("subzone_id", ""),
+        "subzone_type": event.get("subzone_type", ""),
+        "quality_gate_pass": False,
+        "quality_gate_reason": "pending_timeout_gc",
+        "candidate_set_before_filter": [],
+        "candidate_set_after_filter": [],
+        "selected_candidate_id": "",
+        "relation_type": "",
+        "transition_rule_used": "",
+        "topology_metadata": {},
+        "time_delta": "",
+        "travel_window": {},
+        "source_zone_id": "",
+        "target_zone_id": event.get("zone_id", ""),
+        "source_subzone_id": "",
+        "target_subzone_id": event.get("subzone_id", ""),
+        "zone_valid": bool(event.get("zone_id")),
+        "zone_reason": event.get("zone_reason", ""),
+        "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
+        "subzone_valid": bool(event.get("subzone_id")),
+        "subzone_reason": event.get("subzone_reason", ""),
+        "fallback_without_subzone": bool(event.get("subzone_fallback_used", False)),
+        "modality_primary": "",
+        "modality_secondary": "",
+        "face_score": "",
+        "body_score": "",
+        "thresholds_used": {"stale_timeout_sec": float(entry.get("stale_timeout_sec", 0.0))},
+        "margin_used": {"actual_margin": "", "required_margin": ""},
+        "decision": "pending_gc",
+        "reason_code": "pending_timeout_gc",
+        "gallery_id_before": "",
+        "gallery_id_after": "",
+        "candidate_evaluations": [],
+        "pending_used": True,
+        "pending_resolution": "garbage_collected",
+        "pending_duration_frames": 0,
+        "pending_duration_sec": round(
+            float(entry.get("last_seen_timestamp", entry.get("pending_created_timestamp", 0.0)))
+            - float(entry.get("pending_created_timestamp", 0.0)),
+            3,
+        ),
+        "pending_buffer_items": len(entry["item"].get("pending_buffer_items") or []),
+        "pending_initial_score": round(float((entry.get("initial_bundle", {}).get("top1") or {}).get("appearance_primary", 0.0)), 4),
+        "pending_initial_margin": round(float(entry.get("initial_bundle", {}).get("margin", 0.0)), 4),
+        "pending_best_score": round(float((entry.get("initial_bundle", {}).get("top1") or {}).get("appearance_primary", 0.0)), 4),
+        "pending_best_margin": round(float(entry.get("initial_bundle", {}).get("margin", 0.0)), 4),
+        "pending_selected_frame": "",
+    }
+
+
 def assign_model_identities(
     analyzed_events,
     identity_means,
@@ -555,22 +686,304 @@ def assign_model_identities(
     return_debug_bundle=False,
 ):
     merged_policy = _merge_policy(policy)
+    analyzed_events = sorted(analyzed_events, key=lambda item: (float(item["event"]["relative_sec"]), int(item["event"]["frame_id"])))
     profiles = []
+    pending_entries = []
     resolved_rows = []
+    resolved_index = {}
     trace_rows = []
     decision_logs = []
     next_unknown = unknown_start
     decision_cfg = merged_policy["decision_policy"]
     gallery_cfg = merged_policy["gallery_lifecycle"]
+    stale_timeout_sec = float(decision_cfg.get("pending_policy", {}).get("stale_timeout_sec", 2.0))
+
+    def upsert_resolved_row(row):
+        _upsert_resolved_row(resolved_rows, resolved_index, row)
+
+    def append_candidate_traces(resolved_event, candidate_scores, default_reason, reused_old_id=False, created_new_id=False, selected_id=""):
+        for candidate in candidate_scores:
+            decision_reason = candidate.get("decision_reason") or candidate.get("acceptance_reason") or default_reason
+            trace_rows.append(
+                _build_trace_row(
+                    resolved_event,
+                    candidate,
+                    decision_reason=decision_reason,
+                    reused_old_id=reused_old_id and candidate["candidate_unknown_global_id"] == selected_id,
+                    created_new_id=created_new_id,
+                    selected_candidate=bool(selected_id) and candidate["candidate_unknown_global_id"] == selected_id,
+                )
+            )
+
+    def resolve_unknown_reuse(effective_item, quality, candidate_scores, selected, margin, required_margin, selected_thresholds, pending_info=None):
+        resolved_event = effective_item["event"]
+        profile = next(profile for profile in profiles if profile["unknown_global_id"] == selected["candidate_unknown_global_id"])
+        update_unknown_profile(profile, effective_item, policy=gallery_cfg)
+        upsert_resolved_row(
+            _build_resolved_row(
+                resolved_event,
+                effective_item,
+                unknown_global_id=profile["unknown_global_id"],
+                decision_type="reuse_unknown",
+                reason_code="unknown_reuse",
+                resolution_source="model_unknown_gallery_reuse",
+                modality_primary=selected["primary_modality"],
+                modality_secondary=selected.get("secondary_modality", ""),
+                body_fallback_used=selected.get("body_fallback_used", False),
+                face_unusable_reason=selected.get("face_unusable_reason", ""),
+            )
+        )
+        append_candidate_traces(
+            resolved_event,
+            candidate_scores,
+            default_reason="unknown_reuse",
+            reused_old_id=True,
+            created_new_id=False,
+            selected_id=profile["unknown_global_id"],
+        )
+        decision_logs.append(
+            _build_decision_log(
+                resolved_event,
+                quality,
+                candidate_scores,
+                decision="unknown_reuse",
+                reason_code="unknown_reuse",
+                selected_candidate=selected,
+                gallery_id_before=selected["candidate_unknown_global_id"],
+                gallery_id_after=profile["unknown_global_id"],
+                thresholds_used={**selected_thresholds, "required_margin": required_margin},
+                margin_used={"actual_margin": margin, "required_margin": required_margin},
+                pending_info=pending_info,
+            )
+        )
+
+    def resolve_create_unknown(effective_item, quality, candidate_scores, top1, margin, required_margin, create_reason, pending_info=None):
+        nonlocal next_unknown
+        unknown_global_id = f"{unknown_prefix}_{next_unknown:04d}"
+        next_unknown += 1
+        profile = create_unknown_profile(unknown_global_id, effective_item, policy=gallery_cfg)
+        profiles.append(profile)
+        resolved_event = effective_item["event"]
+        upsert_resolved_row(
+            _build_resolved_row(
+                resolved_event,
+                effective_item,
+                unknown_global_id=unknown_global_id,
+                decision_type="create_unknown",
+                reason_code=create_reason,
+                resolution_source="model_unknown_new_profile",
+                modality_primary=(top1["primary_modality"] if top1 else quality["primary_modality"]),
+                modality_secondary=(top1.get("secondary_modality", "") if top1 else ""),
+                body_fallback_used=(
+                    top1.get("body_fallback_used", False)
+                    if top1
+                    else (quality["primary_modality"] == "body" and not quality.get("face_reliable", False))
+                ),
+                face_unusable_reason=(
+                    top1.get("face_unusable_reason", "")
+                    if top1
+                    else (
+                        quality.get("face_pose_reject_reason", "")
+                        or (
+                            "face_embedding_missing"
+                            if effective_item.get("face_embedding") is None
+                            else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                        )
+                    )
+                ),
+            )
+        )
+        append_candidate_traces(
+            resolved_event,
+            candidate_scores,
+            default_reason=create_reason,
+            reused_old_id=False,
+            created_new_id=True,
+            selected_id="",
+        )
+        decision_logs.append(
+            _build_decision_log(
+                resolved_event,
+                quality,
+                candidate_scores,
+                decision="create_new",
+                reason_code=create_reason,
+                selected_candidate=top1,
+                gallery_id_before=top1["candidate_unknown_global_id"] if top1 else "",
+                gallery_id_after=unknown_global_id,
+                thresholds_used={
+                    **(top1.get("thresholds_used", {}) if top1 else {}),
+                    "create_rule": decision_cfg["create_rule"],
+                },
+                margin_used={
+                    "actual_margin": margin,
+                    "required_margin": float(
+                        decision_cfg["margin_by_relation"].get(
+                            top1["relation_type"],
+                            decision_cfg["margin_by_relation"]["weak_link"],
+                        )
+                    )
+                    if top1
+                    else "",
+                },
+                pending_info=pending_info,
+            )
+        )
+
+    def create_pending_state(item, quality, candidate_scores, top1, margin, required_margin, selected_thresholds, score_bundle):
+        pending_entries.append(_build_pending_entry(item, score_bundle, decision_cfg))
+        event = item["event"]
+        upsert_resolved_row(
+            _build_resolved_row(
+                event,
+                item,
+                decision_type="pending",
+                reason_code="pending_created",
+                resolution_source="model_pending_association",
+                modality_primary=(top1["primary_modality"] if top1 else quality["primary_modality"]),
+                modality_secondary=(top1.get("secondary_modality", "") if top1 else ""),
+                body_fallback_used=(top1.get("body_fallback_used", False) if top1 else False),
+                face_unusable_reason=(top1.get("face_unusable_reason", "") if top1 else ""),
+            )
+        )
+        append_candidate_traces(event, candidate_scores, default_reason="pending_created")
+        decision_logs.append(
+            _build_decision_log(
+                event,
+                quality,
+                candidate_scores,
+                decision="pending",
+                reason_code="pending_created",
+                selected_candidate=top1,
+                gallery_id_before=top1["candidate_unknown_global_id"] if top1 else "",
+                gallery_id_after="",
+                thresholds_used={**selected_thresholds, "required_margin": required_margin},
+                margin_used={"actual_margin": margin, "required_margin": required_margin},
+                pending_info={
+                    "resolution": "pending_created",
+                    "duration_frames": 0,
+                    "duration_sec": 0.0,
+                    "buffer_items": len(item.get("pending_buffer_items") or []),
+                    "initial_score": round(float((top1 or {}).get("appearance_primary", 0.0)), 4),
+                    "initial_margin": round(float(margin), 4),
+                    "best_score": round(float((top1 or {}).get("appearance_primary", 0.0)), 4),
+                    "best_margin": round(float(margin), 4),
+                    "selected_frame": event.get("frame_id", ""),
+                },
+            )
+        )
+
+    def advance_pending_entries(current_frame, current_sec, flush_all=False):
+        nonlocal pending_entries
+        active_entries = []
+        for entry in pending_entries:
+            available_frame = int(entry["deadline_frame"] if flush_all else current_frame)
+            available_sec = float(entry["deadline_sec"] if flush_all else current_sec)
+            reassessment = _pending_reassessment(
+                entry["item"],
+                profiles,
+                topology,
+                merged_policy,
+                decision_cfg,
+                entry["initial_bundle"],
+                available_until_frame=available_frame,
+                available_until_sec=available_sec,
+            )
+            if reassessment is not None:
+                entry["last_seen_timestamp"] = min(float(available_sec), float(entry["deadline_sec"]))
+                if reassessment.get("selected_candidate") is not None:
+                    info = dict(reassessment)
+                    info["resolution"] = "reuse_existing_unknown"
+                    resolve_unknown_reuse(
+                        reassessment["selected_item"],
+                        reassessment["quality"],
+                        reassessment["candidate_scores"],
+                        reassessment["selected_candidate"],
+                        reassessment["margin"],
+                        reassessment["required_margin"],
+                        reassessment["selected_thresholds"],
+                        pending_info=info,
+                    )
+                    continue
+                if flush_all or float(current_sec) >= float(entry["deadline_sec"]) or int(current_frame) >= int(entry["deadline_frame"]):
+                    info = dict(reassessment)
+                    info["resolution"] = "create_new_unknown"
+                    resolve_create_unknown(
+                        reassessment["selected_item"],
+                        reassessment["quality"],
+                        reassessment["candidate_scores"],
+                        reassessment["top1"],
+                        reassessment["margin"],
+                        reassessment["required_margin"],
+                        "pending_resolved_create_new",
+                        pending_info=info,
+                    )
+                    continue
+                decision_logs.append(
+                    _build_decision_log(
+                        entry["item"]["event"],
+                        reassessment["quality"],
+                        reassessment["candidate_scores"],
+                        decision="pending",
+                        reason_code="pending_updated",
+                        selected_candidate=reassessment["top1"],
+                        gallery_id_before=(reassessment["top1"] or {}).get("candidate_unknown_global_id", ""),
+                        gallery_id_after="",
+                        thresholds_used={**reassessment["selected_thresholds"], "required_margin": reassessment["required_margin"]},
+                        margin_used={"actual_margin": reassessment["margin"], "required_margin": reassessment["required_margin"]},
+                        pending_info={**reassessment, "resolution": "pending_updated"},
+                    )
+                )
+                active_entries.append(entry)
+                continue
+
+            if entry["item"].get("pending_buffer_items") and (
+                flush_all or float(current_sec) >= float(entry["deadline_sec"]) or int(current_frame) >= int(entry["deadline_frame"])
+            ):
+                bundle = entry["initial_bundle"]
+                resolve_create_unknown(
+                    entry["item"],
+                    bundle["quality"],
+                    bundle["candidate_scores"],
+                    bundle["top1"],
+                    bundle["margin"],
+                    bundle["required_margin"],
+                    "pending_resolved_create_new",
+                    pending_info={
+                        "resolution": "create_new_unknown",
+                        "duration_frames": max(0, int(entry["deadline_frame"]) - int(entry["item"]["event"].get("frame_id", 0))),
+                        "duration_sec": round(
+                            max(0.0, float(entry["deadline_sec"]) - float(entry["item"]["event"].get("relative_sec", 0.0))),
+                            3,
+                        ),
+                        "buffer_items": len(entry["item"].get("pending_buffer_items") or []),
+                        "initial_score": round(float(((bundle.get("top1") or {}).get("appearance_primary", 0.0))), 4),
+                        "initial_margin": round(float(bundle.get("margin", 0.0)), 4),
+                        "best_score": round(float(((bundle.get("top1") or {}).get("appearance_primary", 0.0))), 4),
+                        "best_margin": round(float(bundle.get("margin", 0.0)), 4),
+                        "selected_frame": entry["item"]["event"].get("frame_id", ""),
+                    },
+                )
+                continue
+
+            active_entries.append(entry)
+
+        pending_entries = active_entries
+        if pending_entries:
+            cleanup_sec = float(current_sec if not flush_all else (current_sec + stale_timeout_sec + 0.001))
+            pending_entries, stale_entries = cleanup_stale_ids(pending_entries, cleanup_sec, stale_timeout_sec)
+            for stale_entry in stale_entries:
+                decision_logs.append(_build_pending_gc_log(stale_entry))
 
     for item in analyzed_events:
         event = item["event"]
         current_sec = float(event["relative_sec"])
         profiles, _expired_profiles = expire_profiles(profiles, current_sec)
+        advance_pending_entries(int(event["frame_id"]), current_sec, flush_all=False)
 
         known_match, known_audit = _known_acceptance(item, identity_means, decision_cfg)
         if known_match is not None:
-            resolved_rows.append(
+            upsert_resolved_row(
                 _build_resolved_row(
                     event,
                     item,
@@ -701,73 +1114,16 @@ def assign_model_identities(
         margin = score_bundle["margin"]
         required_margin = score_bundle["required_margin"]
         selected_thresholds = score_bundle["selected_thresholds"]
-        effective_item = item
-        pending_info = None
-
-        if selected is None and quality["gate_pass"] and top1 and top1.get("reason_code") == "ambiguous":
-            pending_info = _pending_reassessment(item, profiles, topology, merged_policy, decision_cfg, score_bundle)
-            if pending_info is not None:
-                effective_item = pending_info["selected_item"]
-                quality = pending_info["quality"]
-                candidate_scores = pending_info["candidate_scores"]
-                top1 = pending_info["top1"]
-                selected = pending_info["selected_candidate"]
-                margin = pending_info["margin"]
-                required_margin = pending_info["required_margin"]
-                selected_thresholds = pending_info["selected_thresholds"]
 
         if selected is not None:
-            profile = next(profile for profile in profiles if profile["unknown_global_id"] == selected["candidate_unknown_global_id"])
-            resolved_event = effective_item["event"]
-            update_unknown_profile(profile, effective_item, policy=gallery_cfg)
-            resolved_rows.append(
-                _build_resolved_row(
-                    resolved_event,
-                    effective_item,
-                    unknown_global_id=profile["unknown_global_id"],
-                    decision_type="reuse_unknown",
-                    reason_code="unknown_reuse",
-                    resolution_source="model_unknown_gallery_reuse",
-                    modality_primary=selected["primary_modality"],
-                    modality_secondary=selected.get("secondary_modality", ""),
-                    body_fallback_used=selected.get("body_fallback_used", False),
-                    face_unusable_reason=selected.get("face_unusable_reason", ""),
-                )
-            )
-            for candidate in candidate_scores:
-                decision_reason = candidate.get("decision_reason") or candidate.get("acceptance_reason") or candidate.get("candidate_reason")
-                trace_rows.append(
-                    _build_trace_row(
-                        event,
-                        candidate,
-                        decision_reason=decision_reason,
-                        reused_old_id=candidate["candidate_unknown_global_id"] == profile["unknown_global_id"],
-                        created_new_id=False,
-                        selected_candidate=candidate["candidate_unknown_global_id"] == profile["unknown_global_id"],
-                    )
-                )
-            decision_logs.append(
-                _build_decision_log(
-                    event,
-                    quality,
-                    candidate_scores,
-                    decision="unknown_reuse",
-                    reason_code="unknown_reuse",
-                    selected_candidate=selected,
-                    gallery_id_before=selected["candidate_unknown_global_id"],
-                    gallery_id_after=profile["unknown_global_id"],
-                    thresholds_used={**selected_thresholds, "required_margin": required_margin},
-                    margin_used={"actual_margin": margin, "required_margin": required_margin},
-                    pending_info=pending_info,
-                )
-            )
+            resolve_unknown_reuse(item, quality, candidate_scores, selected, margin, required_margin, selected_thresholds)
             continue
 
         if not quality["gate_pass"]:
             action = decision_cfg["defer_policy"]["quality_gate_fail_action"]
             if action != "defer":
                 action = "defer"
-            resolved_rows.append(
+            upsert_resolved_row(
                 _build_resolved_row(
                     event,
                     item,
@@ -778,9 +1134,12 @@ def assign_model_identities(
                     modality_secondary="",
                     body_fallback_used=quality["primary_modality"] == "body" and not quality.get("face_reliable", False),
                     face_unusable_reason=(
-                        "face_embedding_missing"
-                        if item.get("face_embedding") is None
-                        else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                        quality.get("face_pose_reject_reason", "")
+                        or (
+                            "face_embedding_missing"
+                            if item.get("face_embedding") is None
+                            else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
+                        )
                     ),
                 )
             )
@@ -872,208 +1231,37 @@ def assign_model_identities(
             )
             continue
 
-        unknown_global_id = f"{unknown_prefix}_{next_unknown:04d}"
-        next_unknown += 1
         had_previous_profiles = bool(profiles)
         create_reason = "no_candidate"
+        if top1 is not None and top1.get("reason_code") == "ambiguous":
+            create_pending_state(item, quality, candidate_scores, top1, margin, required_margin, selected_thresholds, score_bundle)
+            continue
         if top1 is not None:
-            if top1.get("reason_code") == "ambiguous":
-                if quality["quality_reliability"] <= float(decision_cfg["defer_policy"]["quality_reliability_max"]):
-                    low_quality_action = decision_cfg["defer_policy"]["ambiguous_low_quality_action"]
-                    if low_quality_action == "defer":
-                        resolved_rows.append(
-                            _build_resolved_row(
-                                event,
-                                item,
-                                decision_type="defer",
-                                reason_code="ambiguous_low_quality_defer",
-                                resolution_source="model_defer_ambiguous_low_quality",
-                                modality_primary=top1["primary_modality"],
-                                modality_secondary=top1.get("secondary_modality", ""),
-                                body_fallback_used=top1.get("body_fallback_used", False),
-                                face_unusable_reason=top1.get("face_unusable_reason", ""),
-                            )
-                        )
-                        for candidate in candidate_scores:
-                            decision_reason = candidate.get("decision_reason") or "ambiguous_low_quality_defer"
-                            trace_rows.append(
-                                _build_trace_row(
-                                    event,
-                                    candidate,
-                                    decision_reason=decision_reason,
-                                    reused_old_id=False,
-                                    created_new_id=False,
-                                    selected_candidate=False,
-                                )
-                            )
-                        decision_logs.append(
-                            _build_decision_log(
-                                event,
-                                quality,
-                                candidate_scores,
-                                decision="defer",
-                                reason_code="ambiguous_low_quality_defer",
-                                selected_candidate=top1,
-                                gallery_id_before="",
-                                gallery_id_after="",
-                                thresholds_used={**top1.get("thresholds_used", {}), "defer_policy": decision_cfg["defer_policy"]},
-                                margin_used={
-                                    "actual_margin": margin,
-                                    "required_margin": float(
-                                        decision_cfg["margin_by_relation"].get(
-                                            top1["relation_type"],
-                                            decision_cfg["margin_by_relation"]["weak_link"],
-                                        )
-                                    ),
-                                },
-                            )
-                        )
-                        continue
-                    create_reason = "ambiguous_low_quality_create"
-                else:
-                    create_reason = "ambiguous_create_unknown"
-            else:
-                create_reason = top1.get("acceptance_reason") or top1.get("candidate_reason") or "below_threshold"
+            create_reason = top1.get("acceptance_reason") or top1.get("candidate_reason") or "below_threshold"
         elif not had_previous_profiles:
             create_reason = "no_previous_unknown_profiles"
-        if pending_info is not None and pending_info.get("resolution") == "create_new_unknown":
-            effective_item = pending_info["selected_item"]
-            quality = pending_info["quality"]
-            candidate_scores = pending_info["candidate_scores"]
-            top1 = pending_info["top1"]
-            margin = pending_info["margin"]
-            required_margin = pending_info["required_margin"]
-        profile = create_unknown_profile(unknown_global_id, effective_item, policy=gallery_cfg)
-        profiles.append(profile)
-        resolved_event = effective_item["event"]
-        resolved_rows.append(
-            _build_resolved_row(
-                resolved_event,
-                effective_item,
-                unknown_global_id=unknown_global_id,
-                decision_type="create_unknown",
-                reason_code=create_reason,
-                resolution_source="model_unknown_new_profile",
-                modality_primary=(top1["primary_modality"] if top1 else quality["primary_modality"]),
-                modality_secondary=(top1.get("secondary_modality", "") if top1 else ""),
-                body_fallback_used=(
-                    top1.get("body_fallback_used", False)
-                    if top1
-                    else (quality["primary_modality"] == "body" and not quality.get("face_reliable", False))
-                ),
-                face_unusable_reason=(
-                    top1.get("face_unusable_reason", "")
-                    if top1
-                    else (
-                        "face_embedding_missing"
-                        if effective_item.get("face_embedding") is None
-                        else ("face_quality_below_reliable_threshold" if not quality.get("face_reliable", False) else "")
-                    )
-                ),
-            )
+        resolve_create_unknown(item, quality, candidate_scores, top1, margin, required_margin, create_reason)
+    if analyzed_events:
+        final_frame = int(analyzed_events[-1]["event"].get("frame_id", 0)) + int(decision_cfg.get("pending_policy", {}).get("window_frames", 30))
+        final_sec = float(analyzed_events[-1]["event"].get("relative_sec", 0.0)) + float(
+            decision_cfg.get("pending_policy", {}).get("window_sec", 1.0)
         )
-        if not candidate_scores:
-            trace_rows.append(
-                {
-                    "run_mode": "mode_b_true_assoc",
-                    "event_id": event["event_id"],
-                    "event_camera_id": event["camera_id"],
-                    "event_relative_sec": event["relative_sec"],
-                    "event_zone_id": event.get("zone_id", ""),
-                    "event_zone_type": event.get("zone_type", ""),
-                    "event_subzone_id": event.get("subzone_id", ""),
-                    "event_subzone_type": event.get("subzone_type", ""),
-                    "candidate_unknown_global_id": "",
-                    "candidate_latest_camera": "",
-                    "candidate_latest_time": "",
-                    "profile_camera": "",
-                    "profile_time": "",
-                    "source_zone_id": "",
-                    "target_zone_id": event.get("zone_id", ""),
-                    "source_subzone_id": "",
-                    "target_subzone_id": event.get("subzone_id", ""),
-                    "relation_type": "",
-                    "same_area_overlap": "",
-                    "transition_rule_used": "",
-                    "min_travel_time": "",
-                    "avg_travel_time": "",
-                    "max_travel_time": "",
-                    "travel_window": {},
-                    "delta_sec": "",
-                    "topology_valid": "",
-                    "time_valid": "",
-                    "zone_valid": "",
-                    "subzone_valid": "",
-                    "topology_allowed": "",
-                    "zone_allowed": "",
-                    "time_score": "",
-                    "topology_score": "",
-                    "zone_score": "",
-                    "subzone_score": "",
-                    "zone_reason": event.get("zone_reason", ""),
-                    "subzone_reason": event.get("subzone_reason", ""),
-                    "time_reason": "",
-                    "rejection_reason": "",
-                    "fallback_without_zone": bool(event.get("zone_fallback_used", False)),
-                    "fallback_without_subzone": bool(event.get("subzone_fallback_used", False)),
-                    "face_score": "",
-                    "body_score": "",
-                    "appearance_primary": "",
-                    "appearance_secondary": "",
-                    "primary_modality": quality["primary_modality"],
-                    "modality_state": quality["modality_state"],
-                    "quality_gate_pass": quality["gate_pass"],
-                    "quality_reason_code": quality["reason_code"],
-                    "quality_reliability": quality["quality_reliability"],
-                    "final_total_score": "",
-                    "reason_code": create_reason,
-                    "reused_old_id": False,
-                    "created_new_id": True,
-                    "selected_candidate": False,
-                    "decision_reason": create_reason,
-                }
+        advance_pending_entries(final_frame, final_sec, flush_all=True)
+        if pending_entries:
+            pending_entries, stale_entries = cleanup_stale_ids(
+                pending_entries,
+                final_sec + stale_timeout_sec + 0.001,
+                stale_timeout_sec,
             )
-        for candidate in candidate_scores:
-            decision_reason = candidate.get("decision_reason") or candidate.get("acceptance_reason") or create_reason
-            trace_rows.append(
-                _build_trace_row(
-                    event,
-                    candidate,
-                    decision_reason=decision_reason,
-                    reused_old_id=False,
-                    created_new_id=True,
-                    selected_candidate=False,
-                )
-            )
-        decision_logs.append(
-            _build_decision_log(
-                event,
-                quality,
-                candidate_scores,
-                decision="create_new",
-                reason_code=create_reason,
-                selected_candidate=top1,
-                gallery_id_before=top1["candidate_unknown_global_id"] if top1 else "",
-                gallery_id_after=unknown_global_id,
-                thresholds_used={
-                    **(top1.get("thresholds_used", {}) if top1 else {}),
-                    "create_rule": decision_cfg["create_rule"],
-                },
-                margin_used={
-                    "actual_margin": margin,
-                    "required_margin": float(
-                        decision_cfg["margin_by_relation"].get(
-                            top1["relation_type"],
-                            decision_cfg["margin_by_relation"]["weak_link"],
-                        )
-                    )
-                    if top1
-                    else "",
-                },
-                pending_info=pending_info,
-            )
-        )
-    debug_bundle = {"policy": merged_policy, "decision_logs": decision_logs}
+            for stale_entry in stale_entries:
+                decision_logs.append(_build_pending_gc_log(stale_entry))
+    debug_bundle = {
+        "policy": merged_policy,
+        "decision_logs": decision_logs,
+        "pending_runtime": {
+            "stale_pending_count_remaining": len(pending_entries),
+        },
+    }
     if return_debug_bundle:
         return resolved_rows, profiles, trace_rows, debug_bundle
     return resolved_rows, profiles, trace_rows

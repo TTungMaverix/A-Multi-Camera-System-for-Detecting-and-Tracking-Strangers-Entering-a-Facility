@@ -13,7 +13,7 @@ The UI only needs to show:
 
 - a new event arrived
 - which camera it came from
-- whether the identity is `known` or `unknown`
+- whether the identity is `known`, `unknown`, or still `pending`
 - which ID was assigned
 - which zone/subzone it belongs to
 - which snapshot was stored
@@ -65,14 +65,14 @@ The server validates that the requested file still stays inside the project root
 Start the live pipeline first:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_live_multicam_demo.ps1"
 ```
 
 Then start the demo UI:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
 ```
 
@@ -83,5 +83,7 @@ Default URL:
 ## Current Limitation
 
 This is a defense-oriented UI, not a finished monitoring product.
+
+The live page reflects whatever the current live pipeline emits. If an event is still under pending association, the card now stays gray/dashed and shows `Analyzing...` until the backend resolves or garbage-collects that pending state.
 
 The live page reflects whatever the current live pipeline emits. If the live ingestion is run through file replay or only 2 cameras, the page will reflect that exact setup.
