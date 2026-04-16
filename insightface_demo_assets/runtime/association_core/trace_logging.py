@@ -19,6 +19,11 @@ def summarize_decision_logs(decision_logs):
         "defer_count": 0,
         "quality_gate_reject_count": 0,
         "topology_reject_count": 0,
+        "topology_hard_reject_candidate_count": 0,
+        "topology_candidate_survived_count": 0,
+        "topology_too_early_reject_count": 0,
+        "topology_too_late_reject_count": 0,
+        "topology_unreachable_pair_count": 0,
         "zone_reject_count": 0,
         "fallback_without_zone_count": 0,
         "subzone_reject_count": 0,
@@ -48,6 +53,24 @@ def summarize_decision_logs(decision_logs):
         candidate_evaluations = row.get("candidate_evaluations", [])
         if any((not candidate.get("topology_valid", True)) or (not candidate.get("time_valid", True)) for candidate in candidate_evaluations):
             summary["topology_reject_count"] += 1
+        summary["topology_hard_reject_candidate_count"] += sum(
+            1 for candidate in candidate_evaluations if not candidate.get("hard_filter_pass", candidate.get("topology_allowed", False))
+        )
+        summary["topology_candidate_survived_count"] += sum(
+            1 for candidate in candidate_evaluations if candidate.get("hard_filter_pass", candidate.get("topology_allowed", False))
+        )
+        summary["topology_too_early_reject_count"] += sum(
+            1 for candidate in candidate_evaluations if candidate.get("time_reason") == "too_early_travel_time"
+        )
+        summary["topology_too_late_reject_count"] += sum(
+            1 for candidate in candidate_evaluations if candidate.get("time_reason") == "too_late_travel_time"
+        )
+        summary["topology_unreachable_pair_count"] += sum(
+            1
+            for candidate in candidate_evaluations
+            if candidate.get("rejection_reason") == "unreachable_camera_pair"
+            or candidate.get("candidate_reason") == "unreachable_camera_pair"
+        )
         if any(not candidate.get("zone_valid", True) for candidate in candidate_evaluations):
             summary["zone_reject_count"] += 1
         if row.get("fallback_without_zone") or any(candidate.get("fallback_without_zone", False) for candidate in candidate_evaluations):

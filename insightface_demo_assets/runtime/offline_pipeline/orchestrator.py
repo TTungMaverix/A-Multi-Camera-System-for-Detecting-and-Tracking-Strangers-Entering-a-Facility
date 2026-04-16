@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import shutil
+import time
 from pathlib import Path
 
 import yaml
@@ -159,6 +160,7 @@ def export_unknown_id_mapping(output_root: Path):
 
 
 def run_offline_pipeline(config_path: Path, cli_overrides=None):
+    pipeline_started = time.perf_counter()
     cli_overrides = cli_overrides or {}
     offline_config = load_pipeline_config(config_path)
     execution_mode = (offline_config.get("execution", {}) or {}).get("mode", "sequential")
@@ -206,10 +208,16 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
     wildtrack_config = apply_scene_calibration_to_wildtrack_config(wildtrack_config, scene_calibration, frame_sizes)
 
+    stage_started = time.perf_counter()
     stage_inputs = build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_override=wildtrack_config)
+    stage_elapsed_sec = round(max(time.perf_counter() - stage_started, 1e-9), 3)
     runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
+    face_resolution_started = time.perf_counter()
     run_face_resolution_main(runtime_config_path)
+    face_resolution_elapsed_sec = round(max(time.perf_counter() - face_resolution_started, 1e-9), 3)
+    sync_started = time.perf_counter()
     sync_final_outputs(output_root)
+    sync_elapsed_sec = round(max(time.perf_counter() - sync_started, 1e-9), 3)
     unknown_id_mapping_csv = export_unknown_id_mapping(output_root)
 
     pipeline_summary = {
@@ -237,6 +245,20 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
             "face_body_usage_summary_json": str(output_root / "summaries" / "face_body_usage_summary.json"),
             "association_logs_dir": str(output_root / "association_logs"),
             "audit_dir": str(output_root / "audit"),
+        },
+        "timings_sec": {
+            "stage_input_build_sec": stage_elapsed_sec,
+            "face_resolution_sec": face_resolution_elapsed_sec,
+            "final_sync_sec": sync_elapsed_sec,
+            "total_pipeline_sec": round(max(time.perf_counter() - pipeline_started, 1e-9), 3),
+        },
+        "architecture_audit": {
+            "execution_mode": offline_config.get("execution", {}).get("mode", "sequential"),
+            "architecture_mode": "synchronous_replay_pipeline",
+            "notes": [
+                "The current Cam6 replay debug path is sequential: stage inputs are built first, then face/body/association resolution runs, then outputs are synchronized.",
+                "The live pipeline keeps a separate multiprocessing producer-consumer design and reports its own worker/consumer FPS in live_pipeline_summary.json.",
+            ],
         },
     }
     save_json(output_root / "summaries" / "offline_pipeline_summary.json", pipeline_summary)

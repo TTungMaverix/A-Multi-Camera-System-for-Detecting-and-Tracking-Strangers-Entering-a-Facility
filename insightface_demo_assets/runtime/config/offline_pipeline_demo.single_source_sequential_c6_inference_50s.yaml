@@ -40,6 +40,11 @@ offline_pipeline:
       person_class_id: 0
       target_timeline_fps: 10
       verbose: false
+      cache:
+        enabled: true
+        use_cache: true
+        refresh_cache: false
+        cache_dir: outputs/offline_runs/cache/cam6_detector_tracker
       tracklet_linking:
         enabled: true
         max_gap_frames: 12

@@ -1,5 +1,6 @@
 import copy
 import csv
+import hashlib
 import json
 import math
 import time
@@ -541,6 +542,141 @@ def link_short_gap_tracklets(track_rows, linking_cfg=None):
     return rewritten_rows, runtime_info
 
 
+def _merge_cache_cfg(cache_cfg=None):
+    merged = {
+        "enabled": False,
+        "use_cache": True,
+        "refresh_cache": False,
+        "cache_dir": "",
+    }
+    for key, value in (cache_cfg or {}).items():
+        merged[key] = value
+    return merged
+
+
+def _resolve_cache_dir(cache_cfg, default_root: Path):
+    cache_dir = cache_cfg.get("cache_dir", "") or ""
+    if cache_dir:
+        cache_path = Path(cache_dir)
+        if not cache_path.is_absolute():
+            cache_path = (default_root / cache_path).resolve()
+        return cache_path
+    return (default_root / ".cache" / "detector_tracker").resolve()
+
+
+def _cache_signature(
+    camera_id,
+    video_source: Path,
+    low_load_cfg,
+    inference_cfg,
+    linking_cfg,
+    actual_video_fps,
+    target_timeline_fps,
+):
+    return {
+        "camera_id": camera_id,
+        "video_source": str(video_source),
+        "start_frame": as_int(low_load_cfg.get("start_frame", 0)),
+        "end_frame": (
+            ""
+            if low_load_cfg.get("end_frame") in ("", None)
+            else as_int(low_load_cfg.get("end_frame"))
+        ),
+        "frame_stride": max(1, as_int(low_load_cfg.get("frame_stride", 1), 1)),
+        "detector_model": inference_cfg.get("detector_model", "yolov8n.pt"),
+        "tracker": inference_cfg.get("tracker", "bytetrack.yaml"),
+        "device": str(inference_cfg.get("device", "cpu")),
+        "conf_threshold": float(inference_cfg.get("conf_threshold", 0.25)),
+        "iou_threshold": float(inference_cfg.get("iou_threshold", 0.5)),
+        "imgsz": int(inference_cfg.get("imgsz", 640)),
+        "person_class_id": int(inference_cfg.get("person_class_id", 0)),
+        "target_timeline_fps": round(float(target_timeline_fps), 4),
+        "actual_video_fps": round(float(actual_video_fps or 0.0), 4),
+        "tracklet_linking": copy.deepcopy(linking_cfg or {}),
+    }
+
+
+def _cache_key(signature):
+    payload = json.dumps(signature, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _cache_paths(cache_dir: Path, signature):
+    cache_key = _cache_key(signature)
+    cache_root = cache_dir / cache_key
+    return {
+        "cache_key": cache_key,
+        "cache_root": cache_root,
+        "metadata_json": cache_root / "metadata.json",
+        "track_rows_json": cache_root / "track_rows.json",
+        "runtime_json": cache_root / "runtime_info.json",
+    }
+
+
+def load_inference_track_cache(cache_dir: Path, signature):
+    paths = _cache_paths(cache_dir, signature)
+    started = time.perf_counter()
+    metadata_path = paths["metadata_json"]
+    track_rows_path = paths["track_rows_json"]
+    runtime_path = paths["runtime_json"]
+    if not metadata_path.exists() or not track_rows_path.exists():
+        return None, {
+            "cache_enabled": True,
+            "cache_hit": False,
+            "cache_key": paths["cache_key"],
+            "cache_root": str(paths["cache_root"]),
+            "cache_miss_reason": "cache_files_missing",
+            "cache_load_time_sec": round(max(time.perf_counter() - started, 1e-9), 6),
+        }
+    metadata = load_json(metadata_path)
+    if metadata.get("signature") != signature:
+        return None, {
+            "cache_enabled": True,
+            "cache_hit": False,
+            "cache_key": paths["cache_key"],
+            "cache_root": str(paths["cache_root"]),
+            "cache_miss_reason": "signature_mismatch",
+            "cache_load_time_sec": round(max(time.perf_counter() - started, 1e-9), 6),
+        }
+    runtime_info = load_json(runtime_path) if runtime_path.exists() else {}
+    track_rows = load_json(track_rows_path)
+    return track_rows, {
+        "cache_enabled": True,
+        "cache_hit": True,
+        "cache_key": paths["cache_key"],
+        "cache_root": str(paths["cache_root"]),
+        "metadata_json": str(metadata_path),
+        "track_rows_json": str(track_rows_path),
+        "runtime_json": str(runtime_path),
+        "cache_created_at": metadata.get("created_at_utc", ""),
+        "cache_load_time_sec": round(max(time.perf_counter() - started, 1e-9), 6),
+        "cached_runtime_elapsed_sec": runtime_info.get("elapsed_sec", 0.0),
+    }
+
+
+def write_inference_track_cache(cache_dir: Path, signature, track_rows, runtime_info):
+    paths = _cache_paths(cache_dir, signature)
+    paths["cache_root"].mkdir(parents=True, exist_ok=True)
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    save_json(
+        paths["metadata_json"],
+        {
+            "signature": signature,
+            "created_at_utc": created_at,
+        },
+    )
+    save_json(paths["track_rows_json"], track_rows)
+    save_json(paths["runtime_json"], runtime_info)
+    return {
+        "cache_key": paths["cache_key"],
+        "cache_root": str(paths["cache_root"]),
+        "metadata_json": str(paths["metadata_json"]),
+        "track_rows_json": str(paths["track_rows_json"]),
+        "runtime_json": str(paths["runtime_json"]),
+        "cache_created_at": created_at,
+    }
+
+
 def extract_inference_track_rows(
     camera_id,
     camera_cfg,
@@ -572,17 +708,56 @@ def extract_inference_track_rows(
     end_frame = None if end_frame_raw in ("", None) else as_int(end_frame_raw)
     frame_stride = max(1, as_int(low_load_cfg.get("frame_stride", 1), 1))
 
+    capture = cv2.VideoCapture(str(video_source))
+    if not capture.isOpened():
+        raise RuntimeError(f"Failed to open inference replay video source: {video_source}")
+    actual_video_fps = float(capture.get(cv2.CAP_PROP_FPS) or fps or 0.0)
+    capture.release()
+
+    linking_cfg = (inference_cfg or {}).get("tracklet_linking")
+    cache_cfg = _merge_cache_cfg((inference_cfg or {}).get("cache"))
+    cache_dir = _resolve_cache_dir(cache_cfg, video_source.parent)
+    signature = _cache_signature(
+        camera_id,
+        video_source,
+        low_load_cfg,
+        inference_cfg,
+        linking_cfg,
+        actual_video_fps,
+        target_timeline_fps,
+    )
+    cache_runtime = {
+        "cache_enabled": bool(cache_cfg.get("enabled", False)),
+        "cache_hit": False,
+        "cache_key": _cache_key(signature),
+        "cache_root": str(_cache_paths(cache_dir, signature)["cache_root"]),
+        "cache_miss_reason": "cache_disabled",
+        "cache_load_time_sec": 0.0,
+        "time_saved_sec": 0.0,
+    }
+    if cache_cfg.get("enabled", False) and cache_cfg.get("use_cache", True) and not cache_cfg.get("refresh_cache", False):
+        cached_rows, cache_runtime = load_inference_track_cache(cache_dir, signature)
+        if cached_rows is not None:
+            cached_runtime_info = load_json(Path(cache_runtime["runtime_json"])) if Path(cache_runtime["runtime_json"]).exists() else {}
+            runtime_info = dict(cached_runtime_info)
+            runtime_info["cache_runtime"] = {
+                **cache_runtime,
+                "time_saved_sec": round(float(cached_runtime_info.get("elapsed_sec", 0.0)) - float(cache_runtime.get("cache_load_time_sec", 0.0)), 3),
+            }
+            runtime_info.setdefault("notes", []).append(
+                "Detector/tracker rows were loaded from cache generated by true inference, not from GT-backed annotations."
+            )
+            return cached_rows, runtime_info
+
     model = YOLO(model_name)
     capture = cv2.VideoCapture(str(video_source))
     if not capture.isOpened():
         raise RuntimeError(f"Failed to open inference replay video source: {video_source}")
-
     track_rows = []
     processed_frames = 0
     raw_detection_count = 0
     emitted_track_rows = 0
     runtime_started = time.perf_counter()
-    actual_video_fps = float(capture.get(cv2.CAP_PROP_FPS) or fps or 0.0)
     frame_id = -1
     synthetic_track_id = 1000000
     try:
@@ -683,7 +858,7 @@ def extract_inference_track_rows(
     linking_started = time.perf_counter()
     track_rows, linking_runtime = link_short_gap_tracklets(
         track_rows,
-        linking_cfg=(inference_cfg or {}).get("tracklet_linking"),
+        linking_cfg=linking_cfg,
     )
     linking_runtime["elapsed_sec"] = round(max(time.perf_counter() - linking_started, 1e-9), 6)
     elapsed_sec = max(time.perf_counter() - runtime_started, 1e-9)
@@ -710,6 +885,7 @@ def extract_inference_track_rows(
         "actual_window_sec": round(((end_frame if end_frame is not None else frame_id) - start_frame) / max(actual_video_fps, 1e-9), 3),
         "identity_seed_field": "source_track_surrogate_id",
         "tracklet_linking": linking_runtime,
+        "cache_runtime": cache_runtime,
         "notes": [
             "Track rows are generated from YOLO person detection plus ByteTrack on the real source video.",
             "ByteTrack output is passed through a short-gap intra-camera linker before the replay flow continues.",
@@ -718,6 +894,21 @@ def extract_inference_track_rows(
             "frame_id and relative_sec are normalized onto the configured timeline FPS so fake travel-time logic stays consistent with the replay topology.",
         ],
     }
+    if cache_cfg.get("enabled", False):
+        cache_write_runtime = write_inference_track_cache(cache_dir, signature, track_rows, runtime_info)
+        runtime_info["cache_runtime"] = {
+            "cache_enabled": True,
+            "cache_hit": False,
+            "cache_key": cache_write_runtime["cache_key"],
+            "cache_root": cache_write_runtime["cache_root"],
+            "metadata_json": cache_write_runtime["metadata_json"],
+            "track_rows_json": cache_write_runtime["track_rows_json"],
+            "runtime_json": cache_write_runtime["runtime_json"],
+            "cache_created_at": cache_write_runtime["cache_created_at"],
+            "cache_miss_reason": "refreshed" if cache_cfg.get("refresh_cache", False) else "cache_miss_computed",
+            "cache_load_time_sec": 0.0,
+            "time_saved_sec": 0.0,
+        }
     return track_rows, runtime_info
 
 
@@ -1417,6 +1608,13 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                 ],
             }
         elif track_provider == "inference_yolo_bytetrack":
+            inference_cfg = copy.deepcopy(replay_cfg.get("inference", {}) or {})
+            cache_cfg = (inference_cfg.get("cache", {}) or {})
+            if cache_cfg.get("cache_dir"):
+                cache_dir = Path(cache_cfg["cache_dir"])
+                if not cache_dir.is_absolute():
+                    cache_cfg["cache_dir"] = str((project_root / cache_dir).resolve())
+                inference_cfg["cache"] = cache_cfg
             source_rows, source_track_runtime = extract_inference_track_rows(
                 source_camera_id,
                 source_camera_cfg,
@@ -1424,7 +1622,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                 source_video_path,
                 low_load_cfg,
                 frame_source_mode,
-                replay_cfg.get("inference", {}) or {},
+                inference_cfg,
             )
         else:
             raise RuntimeError(

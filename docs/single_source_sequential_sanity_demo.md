@@ -96,11 +96,24 @@ The flow is:
 7. keep only inward-direction entry events
 8. create head/body crops
 9. send buffered face crops through blur + pose gates before best-shot selection
-10. run face-first known matching
-11. if unknown association is ambiguous, keep it in `PENDING` instead of creating a new ID immediately
-12. garbage-collect stale pending entries after `2s`
-13. for unknowns that resolve safely, reuse `Unknown_Global_ID` through the existing association core
-14. export events, timelines, mapping files, and association logs
+10. extract OSNet body embeddings from body crops so body fallback is a real embedding path
+11. run face-first known matching
+12. hard-reject impossible virtual camera/time candidates before face/body similarity scoring
+13. if unknown association is ambiguous, keep it in `PENDING` instead of creating a new ID immediately
+14. garbage-collect stale pending entries after `2s`
+15. for unknowns that resolve safely, reuse `Unknown_Global_ID` through the existing association core
+16. export events, timelines, mapping files, and association logs
+
+## Cache Debug Loop
+
+The replay inference path now supports detector/tracker cache at the source-track stage.
+
+- first run: detector + ByteTrack + tracklet linking compute and write cache
+- later run: load the same source-track rows from cache and skip detector/tracker rerun
+
+Reference benchmark config:
+
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml`
 
 ## Expected Output
 

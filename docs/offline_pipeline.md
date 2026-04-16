@@ -10,6 +10,9 @@ The default offline runnable pipeline is now the **single-source sequential repl
 - per-camera track extraction: real `YOLOv8n + ByteTrack` inference on `Wildtrack/cam6.mp4`
 - direction filter: manual scene calibration + trajectory/momentum logic from `insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json`
 - face matching + known/unknown + cross-camera association: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
+- body fallback: real `OSNet` embeddings from body crops
+- topology/travel time: hard pre-similarity gate before face/body comparison
+- detector/tracker cache: optional cache hit/miss at the source-track stage for faster debug loops
 
 The older Wildtrack 4-source mode still exists as a reference backend, but it is not the default rescue-demo path.
 
@@ -43,6 +46,10 @@ The generic orchestrator wrapper still exists, but the default defense/demo path
 Main verified inference video-phase config:
 
 - `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+
+Short benchmark config for full-vs-cache detector/tracker comparison:
+
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml`
 
 Longer stress config that currently exceeds the local verification timeout:
 
@@ -78,6 +85,7 @@ Important fields:
 - `camera_transition_map_config`
 - `execution.mode`
 - `low_load`
+- `single_source_replay.inference.cache`
 
 For the rescue demo, the most important extra files are:
 
@@ -107,20 +115,42 @@ Event creation rules in the current backend:
 1. run YOLO person detection plus ByteTrack on the single source video
 2. run a short-gap tracklet linker on top of ByteTrack so short occlusion / crossing fragmentation is reduced before downstream logic
 3. project the inferred source tracks into virtual cameras with configured fake frame and time offsets
-3. keep rows whose foot point stays inside the configured ROI
-4. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
-5. only after line crossing, create `ENTRY_IN`
-6. select a best shot inside the configured frame window
-7. reject buffered face frames that fail blur or landmark-based pose gates before they can become the best shot
-8. when enabled, prefer post-anchor frames in higher-priority subzones
-9. create best-shot body/head crops
-10. send that event to face matching and then to cross-camera association
+4. keep rows whose foot point stays inside the configured ROI
+5. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
+6. only after line crossing, create `ENTRY_IN`
+7. select a best shot inside the configured frame window
+8. reject buffered face frames that fail blur or landmark-based pose gates before they can become the best shot
+9. extract OSNet body embeddings from valid body crops and store them in the unknown gallery
+10. hard-reject impossible camera/time candidates before face/body similarity scoring
+11. when both modalities are valid, fuse face and body with configurable weights
+12. when enabled, prefer post-anchor frames in higher-priority subzones
+13. create best-shot body/head crops
+14. send that event to face matching and then to cross-camera association
 
 Current guard rails:
 
 - `tracklet_linking` lives inside the replay inference config and runs immediately after ByteTrack
 - pose-aware face filtering uses InsightFace 5 landmarks with hard gates at `|yaw| <= 30°` and `|pitch| <= 20°`
 - ambiguous association cases can enter `PENDING`, but stale pending entries are garbage-collected after `2s`
+
+- topology/travel-time now runs as a hard pre-similarity gate, so impossible candidates do not reach face/body scoring
+- replay detector/tracker cache stores true inference rows and can be reused by later debug runs
+
+## Architecture Audit
+
+The current replay debug path is `synchronous`.
+
+- `offline_pipeline/orchestrator.py` builds stage inputs first
+- then runs `run_face_resolution_demo.py`
+- then synchronizes outputs
+
+This keeps the replay proof path deterministic for audit/debug.
+
+The separate live path remains the asynchronous producer-consumer design:
+
+- camera workers are producers
+- the main loop is the consumer/association stage
+- per-worker `producer_fps` and summary `consumer_fps` are exported in `live_pipeline_summary.json`
 
 ## Output Layout
 

@@ -42,6 +42,14 @@ The UI reads the outputs created by the live pipeline:
 - `outputs/live_runs/<run_name>/events/latest_events.json`
 - `outputs/live_runs/<run_name>/summaries/live_pipeline_summary.json`
 
+`live_pipeline_summary.json` now also exposes the concurrency audit fields used in the latest phase:
+
+- `architecture_mode`
+- per-camera `producer_fps`
+- per-camera `event_fps`
+- overall `consumer_fps`
+- dropped-frame counters
+
 Snapshot images are served through:
 
 - `/artifact?path=<absolute_or_repo_relative_path>`

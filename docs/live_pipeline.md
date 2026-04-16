@@ -61,6 +61,12 @@ Central process responsibilities:
 - update unknown gallery and IDs
 - write live event stream outputs
 
+The live path is the repository's `asynchronous producer-consumer` implementation.
+
+- each worker is a producer
+- the main loop is the consumer
+- `live_pipeline_summary.json` now records per-worker `producer_fps`, per-worker `event_fps`, and overall `consumer_fps`
+
 ## Latest-Frame / Frame-Drop Logic
 
 Each worker uses `LatestFrameReader`.

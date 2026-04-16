@@ -90,7 +90,10 @@ def _candidate_acceptance(candidate, policy):
     thresholds = _relation_thresholds(policy, candidate["relation_type"])
     primary_floor = float(policy["unknown_reuse_threshold"])
     minimum_evidence = policy["minimum_evidence"]
-    if candidate["primary_modality"] == "face":
+    if candidate["primary_modality"] == "fusion":
+        primary_threshold = max(primary_floor, float(thresholds.get("fusion_primary", thresholds["face_primary"])))
+        secondary_threshold = 0.0
+    elif candidate["primary_modality"] == "face":
         primary_threshold = max(primary_floor, float(thresholds["face_primary"]))
         secondary_threshold = float(thresholds["face_secondary"])
     else:
@@ -118,7 +121,7 @@ def _candidate_acceptance(candidate, policy):
 def _ranking_key(candidate):
     return (
         1 if candidate["quality_gate_pass"] else 0,
-        1 if candidate["topology_allowed"] else 0,
+        1 if candidate.get("hard_filter_pass", candidate["topology_allowed"]) else 0,
         candidate["appearance_primary"],
         candidate["appearance_secondary"],
         candidate["time_score"],
@@ -137,7 +140,42 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
     quality = evaluate_quality_gate(item, merged_policy["quality_gate"])
     quality["appearance_evidence_policy"] = merged_policy["appearance_evidence"]
     topology_eval = evaluate_profile_topology(item, profile, topology, merged_policy["topology_filter"])
-    appearance = evaluate_appearance_evidence(item, profile, quality)
+    hard_filter_pass = (
+        bool(topology_eval.get("topology_allowed"))
+        and bool(topology_eval.get("topology_valid", topology_eval.get("topology_allowed", False)))
+        and bool(topology_eval.get("time_valid", topology_eval.get("topology_allowed", False)))
+        and bool(topology_eval.get("zone_valid", topology_eval.get("zone_allowed", False)))
+        and bool(topology_eval.get("subzone_valid", True))
+    )
+    if hard_filter_pass:
+        appearance = evaluate_appearance_evidence(item, profile, quality)
+        appearance["appearance_similarity_skipped"] = False
+    else:
+        appearance = {
+            "face_score": 0.0,
+            "body_score": 0.0,
+            "face_ref_score": 0.0,
+            "face_representative_score": 0.0,
+            "body_ref_score": 0.0,
+            "body_representative_score": 0.0,
+            "appearance_primary": 0.0,
+            "appearance_secondary": 0.0,
+            "primary_modality": "",
+            "secondary_modality": "",
+            "modality_state": "topology_hard_reject",
+            "face_available": False,
+            "body_available": False,
+            "face_reliable": False,
+            "body_reliable": False,
+            "secondary_reliable": False,
+            "body_fallback_used": False,
+            "fusion_used": False,
+            "appearance_mode": "topology_hard_reject",
+            "face_unusable_reason": "",
+            "appearance_evidence_policy": merged_policy["appearance_evidence"],
+            "evidence_reason": "appearance_skipped_due_to_topology_hard_filter",
+            "appearance_similarity_skipped": True,
+        }
     candidate = {
         **topology_eval,
         **appearance,
@@ -153,6 +191,10 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "appearance_secondary_reliable": bool(appearance.get("secondary_reliable")),
         "secondary_modality": appearance.get("secondary_modality", ""),
         "body_fallback_used": bool(appearance.get("body_fallback_used")),
+        "fusion_used": bool(appearance.get("fusion_used")),
+        "appearance_mode": appearance.get("appearance_mode", ""),
+        "appearance_similarity_skipped": bool(appearance.get("appearance_similarity_skipped")),
+        "hard_filter_pass": hard_filter_pass,
         "face_unusable_reason": appearance.get("face_unusable_reason", ""),
         "final_total_score": appearance["appearance_primary"],
         "reason_code": (
@@ -284,7 +326,7 @@ def _build_decision_log(
     candidate_set_after_filter = [
         candidate["candidate_unknown_global_id"]
         for candidate in candidate_scores
-        if candidate["topology_allowed"]
+        if candidate.get("hard_filter_pass")
     ]
     top_candidate = selected_candidate or (candidate_scores[0] if candidate_scores else None)
     candidate_details = []
@@ -327,6 +369,10 @@ def _build_decision_log(
                 "secondary_modality": candidate.get("secondary_modality", ""),
                 "appearance_secondary_reliable": candidate.get("appearance_secondary_reliable", False),
                 "body_fallback_used": candidate.get("body_fallback_used", False),
+                "fusion_used": candidate.get("fusion_used", False),
+                "appearance_mode": candidate.get("appearance_mode", ""),
+                "appearance_similarity_skipped": candidate.get("appearance_similarity_skipped", False),
+                "hard_filter_pass": candidate.get("hard_filter_pass", False),
                 "face_unusable_reason": candidate.get("face_unusable_reason", ""),
                 "time_score": candidate["time_score"],
                 "topology_score": candidate["topology_score"],

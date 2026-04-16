@@ -29,11 +29,23 @@ association_policy:
   appearance_evidence:
     prefer_primary_face_when_reliable: true
     allow_body_primary_fallback: true
+    enable_face_body_fusion: true
+    fusion_face_weight: 0.7
+    fusion_body_weight: 0.3
     secondary_available_min_score: 0.0
     face_reference_weight: 0.7
     face_representative_weight: 0.3
     body_reference_weight: 0.65
     body_representative_weight: 0.35
+  body_reid:
+    enabled: true
+    extractor_name: osnet_x0_25
+    device: cpu
+    pretrained: true
+    input_width: 128
+    input_height: 256
+    min_crop_width: 12
+    min_crop_height: 24
   gallery_lifecycle:
     top_k_face_refs: 3
     top_k_body_refs: 5
@@ -61,19 +73,23 @@ association_policy:
       sequential: 0.012
       weak_link: 0.025
       camera_already_seen: 1.0
+      unreachable: 1.0
       no_link: 1.0
     relation_thresholds:
       overlap:
+        fusion_primary: 0.18
         face_primary: 0.14
         face_secondary: 0.2
         body_primary: 0.47
         body_secondary: 0.08
       sequential:
+        fusion_primary: 0.2
         face_primary: 0.17
         face_secondary: 0.24
         body_primary: 0.5
         body_secondary: 0.1
       weak_link:
+        fusion_primary: 0.24
         face_primary: 0.2
         face_secondary: 0.3
         body_primary: 0.56

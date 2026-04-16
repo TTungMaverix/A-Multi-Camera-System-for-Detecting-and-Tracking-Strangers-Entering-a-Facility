@@ -1,14 +1,14 @@
 offline_pipeline:
   project_root: ../../..
-  pipeline_name: single_source_sequential_c6_inference_phase_5min
+  pipeline_name: single_source_sequential_c6_inference_cache_benchmark
   source_backend: single_source_sequential_replay
-  output_root: outputs/offline_runs/single_source_sequential_c6_inference_phase_5min
+  output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark
   frame_source_mode: video_files
   low_load:
     enabled: true
     start_frame: 0
-    end_frame: 3000
-    frame_stride: 3
+    end_frame: 720
+    frame_stride: 6
   execution:
     mode: sequential
     packet_batch_size: 256
@@ -38,6 +38,7 @@ offline_pipeline:
       iou_threshold: 0.5
       imgsz: 640
       person_class_id: 0
+      target_timeline_fps: 10
       verbose: false
       cache:
         enabled: true

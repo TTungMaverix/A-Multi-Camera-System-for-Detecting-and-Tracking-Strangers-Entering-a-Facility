@@ -9,7 +9,9 @@ from offline_pipeline.event_builder import (
     build_entry_anchor_packets,
     build_entry_events,
     clone_track_rows_for_virtual_camera,
+    load_inference_track_cache,
     link_short_gap_tracklets,
+    write_inference_track_cache,
     select_best_record,
 )
 from offline_pipeline.orchestrator import load_pipeline_config
@@ -105,6 +107,14 @@ def test_single_source_sequential_inference_50s_config_is_present():
     assert config["single_source_replay"]["inference"]["tracklet_linking"]["enabled"] is True
 
 
+def test_single_source_sequential_inference_cache_benchmark_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "single_source_sequential_replay"
+    assert config["low_load"]["end_frame"] == 720
+    assert config["single_source_replay"]["inference"]["cache"]["enabled"] is True
+
+
 def test_tracklet_linking_reconnects_short_occlusion():
     rows = [
         _track_row(10, 0, 10, 10, 50, 110),
@@ -183,6 +193,65 @@ def test_tracklet_linking_keeps_close_parallel_people_separate_when_motion_break
     )
     assert runtime["links_applied"] == 0
     assert {row["local_track_id"] for row in linked_rows} == {"5", "6", "7"}
+
+
+def test_inference_track_cache_reports_miss_then_hit(tmp_path):
+    cache_dir = tmp_path / "cache"
+    signature = {
+        "camera_id": "C6",
+        "video_source": "cam6.mp4",
+        "start_frame": 0,
+        "end_frame": 100,
+        "frame_stride": 6,
+        "detector_model": "yolov8n.pt",
+        "tracker": "bytetrack.yaml",
+        "device": "cpu",
+        "conf_threshold": 0.25,
+        "iou_threshold": 0.5,
+        "imgsz": 640,
+        "person_class_id": 0,
+        "target_timeline_fps": 10.0,
+        "actual_video_fps": 59.94,
+        "tracklet_linking": {"enabled": True},
+    }
+    rows, miss_runtime = load_inference_track_cache(cache_dir, signature)
+    assert rows is None
+    assert miss_runtime["cache_hit"] is False
+
+    track_rows = [_track_row(10, 0, 10, 10, 50, 110)]
+    write_inference_track_cache(cache_dir, signature, track_rows, {"elapsed_sec": 12.5})
+
+    cached_rows, hit_runtime = load_inference_track_cache(cache_dir, signature)
+    assert hit_runtime["cache_hit"] is True
+    assert len(cached_rows) == 1
+    assert cached_rows[0]["local_track_id"] == "10"
+
+
+def test_inference_track_cache_signature_mismatch_invalidates_hit(tmp_path):
+    cache_dir = tmp_path / "cache"
+    signature = {
+        "camera_id": "C6",
+        "video_source": "cam6.mp4",
+        "start_frame": 0,
+        "end_frame": 100,
+        "frame_stride": 6,
+        "detector_model": "yolov8n.pt",
+        "tracker": "bytetrack.yaml",
+        "device": "cpu",
+        "conf_threshold": 0.25,
+        "iou_threshold": 0.5,
+        "imgsz": 640,
+        "person_class_id": 0,
+        "target_timeline_fps": 10.0,
+        "actual_video_fps": 59.94,
+        "tracklet_linking": {"enabled": True},
+    }
+    write_inference_track_cache(cache_dir, signature, [_track_row(10, 0, 10, 10, 50, 110)], {"elapsed_sec": 8.0})
+    mismatched_signature = dict(signature)
+    mismatched_signature["frame_stride"] = 3
+    rows, runtime = load_inference_track_cache(cache_dir, mismatched_signature)
+    assert rows is None
+    assert runtime["cache_hit"] is False
 
 
 def test_clone_track_rows_for_virtual_camera_applies_offsets():

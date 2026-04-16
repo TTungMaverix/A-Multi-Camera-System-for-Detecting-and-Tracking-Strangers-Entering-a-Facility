@@ -75,12 +75,33 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
     secondary_reliable = False
     face_unusable_reason = ""
     body_fallback_used = False
+    fusion_used = False
+    appearance_mode = "appearance_missing"
 
-    if cfg["prefer_primary_face_when_reliable"] and primary_modality == "face" and face_reliable:
+    if (
+        cfg.get("enable_face_body_fusion", True)
+        and face_reliable
+        and body_reliable
+        and face_available
+        and body_available
+    ):
+        fusion_face_weight = float(cfg.get("fusion_face_weight", 0.7))
+        fusion_body_weight = float(cfg.get("fusion_body_weight", 0.3))
+        fusion_denominator = max(fusion_face_weight + fusion_body_weight, 1e-6)
+        fusion_used = True
+        primary_modality = "fusion"
+        appearance_primary = ((fusion_face_weight * face_score) + (fusion_body_weight * body_score)) / fusion_denominator
+        appearance_secondary = min(face_score, body_score)
+        secondary_modality = "face_body_context"
+        secondary_reliable = False
+        modality_state = "face_and_body"
+        appearance_mode = "face_body_fusion"
+    elif cfg["prefer_primary_face_when_reliable"] and primary_modality == "face" and face_reliable:
         appearance_primary = face_score
         appearance_secondary = body_score if body_available else 0.0
         secondary_modality = "body" if body_available else ""
         secondary_reliable = body_reliable
+        appearance_mode = "face_only"
     elif cfg["allow_body_primary_fallback"] and body_available:
         primary_modality = "body"
         appearance_primary = body_score
@@ -88,19 +109,23 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
         secondary_modality = "face" if face_available else ""
         secondary_reliable = face_reliable
         body_fallback_used = not face_reliable
+        appearance_mode = "body_only"
     elif face_available:
         primary_modality = "face"
         appearance_primary = face_score
         appearance_secondary = body_score if body_available else 0.0
         secondary_modality = "body" if body_available else ""
         secondary_reliable = body_reliable
+        appearance_mode = "face_only"
     else:
         primary_modality = ""
         appearance_primary = 0.0
         appearance_secondary = 0.0
         modality_state = "weak_both"
 
-    if primary_modality == "face" and body_available:
+    if primary_modality == "fusion":
+        modality_state = "face_and_body"
+    elif primary_modality == "face" and body_available:
         modality_state = "face_and_body"
     elif primary_modality == "body" and face_available:
         modality_state = "face_and_body"
@@ -143,11 +168,17 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
         "body_reliable": body_reliable,
         "secondary_reliable": secondary_reliable,
         "body_fallback_used": body_fallback_used,
+        "fusion_used": fusion_used,
+        "appearance_mode": appearance_mode,
         "face_unusable_reason": face_unusable_reason,
         "appearance_evidence_policy": cfg,
         "evidence_reason": (
             "body_fallback_evidence_ready"
             if body_fallback_used
-            else ("appearance_evidence_ready" if primary_modality else "appearance_missing")
+            else (
+                "face_body_fusion_ready"
+                if fusion_used
+                else ("appearance_evidence_ready" if primary_modality else "appearance_missing")
+            )
         ),
     }

@@ -588,6 +588,9 @@ def live_camera_worker(worker_context, queue):
                 "emitted_events": emitted_events,
                 "dropped_frames": reader._dropped_frames if reader else 0,
                 "queue_dropped_packets": queue_dropped_packets,
+                "worker_runtime_sec": round(max(time.time() - start_time, 1e-9), 3),
+                "producer_fps": round(processed_frames / max(time.time() - start_time, 1e-9), 3),
+                "event_fps": round(emitted_events / max(time.time() - start_time, 1e-9), 3),
             },
             timeout_sec=float(worker_context["live_cfg"].get("queue_put_timeout_sec", 0.5)),
         )
@@ -753,6 +756,7 @@ def run_live_pipeline(config_path: Path):
     resolved_jsonl.write_text("", encoding="utf-8")
     decision_jsonl = output_root / "association_logs" / "live_decision_stream.jsonl"
     decision_jsonl.write_text("", encoding="utf-8")
+    consumer_started = time.time()
     while len(done) < len(workers):
         packet = queue.get()
         total_packets += 1
@@ -760,7 +764,12 @@ def run_live_pipeline(config_path: Path):
         packet_type = packet["packet_type"]
         if packet_type == "live_event":
             event = packet["event"]
-            analyzed = analyze_event_crops(app, [event], quality_policy=policy.get("quality_gate"))[0]
+            analyzed = analyze_event_crops(
+                app,
+                [event],
+                quality_policy=policy.get("quality_gate"),
+                body_reid_policy=policy.get("body_reid"),
+            )[0]
             analyzed_events.append(analyzed)
             analyzed_events.sort(key=lambda item: float(item["event"]["relative_sec"]))
             resolved_rows, _profiles, _trace_rows, debug = assign_model_identities(
@@ -802,6 +811,9 @@ def run_live_pipeline(config_path: Path):
                 "emitted_events": packet["emitted_events"],
                 "dropped_frames": packet["dropped_frames"],
                 "queue_dropped_packets": packet.get("queue_dropped_packets", 0),
+                "worker_runtime_sec": packet.get("worker_runtime_sec", 0.0),
+                "producer_fps": packet.get("producer_fps", 0.0),
+                "event_fps": packet.get("event_fps", 0.0),
             }
             counters["dropped_frames_total"] += int(packet.get("dropped_frames", 0))
             counters["queue_dropped_packets_total"] += int(packet.get("queue_dropped_packets", 0))
@@ -827,12 +839,15 @@ def run_live_pipeline(config_path: Path):
         "queue_dropped_packets_total": counters["queue_dropped_packets_total"],
         "avg_latency_sec": round(sum(latency_values) / len(latency_values), 3) if latency_values else 0.0,
         "max_latency_sec": round(max(latency_values), 3) if latency_values else 0.0,
+        "consumer_runtime_sec": round(max(time.time() - consumer_started, 1e-9), 3),
+        "consumer_fps": round(len(latest_state) / max(time.time() - consumer_started, 1e-9), 3),
         "worker_summaries": worker_summaries,
         "error_count": len(errors),
         "errors": errors,
         "association_policy_runtime": policy_runtime,
         "camera_transition_map_runtime": transition_runtime,
         "scene_calibration_runtime": scene_runtime,
+        "architecture_mode": "asynchronous_producer_consumer",
     }
     save_json(output_root / "summaries" / "live_pipeline_summary.json", summary)
     save_json(output_root / "logs" / "live_worker_packets.json", logs)

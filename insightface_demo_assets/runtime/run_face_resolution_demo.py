@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 import sys
+import time
 from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -35,6 +36,7 @@ from association_core import (
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
 )
+from association_core.body_reid import get_body_reid_extractor
 from association_core.quality_gate import evaluate_buffered_face_gate
 from offline_pipeline.event_builder import (
     FrameSourceCache,
@@ -154,16 +156,6 @@ def choose_best_face(faces):
     return max(faces, key=score)
 
 
-_BODY_HOG_DESCRIPTOR = None
-
-
-def _body_hog_descriptor():
-    global _BODY_HOG_DESCRIPTOR
-    if _BODY_HOG_DESCRIPTOR is None:
-        _BODY_HOG_DESCRIPTOR = cv2.HOGDescriptor((64, 128), (16, 16), (8, 8), (8, 8), 9)
-    return _BODY_HOG_DESCRIPTOR
-
-
 def extract_embedding_from_image(app, image_path: Path):
     result = {
         "status": "missing",
@@ -203,40 +195,9 @@ def extract_embedding_from_image(app, image_path: Path):
     return result
 
 
-def extract_body_feature(image_path: Path):
-    result = {
-        "status": "missing",
-        "embedding": None,
-        "message": "",
-        "shape": "",
-    }
-    if not image_path or not image_path.exists():
-        result["message"] = f"missing_image:{image_path}"
-        return result
-    image = load_image_unicode(image_path)
-    if image is None:
-        result["message"] = f"failed_to_read:{image_path}"
-        return result
-    h, w = image.shape[:2]
-    result["shape"] = f"{w}x{h}"
-    if w < 12 or h < 24:
-        result["status"] = "too_small"
-        result["message"] = f"too_small:{w}x{h}"
-        return result
-    resized = cv2.resize(image, (64, 128), interpolation=cv2.INTER_LINEAR)
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    hog_vec = _body_hog_descriptor().compute(gray)
-    hog_vec = hog_vec.reshape(-1).astype(np.float32) if hog_vec is not None else np.zeros((0,), dtype=np.float32)
-    hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-    hs_parts = []
-    for part in (hsv, hsv[:64, :, :], hsv[64:, :, :]):
-        hist = cv2.calcHist([part], [0, 1], None, [12, 8], [0, 180, 0, 256]).flatten().astype(np.float32)
-        hs_parts.append(hist)
-    embedding = normalize(np.concatenate([hog_vec, *hs_parts], axis=0))
-    result["status"] = "ok"
-    result["embedding"] = embedding
-    result["message"] = "ok_hog_hs_descriptor"
-    return result
+def extract_body_feature(image_path: Path, body_reid_runtime=None, body_reid_policy=None):
+    extractor = body_reid_runtime or get_body_reid_extractor(policy=body_reid_policy)
+    return extractor.extract(image_path)
 
 
 def test_point_in_polygon(x, y, polygon):
@@ -522,8 +483,9 @@ def _buffer_face_quality(face_result, buffer_row):
     return round((float(face_result.get("det_score", 0.0)) * 100.0) + (blur_score / 25.0) + bbox_bonus, 4)
 
 
-def analyze_event_crops(app, events, quality_policy=None):
+def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None, body_reid_runtime=None):
     analyzed = []
+    active_body_reid = body_reid_runtime or get_body_reid_extractor(policy=body_reid_policy)
     for event in events:
         buffer_rows = _parse_evidence_buffer_rows(event)
         analyzed_buffer = []
@@ -536,7 +498,7 @@ def analyze_event_crops(app, events, quality_policy=None):
             head_path = Path(buffer_row.get("head_crop_path", ""))
             body_path = Path(buffer_row.get("body_crop_path", event.get("best_body_crop", "")))
             face_result = extract_embedding_from_image(app, head_path)
-            body_result = extract_body_feature(body_path)
+            body_result = extract_body_feature(body_path, body_reid_runtime=active_body_reid, body_reid_policy=body_reid_policy)
             blur_score = _laplacian_variance(head_path) if head_path else 0.0
             face_gate = evaluate_buffered_face_gate(face_result, blur_score, policy=quality_policy)
             if face_result.get("face_count", 0) > 0:
@@ -574,7 +536,11 @@ def analyze_event_crops(app, events, quality_policy=None):
                 break
         dominant_reject_reason = reject_counts.most_common(1)[0][0] if reject_counts else ""
 
-        best_body = extract_body_feature(Path(event["best_body_crop"]))
+        best_body = extract_body_feature(
+            Path(event["best_body_crop"]),
+            body_reid_runtime=active_body_reid,
+            body_reid_policy=body_reid_policy,
+        )
         pending_buffer_items = []
         for candidate in analyzed_buffer:
             face_gate = candidate["face_gate"]
@@ -1596,6 +1562,7 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "analyzed_event_count": len(analyzed_items),
         "face_detected_count": sum(1 for item in analyzed_items if item.get("face_buffer_detected_count", 0) > 0),
         "face_buffered_count": sum(1 for item in analyzed_items if item.get("evidence_buffer_count", 0) > 0),
+        "body_embedding_created_count": sum(1 for item in analyzed_items if item.get("body_embedding") is not None),
         "face_landmarks_available_count": sum(item.get("face_buffer_landmarks_available_count", 0) for item in analyzed_items),
         "face_buffer_accept_count": sum(item.get("face_buffer_accept_count", 0) for item in analyzed_items),
         "best_shot_selected_count": sum(1 for item in analyzed_items if item.get("face_best_shot_selected")),
@@ -1612,9 +1579,31 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
             for row in decision_logs
             if any(candidate.get("face_available") for candidate in row.get("candidate_evaluations", []))
         ),
+        "body_reference_stored_count": sum(
+            1
+            for item in analyzed_items
+            if item.get("body_embedding") is not None
+            and resolved_by_event_id.get(item["event"]["event_id"], {}).get("identity_status") == "unknown"
+        ),
+        "body_reference_retrieved_count": sum(
+            1
+            for row in decision_logs
+            if any(candidate.get("body_available") for candidate in row.get("candidate_evaluations", []))
+        ),
         "face_usable_event_count": sum(1 for row in decision_logs if not row.get("face_unusable_reason")),
         "face_primary_decision_count": sum(1 for row in decision_logs if row.get("modality_primary") == "face"),
         "body_primary_decision_count": sum(1 for row in decision_logs if row.get("modality_primary") == "body"),
+        "fusion_decision_count": sum(1 for row in decision_logs if row.get("modality_primary") == "fusion"),
+        "body_only_decision_count": sum(
+            1
+            for row in decision_logs
+            if row.get("modality_primary") == "body" and not row.get("fusion_used", False)
+        ),
+        "face_only_decision_count": sum(
+            1
+            for row in decision_logs
+            if row.get("modality_primary") == "face" and not row.get("fusion_used", False)
+        ),
         "body_fallback_used_count": sum(1 for row in decision_logs if row.get("body_fallback_used")),
         "pending_count": sum(1 for row in decision_logs if row.get("pending_used")),
         "pending_to_reuse_count": sum(1 for row in decision_logs if row.get("pending_resolution") == "reuse_existing_unknown"),
@@ -1888,6 +1877,7 @@ def render_report(report_path: Path, mode_a_metrics, mode_b_metrics, stage_a, ro
     report_path.write_text(text, encoding="utf-8")
 
 def main(config_path: Path):
+    runtime_started = time.perf_counter()
     config = load_json(config_path)
     base_dir = resolve_path(config_path.parent, config.get("project_root", str(config_path.parents[1])))
     association_policy_config = config.get("association_policy_config", "")
@@ -1970,8 +1960,10 @@ def main(config_path: Path):
         providers=[config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
+    body_reid_runtime = get_body_reid_extractor(policy=association_policy.get("body_reid"))
 
     auto_enroll_count = max(0, as_int(config.get("demo_auto_enroll_count", 2), 2))
+    gallery_started = time.perf_counter()
     auto_enrolled = enroll_demo_authorized_identities(app, queue_rows, known_root, count=auto_enroll_count)
     manifest_rows = base_manifest_rows + auto_enrolled
     write_csv(
@@ -1980,6 +1972,7 @@ def main(config_path: Path):
         ["identity_id", "display_name", "source_repo_path", "gallery_rel_path", "seed_type", "status", "notes"],
     )
     identity_means, _ = build_gallery_embeddings(app, manifest_rows, base_dir, known_embeddings_csv)
+    gallery_elapsed_sec = round(max(time.perf_counter() - gallery_started, 1e-9), 3)
 
     stage_a, stage_a_rows, _ = build_timeline_audit(track_rows, wildtrack_config["selected_cameras"])
     stage_b_baseline = build_baseline_stage_b(track_rows, queue_rows, wildtrack_config, camera_transition_map)
@@ -2051,7 +2044,15 @@ def main(config_path: Path):
                 "evidence_buffer_json": row.get("evidence_buffer_json", "[]"),
             }
         )
-    analyzed_baseline = analyze_event_crops(app, baseline_events, quality_policy=association_policy.get("quality_gate"))
+    baseline_analysis_started = time.perf_counter()
+    analyzed_baseline = analyze_event_crops(
+        app,
+        baseline_events,
+        quality_policy=association_policy.get("quality_gate"),
+        body_reid_policy=association_policy.get("body_reid"),
+        body_reid_runtime=body_reid_runtime,
+    )
+    baseline_analysis_elapsed_sec = round(max(time.perf_counter() - baseline_analysis_started, 1e-9), 3)
     baseline_assignments = build_baseline_assignments(
         analyzed_baseline,
         identity_means,
@@ -2066,7 +2067,16 @@ def main(config_path: Path):
         track_rows, wildtrack_config, dataset_root, fixed_crop_root, camera_transition_map
     )
     write_csv(fixed_event_csv, fixed_events, fieldnames_for_rows(fixed_events, ["event_id"]))
-    analyzed_fixed = analyze_event_crops(app, fixed_events, quality_policy=association_policy.get("quality_gate"))
+    fixed_analysis_started = time.perf_counter()
+    analyzed_fixed = analyze_event_crops(
+        app,
+        fixed_events,
+        quality_policy=association_policy.get("quality_gate"),
+        body_reid_policy=association_policy.get("body_reid"),
+        body_reid_runtime=body_reid_runtime,
+    )
+    fixed_analysis_elapsed_sec = round(max(time.perf_counter() - fixed_analysis_started, 1e-9), 3)
+    association_started = time.perf_counter()
     mode_b_resolved_rows, profiles, association_trace_rows, association_debug = assign_model_identities(
         analyzed_fixed,
         identity_means,
@@ -2076,6 +2086,7 @@ def main(config_path: Path):
         policy=association_policy,
         return_debug_bundle=True,
     )
+    association_elapsed_sec = round(max(time.perf_counter() - association_started, 1e-9), 3)
     association_decision_logs = association_debug["decision_logs"]
     association_summary = core_summarize_decision_logs(association_decision_logs)
     face_body_summary = summarize_face_body_usage(analyzed_fixed, mode_b_resolved_rows, association_decision_logs, profiles)
@@ -2083,6 +2094,14 @@ def main(config_path: Path):
         "stale_pending_count_remaining",
         0,
     )
+    face_body_summary["body_reid_runtime"] = body_reid_runtime.describe()
+    face_body_summary["timings_sec"] = {
+        "gallery_embedding_sec": gallery_elapsed_sec,
+        "baseline_crop_analysis_sec": baseline_analysis_elapsed_sec,
+        "fixed_crop_analysis_sec": fixed_analysis_elapsed_sec,
+        "association_sec": association_elapsed_sec,
+        "total_runtime_sec": round(max(time.perf_counter() - runtime_started, 1e-9), 3),
+    }
     face_buffer_audit_rows = build_face_buffer_audit_rows(analyzed_fixed)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)

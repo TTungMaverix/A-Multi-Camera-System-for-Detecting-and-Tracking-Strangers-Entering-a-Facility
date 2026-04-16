@@ -24,7 +24,10 @@ The current default runnable vertical slice is the supervisor-approved Cam6 vide
 7. run short-gap tracklet linking after ByteTrack so fragmented intra-camera tracklets are cleaned before association
 8. reject face frames with bad pose before they enter the best-shot buffer
 9. keep ambiguous cross-camera candidates in `PENDING` until they resolve or time out cleanly
-10. export resolved events, timelines, mapping tables, and audit logs into a single run folder
+10. use OSNet body re-identification as a real fallback when face is missing or rejected
+11. hard-reject impossible camera transitions before face/body similarity is evaluated
+12. cache detector+tracker outputs so association/body-reid debug loops do not rerun YOLO+ByteTrack every time
+13. export resolved events, timelines, mapping tables, and audit logs into a single run folder
 
 This phase is intentionally simpler than the harder real multi-camera case. The goal is to prove that the core reuse logic works in the easiest sequential sanity scenario before returning to more difficult multi-camera conditions.
 
@@ -34,6 +37,10 @@ Important limitation:
 - the replay path now adds short-gap intra-camera tracklet linking immediately after ByteTrack to reduce downstream ID noise
 - face best-shot buffering is now pose-aware: sharp frames with `|yaw| > 30°` or `|pitch| > 20°` are rejected before embedding / gallery storage
 - pending association entries are now garbage-collected after `2s` if they never gather enough evidence, and the live demo keeps them in an `Analyzing...` state instead of showing a final ID too early
+- cross-camera appearance now supports `face only`, `body only`, and configurable `face+body fusion` with OSNet body embeddings
+- topology/travel-time is now a hard pre-similarity gate; impossible camera/time pairs are rejected before face/body scoring
+- detector+tracker cache now stores true YOLOv8n + ByteTrack source-track outputs for replay debug runs
+- the current replay debug path is still synchronous, while the live file/RTSP path is the asynchronous producer-consumer implementation
 - a longer `90` second actual-video config exists for the same replay mode, but it exceeded the current local timeout budget during verification
 
 ## Association Source of Truth
@@ -99,12 +106,15 @@ Current code status:
 - direction filtering now uses trajectory/momentum history plus line and zone context instead of one-frame line crossing only
 - ROI masks are now applied in the live path to reduce wasted detection work outside the calibrated processing polygon
 - the current verified inference video-phase config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+- a shorter cache benchmark config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml`
 - a longer unverified stress config also lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`
 - the earlier short sanity config still lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
 - a reference Wildtrack multi-source config still lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
 - association decision logs are exported under `association_logs/` in each offline run
 - event-generation audit now records best-shot strategy, subzone choice, and frames after anchor
 - body-first fallback is now part of the default association flow when face is missing or unreliable
+- body fallback now uses real OSNet embeddings instead of the old handcrafted descriptor
+- the default replay config now includes detector/tracker cache controls under `single_source_replay.inference.cache`
 - offline runs export standardized folders under `outputs/offline_runs/`
 - scenario tests for association core and offline event creation live under `tests/`
 - live ingestion baseline now lives under `insightface_demo_assets/runtime/live_pipeline/`
@@ -160,6 +170,13 @@ Direct Python invocation for the same video-phase config:
 ```cmd
 cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml"
+```
+
+Short benchmark config for cache/debug loops:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml"
 ```
 
 Low-load sanity run:
