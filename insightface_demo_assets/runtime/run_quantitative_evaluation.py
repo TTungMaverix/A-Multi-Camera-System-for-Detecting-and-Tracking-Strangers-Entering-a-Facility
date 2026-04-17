@@ -221,8 +221,9 @@ def main(config_path: Path):
         },
         "limitations": [
             "MOTA is measured on the first virtual replay camera only, because sequential replay duplicates one physical source video.",
+            "Local-tracking GT is taken from raw Wildtrack annotations aligned to the actual source frames used by the replay benchmark and filtered to the configured processing ROI.",
             "IDF1 is measured on direction-filtered handoff events across C1->C4, not as a full public MTMCT benchmark over all pedestrians in all views.",
-            "GT for this evaluation is generated from the same replay config with explicit gt_annotations mode, then matched back to inference outputs by camera/frame/foot-point proximity.",
+            "Event-level GT for IDF1 is generated from the same replay config in explicit gt_annotations mode, then matched back to predicted events by camera/anchor-frame/anchor-foot proximity.",
         ],
     }
 
