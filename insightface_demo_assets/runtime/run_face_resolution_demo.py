@@ -38,7 +38,7 @@ from association_core import (
 )
 from association_core.body_reid import get_body_reid_extractor
 from association_core.quality_gate import evaluate_buffered_face_gate
-from evaluation_utils import build_unknown_timeline
+from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
     FrameSourceCache,
     crop_event_buffer_records,
@@ -1906,6 +1906,8 @@ def main(config_path: Path):
     face_body_summary_json = runtime_dir / "face_body_usage_summary.json"
     unknown_timeline_csv = runtime_dir / "unknown_identity_timeline.csv"
     unknown_timeline_json = runtime_dir / "unknown_identity_timeline.json"
+    handoff_summary_json = runtime_dir / "cross_camera_handoff_summary.json"
+    latest_events_json = runtime_dir / "latest_events.json"
     unknown_profiles_csv = resolve_path(base_dir, config["unknown_profiles_csv"])
     fixed_event_csv = runtime_dir / "generated_candidate_events_mode_b.csv"
     fixed_crop_root = runtime_dir / "generated_event_crops"
@@ -2109,6 +2111,29 @@ def main(config_path: Path):
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
     unknown_timeline_rows, unknown_timeline_payload = build_unknown_timeline(mode_b_resolved_rows)
+    handoff_summary = summarize_unknown_handoffs(mode_b_resolved_rows)
+    latest_event_payload = [
+        {
+            "event_id": row.get("event_id", ""),
+            "camera_id": row.get("camera_id", ""),
+            "direction": row.get("relation_type", ""),
+            "relative_sec": round(as_float(row.get("relative_sec")), 3),
+            "identity_type": row.get("identity_status", ""),
+            "identity_id": row.get("resolved_global_id") or row.get("unknown_global_id") or row.get("matched_known_id") or "",
+            "identity_label": row.get("ui_identity_label") or row.get("resolved_global_id") or "",
+            "snapshot_path": row.get("best_body_crop", ""),
+            "head_snapshot_path": row.get("best_head_crop", ""),
+            "zone_id": row.get("zone_id", ""),
+            "subzone_id": row.get("subzone_id", ""),
+            "modality_primary": row.get("modality_primary_used", ""),
+            "modality_secondary": row.get("modality_secondary_used", ""),
+            "body_fallback_used": row.get("body_fallback_used", False),
+            "decision_reason": row.get("decision_reason", ""),
+            "reason_code": row.get("reason_code", ""),
+            "ui_box_style": row.get("ui_box_style", ""),
+        }
+        for row in mode_b_resolved_rows[-50:]
+    ]
     event_assignment_audit_rows = [
         core_build_event_assignment_audit_row("mode_a_baseline", event) for event in baseline_events
     ] + [
@@ -2219,6 +2244,8 @@ def main(config_path: Path):
     )
     save_json(face_body_summary_json, face_body_summary)
     save_json(unknown_timeline_json, unknown_timeline_payload)
+    save_json(handoff_summary_json, handoff_summary)
+    save_json(latest_events_json, latest_event_payload)
     write_csv(audit_overlap_cases_csv, overlap_rows, fieldnames_for_rows(overlap_rows, ["global_gt_id"]))
     write_csv(audit_gt_split_merge_csv, split_merge_rows, fieldnames_for_rows(split_merge_rows, ["run_mode"]))
     write_csv(
@@ -2283,6 +2310,10 @@ def main(config_path: Path):
             "timeline_csv": str(unknown_timeline_csv),
             "timeline_json": str(unknown_timeline_json),
             "identity_count": len(unknown_timeline_payload),
+        },
+        "cross_camera_handoff_summary": {
+            "summary_json": str(handoff_summary_json),
+            "metrics": handoff_summary,
         },
         "event_generation_audit": {
             "subzone_assignment_csv": str(audit_event_generation_subzones_csv),

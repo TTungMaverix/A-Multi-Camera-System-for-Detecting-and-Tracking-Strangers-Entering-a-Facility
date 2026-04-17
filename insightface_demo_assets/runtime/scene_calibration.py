@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 from pathlib import Path
 
 import cv2
@@ -236,6 +237,22 @@ def _polygon_to_pixels(polygon, frame_width, frame_height):
     return [_point_to_pixels(point, frame_width, frame_height) for point in polygon or []]
 
 
+def _point_in_polygon(x, y, polygon):
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        dy = yj - yi
+        if abs(dy) < 1e-9:
+            dy = 1e-9
+        intersect = ((yi > y) != (yj > y)) and (x < ((xj - xi) * (y - yi) / dy + xi))
+        if intersect:
+            inside = not inside
+        j = i
+    return inside
+
+
 def build_runtime_camera_calibration(camera_cfg, frame_width, frame_height):
     runtime_camera = copy.deepcopy(camera_cfg)
     runtime_camera["frame_width"] = int(frame_width)
@@ -469,6 +486,79 @@ def apply_processing_mask(frame, runtime_camera, enabled=True):
     mask = build_processing_mask(frame.shape, runtime_camera)
     masked = cv2.bitwise_and(frame, frame, mask=mask)
     return masked
+
+
+def _bbox_bounds(bbox, frame_width, frame_height):
+    xmin = max(0, min(frame_width, int(round(float(bbox.get("xmin", 0))))))
+    ymin = max(0, min(frame_height, int(round(float(bbox.get("ymin", 0))))))
+    xmax = max(0, min(frame_width, int(round(float(bbox.get("xmax", 0))))))
+    ymax = max(0, min(frame_height, int(round(float(bbox.get("ymax", 0))))))
+    return xmin, ymin, xmax, ymax
+
+
+def bbox_roi_coverage_ratio(mask, bbox):
+    if mask is None or mask.size == 0:
+        return 1.0
+    frame_height, frame_width = mask.shape[:2]
+    xmin, ymin, xmax, ymax = _bbox_bounds(bbox, frame_width, frame_height)
+    if xmax <= xmin or ymax <= ymin:
+        return 0.0
+    window = mask[ymin:ymax, xmin:xmax]
+    if window.size == 0:
+        return 0.0
+    return float(np.count_nonzero(window)) / float(window.size)
+
+
+def filter_boxes_by_processing_roi(
+    detections,
+    runtime_camera,
+    *,
+    min_bbox_coverage=0.25,
+    require_footpoint_inside=True,
+    mask=None,
+):
+    polygon = runtime_camera.get("processing_roi", []) or []
+    stats = {
+        "input_count": len(detections or []),
+        "kept_count": 0,
+        "killed_count": 0,
+        "killed_footpoint_count": 0,
+        "killed_low_coverage_count": 0,
+    }
+    if not polygon:
+        stats["kept_count"] = len(detections or [])
+        return list(detections or []), stats
+    if mask is None:
+        frame_height = int(runtime_camera.get("frame_height", 0) or 0)
+        frame_width = int(runtime_camera.get("frame_width", 0) or 0)
+        if frame_height <= 0 or frame_width <= 0:
+            ymax = max(float(item.get("ymax", 0.0)) for item in detections or [] if item) if detections else 0.0
+            xmax = max(float(item.get("xmax", 0.0)) for item in detections or [] if item) if detections else 0.0
+            frame_height = int(max(1, math.ceil(ymax)))
+            frame_width = int(max(1, math.ceil(xmax)))
+        mask = build_processing_mask((frame_height, frame_width), runtime_camera)
+    kept = []
+    for det in detections or []:
+        foot_x = (float(det["xmin"]) + float(det["xmax"])) / 2.0
+        foot_y = float(det["ymax"])
+        footpoint_inside = True
+        if require_footpoint_inside:
+            footpoint_inside = bool(polygon) and _point_in_polygon(foot_x, foot_y, polygon)
+        coverage = bbox_roi_coverage_ratio(mask, det)
+        candidate = copy.deepcopy(det)
+        candidate["roi_bbox_coverage"] = round(float(coverage), 4)
+        candidate["roi_footpoint_inside"] = bool(footpoint_inside)
+        if require_footpoint_inside and not footpoint_inside:
+            stats["killed_count"] += 1
+            stats["killed_footpoint_count"] += 1
+            continue
+        if float(coverage) < float(min_bbox_coverage):
+            stats["killed_count"] += 1
+            stats["killed_low_coverage_count"] += 1
+            continue
+        kept.append(candidate)
+    stats["kept_count"] = len(kept)
+    return kept, stats
 
 
 def draw_scene_overlay(frame, runtime_camera, track_boxes=None):

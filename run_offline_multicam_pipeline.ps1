@@ -1,3 +1,3 @@
 $env:PYTHONIOENCODING = 'utf-8'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-powershell -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'run_single_source_sequential_video_phase.ps1')
+powershell -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'run_wildtrack_4cam_roi_benchmark.ps1')

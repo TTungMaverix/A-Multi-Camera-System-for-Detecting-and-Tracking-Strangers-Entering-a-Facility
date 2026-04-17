@@ -1,72 +1,92 @@
 # Lightweight Live Demo UI
 
-Phase H adds a minimal web demo for the thesis defense.
+The UI in this repository is not meant to be a separate product. It serves two practical jobs:
 
-It is intentionally simple:
-
-- no database
-- no authentication
-- no production dashboard stack
-- no analytics backend
-
-The UI only needs to show:
-
-- a new event arrived
-- which camera it came from
-- whether the identity is `known`, `unknown`, or still `pending`
-- which ID was assigned
-- which zone/subzone it belongs to
-- which snapshot was stored
-- how the same `Unknown_ID` moves through cameras over time
-
-The same lightweight server now also provides a calibration page so ROI/zone/subzone geometry can be edited without adding a second demo app.
+1. calibrate ROI and direction geometry faster
+2. inspect real event/timeline outputs during debugging and during the thesis defense
 
 ## Runtime Pieces
 
-Server script:
+Server:
 
 - `insightface_demo_assets/runtime/run_live_event_demo_server.py`
 
-PowerShell wrapper:
+Wrapper:
 
 - `run_live_event_demo_server.ps1`
 
-Static page:
+Static pages:
 
 - `insightface_demo_assets/runtime/web_demo/index.html`
 - `insightface_demo_assets/runtime/web_demo/calibration.html`
 
-## Data Source
+## Current Data Sources
 
-The UI reads the outputs created by the live pipeline:
+The server can read both live-run and offline-run artifacts.
+
+Live/simulated real-time artifacts:
 
 - `outputs/live_runs/<run_name>/events/latest_events.json`
 - `outputs/live_runs/<run_name>/summaries/live_pipeline_summary.json`
 - `outputs/live_runs/<run_name>/events/simulated_realtime_trace.jsonl`
 
-`live_pipeline_summary.json` now also exposes the concurrency audit fields used in the latest phase:
+Offline 4-camera ROI benchmark artifacts:
 
-- `architecture_mode`
-- per-camera `producer_fps`
-- per-camera `event_fps`
-- overall `consumer_fps`
-- dropped-frame counters
-
-For offline replay demos, the same server can also read:
-
+- `outputs/offline_runs/<run_name>/events/latest_events.json`
 - `outputs/offline_runs/<run_name>/timelines/unknown_identity_timeline.json`
+- `outputs/offline_runs/<run_name>/summaries/cross_camera_handoff_summary.json`
 
-That lets the same UI show a proper Unknown-ID timeline even when the source run is a sequential replay benchmark instead of the live path.
+The current PowerShell wrapper is configured to point at the official 4-camera ROI benchmark output root.
 
-Snapshot images are served through:
+## Timeline View
 
-- `/artifact?path=<absolute_or_repo_relative_path>`
+The main page now uses real timeline data, not a mock list.
 
-The server validates that the requested file still stays inside the project root before serving it.
+For each Unknown identity it shows:
+
+- identity label
+- first seen / last seen
+- total appearances
+- camera sequence
+- per-appearance timestamp
+- best-shot body/head crops
+- modality used
+- decision reason
+- zone/subzone context
+
+The main interaction is:
+
+1. click an event or timeline card
+2. inspect the ordered appearance history
+3. confirm the camera handoff sequence and associated best-shots
+
+## Calibration Tool
+
+The calibration page is now the practical ROI tool for this phase.
+
+Key improvements:
+
+- dark compact layout
+- larger preview canvas
+- clean frame reload instead of reusing already scribbled previews
+- per-shape commit instead of forcing a full reset
+- undo last draft point
+- delete selected shape
+- reload existing shapes for editing
+- shape list panel
+- dropdown presets instead of heavy manual typing
+
+Supported geometry types:
+
+- processing ROI polygon
+- entry line
+- zone polygon
+- subzone polygon
 
 ## Endpoints
 
-- `/` or `/index.html`
+- `/`
+- `/index.html`
 - `/calibration.html`
 - `/api/latest-events`
 - `/api/summary`
@@ -77,16 +97,7 @@ The server validates that the requested file still stays inside the project root
 - `/api/calibration/reset`
 - `/artifact?path=...`
 
-## Commands
-
-Start the live pipeline first:
-
-```cmd
-cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_live_multicam_demo.ps1"
-```
-
-Then start the demo UI:
+## Command
 
 ```cmd
 cd /d "<repo-root>"
@@ -99,16 +110,8 @@ Default URL:
 
 ## Current Limitation
 
-This is a defense-oriented UI, not a finished monitoring product.
+This UI is still a thesis tool:
 
-The live page reflects whatever the current live pipeline emits. If an event is still under pending association, the card now stays gray/dashed and shows `Analyzing...` until the backend resolves or garbage-collects that pending state.
-
-The live page reflects whatever the current live pipeline emits. If the live ingestion is run through file replay or only 2 cameras, the page will reflect that exact setup.
-
-The timeline section is the defense-oriented view:
-
-- one card per finalized unknown identity
-- first seen camera/time
-- ordered camera sequence
-- representative best-shot
-- appearance history with modality and zone/subzone context
+- it is not a production monitoring dashboard
+- it depends on artifacts already written by the pipeline
+- if backend association is wrong, the UI will expose that wrongness rather than hide it

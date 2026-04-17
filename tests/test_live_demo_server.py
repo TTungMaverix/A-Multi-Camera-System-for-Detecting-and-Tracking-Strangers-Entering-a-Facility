@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from run_live_event_demo_server import artifact_url, build_browser_event, is_within_root, load_identity_timeline, load_latest_events
+from run_live_event_demo_server import render_calibration_preview
 
 
 def test_artifact_url_encodes_path():
@@ -88,3 +92,31 @@ def test_is_within_root_rejects_parent_escape(tmp_path):
 
     assert is_within_root(inside, project_root) is True
     assert is_within_root(outside, project_root) is False
+
+
+def test_render_calibration_preview_can_return_clean_or_overlay_frame(tmp_path):
+    preview_path = tmp_path / "preview.png"
+    image = np.full((80, 120, 3), 30, dtype=np.uint8)
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    encoded.tofile(str(preview_path))
+
+    calibration = {
+        "cameras": {
+            "C5": {
+                "preview_source_type": "file",
+                "preview_source": str(preview_path),
+                "processing_roi": {"polygon": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]},
+                "entry_line": {"points": [[0.2, 0.5], [0.8, 0.5]], "in_side_point": [0.5, 0.8]},
+                "zones": [],
+                "subzones": [],
+            }
+        }
+    }
+
+    clean = render_calibration_preview(calibration, "C5", tmp_path, overlay_enabled=False)
+    overlay = render_calibration_preview(calibration, "C5", tmp_path, overlay_enabled=True)
+
+    assert clean.shape == overlay.shape
+    assert np.array_equal(clean, image)
+    assert not np.array_equal(clean, overlay)

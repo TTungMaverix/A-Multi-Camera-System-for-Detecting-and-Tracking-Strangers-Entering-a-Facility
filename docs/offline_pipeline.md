@@ -1,204 +1,134 @@
 # Offline End-to-End Pipeline
 
-## Current Backend
+## Current Phase
 
-The default offline runnable pipeline is now the **single-source sequential replay inference proof phase**.
+The current offline debug path is the **Wildtrack 4-camera ROI benchmark**.
 
-- one physical source video: `Wildtrack/cam6.mp4`
-- four virtual camera passes: `C1`, `C2`, `C3`, `C4`
-- fake timestamp offsets between passes to simulate travel time
-- per-camera track extraction: real `YOLOv8n + ByteTrack` inference on `Wildtrack/cam6.mp4`
-- direction filter: manual scene calibration + trajectory/momentum logic from `insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json`
-- face matching + known/unknown + cross-camera association: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
-- body fallback: real `OSNet` embeddings from body crops
-- topology/travel time: hard pre-similarity gate before face/body comparison
-- detector/tracker cache: optional cache hit/miss at the source-track stage for faster debug loops
+It uses:
 
-The older Wildtrack 4-source mode still exists as a reference backend, but it is not the default rescue-demo path.
+- four different recorded videos: `C3`, `C5`, `C6`, `C7`
+- real `YOLOv8n + ByteTrack` inference per camera
+- short-gap tracklet linking after ByteTrack
+- calibrated ROI masking before downstream identity logic
+- inward-direction filtering before event creation
+- face-first matching with pose-aware best-shot selection
+- OSNet body ReID fallback
+- topology/travel-time hard filtering before similarity
 
-## Entry Point
+The earlier single-source sequential replay proof still exists, but it is no longer the primary benchmark of the current phase.
 
-Main offline command:
+## Entry Points
+
+Current 4-camera ROI benchmark:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
+powershell -ExecutionPolicy Bypass -File ".\run_wildtrack_4cam_roi_benchmark.ps1"
 ```
 
-Direct video-phase command:
+Direct orchestrator wrapper:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_single_source_sequential_video_phase.ps1"
+powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
 ```
 
 Direct Python:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml"
 ```
 
-The generic orchestrator wrapper still exists, but the default defense/demo path now resolves to the single-source sequential replay config.
+Paired no-ROI baseline:
 
-## Config
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml"
+```
 
-Main verified inference video-phase config:
+## Main Configs
 
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+Primary 4-camera configs:
 
-Short benchmark config for full-vs-cache detector/tracker comparison:
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack_4cam_phase.yaml`
+- `insightface_demo_assets/runtime/config/camera_transition_map.wildtrack_4cam_phase.yaml`
+- `insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml`
 
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml`
+Important config blocks in the current phase:
 
-Longer stress config that currently exceeds the local verification timeout:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`
-
-Earlier short sanity config:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
-
-Reference Wildtrack multi-source config:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
-
-Low-load config:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.low_load.yaml`
-
-Important fields:
-
-- `dataset.video_sources`: current input source paths for the run
-- `single_source_replay.source_camera_id`
-- `single_source_replay.source_video`
-- `single_source_replay.replay_count`
-- `single_source_replay.virtual_camera_ids`
-- `single_source_replay.virtual_time_offsets_sec`
-- `single_source_replay.virtual_frame_offsets`
-- `wildtrack_demo_config`: dataset-specific ROI, line crossing, best-shot window
-- `scene_calibration_config`: required manual ROI/zone/subzone calibration
-- `wildtrack_demo_config.best_shot_selection`: line-aware best-shot policy
-- `known_gallery.manifest_csv`
-- `known_gallery.gallery_root`
-- `association_policy_config`
+- `multi_source_inference.camera_ids`
+- `multi_source_inference.tracklet_linking`
+- `multi_source_inference.roi_filter`
+- `multi_source_inference.cache`
+- `scene_calibration_config`
 - `camera_transition_map_config`
-- `execution.mode`
-- `low_load`
-- `single_source_replay.inference.cache`
+- `association_policy_config`
 
-For the rescue demo, the most important extra files are:
+## Backend Flow
 
-- `wildtrack_demo/single_source_sequential_c6_demo_config.json`
-- `insightface_demo_assets/runtime/config/camera_transition_map.single_source_sequential_c6.yaml`
-- `insightface_demo_assets/runtime/config/manual_scene_calibration.single_source_sequential_c6.json`
+For each configured camera video:
 
-## Event Creation Conditions
+1. decode video frames
+2. optionally pre-mask the frame with the calibrated ROI
+3. run YOLO person detection and ByteTrack
+4. run short-gap tracklet linking
+5. post-filter detections by ROI coverage and foot-point
+6. build track rows
+7. build direction-filtered entry events
+8. select best body/head crops
+9. run known/unknown resolution
+10. apply topology hard filter before face/body scoring
+11. emit resolved events, mappings, timelines, and handoff summaries
 
-Only `direction=IN` entry events go to face matching.
+ROI is not metadata in this phase. Boxes outside the configured processing polygon are killed before ReID and association.
 
-Minimum event packet fields in the offline flow:
+## Current Benchmark Pair
 
-- `camera_id`
-- `relative_sec`
-- `local_track_id`
-- `global_gt_id` for audit only
-- `bbox_*`
-- `best_head_crop`
-- `best_body_crop`
-- `direction`
-- `zone_id`
-- `subzone_id`
+The current short benchmark window is:
 
-Event creation rules in the current backend:
+- frame range: `0..360`
+- actual duration: `6.006s`
+- stride: `12`
+- cameras: `C3`, `C5`, `C6`, `C7`
 
-1. run YOLO person detection plus ByteTrack on the single source video
-2. run a short-gap tracklet linker on top of ByteTrack so short occlusion / crossing fragmentation is reduced before downstream logic
-3. project the inferred source tracks into virtual cameras with configured fake frame and time offsets
-4. keep rows whose foot point stays inside the configured ROI
-5. for entry cameras, use calibrated tripwire + motion history + inward momentum to stabilize `IN`
-6. only after line crossing, create `ENTRY_IN`
-7. select a best shot inside the configured frame window
-8. reject buffered face frames that fail blur or landmark-based pose gates before they can become the best shot
-9. extract OSNet body embeddings from valid body crops and store them in the unknown gallery
-10. hard-reject impossible camera/time candidates before face/body similarity scoring
-11. when both modalities are valid, fuse face and body with configurable weights
-12. when enabled, prefer post-anchor frames in higher-priority subzones
-13. create best-shot body/head crops
-14. send that event to face matching and then to cross-camera association
+Official phase numbers:
 
-Current guard rails:
+- no ROI: `FP=1805`, `FN=249`, `MOTA=-6.3238`
+- ROI: `FP=526`, `FN=250`, `MOTA=-1.977`
 
-- `tracklet_linking` lives inside the replay inference config and runs immediately after ByteTrack
-- pose-aware face filtering uses InsightFace 5 landmarks with hard gates at `|yaw| <= 30°` and `|pitch| <= 20°`
-- ambiguous association cases can enter `PENDING`, but stale pending entries are garbage-collected after `2s`
+Interpretation:
 
-- topology/travel-time now runs as a hard pre-similarity gate, so impossible candidates do not reach face/body scoring
-- replay detector/tracker cache stores true inference rows and can be reused by later debug runs
-
-## Architecture Audit
-
-The current replay debug path is `synchronous`.
-
-- `offline_pipeline/orchestrator.py` builds stage inputs first
-- then runs `run_face_resolution_demo.py`
-- then synchronizes outputs
-
-This keeps the replay proof path deterministic for audit/debug.
-
-The separate live path remains the asynchronous producer-consumer design:
-
-- camera workers are producers
-- the main loop is the consumer/association stage
-- per-worker `producer_fps` and summary `consumer_fps` are exported in `live_pipeline_summary.json`
+- ROI masking clearly reduces false positives
+- MOTA is still negative, so the local detect+track stage remains the main bottleneck
 
 ## Output Layout
 
-For each offline run:
+Per run:
 
 - `outputs/offline_runs/<run_name>/tracks/`
 - `outputs/offline_runs/<run_name>/events/`
-- `outputs/offline_runs/<run_name>/crops/`
 - `outputs/offline_runs/<run_name>/timelines/`
 - `outputs/offline_runs/<run_name>/summaries/`
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
-- `outputs/offline_runs/<run_name>/runtime/`
 - `outputs/offline_runs/<run_name>/evaluation/`
 
-Main final files:
+Current phase artifacts that matter most:
 
 - `events/resolved_events.csv`
-- `events/unknown_id_mapping.csv`
-- `timelines/stream_identity_timeline.csv`
-- `summaries/face_resolution_summary.json`
-- `summaries/offline_pipeline_summary.json`
+- `events/latest_events.json`
 - `timelines/unknown_identity_timeline.json`
-- `summaries/single_source_replay_manifest.json`
-- `association_logs/association_decisions.jsonl`
-- `audit/audit_report.md`
-- `audit/entry_event_assignment_audit.csv`
-- `audit/audit_event_generation_subzones.csv`
+- `summaries/cross_camera_handoff_summary.json`
+- `summaries/stage_input_summary.json`
+- `evaluation/quantitative_metrics_summary.json`
 
-The audit CSV files include line-aware best-shot metadata so event creation and unknown ID reuse can be debugged without rerunning the full pipeline. The summaries directory now also exports `face_body_usage_summary.json` for video-phase face-vs-body evidence.
+## Sequential Replay Reference Path
 
-## Quantitative Evaluation Add-on
+The earlier single-source replay proof remains available when a simpler, controlled sanity run is needed:
 
-The offline replay benchmark now has a separate evaluation layer:
-
-- `run_quantitative_evaluation.py`
-- `run_threshold_analysis.py`
-
-This evaluation layer does not change runtime association. It reads generated benchmark artifacts and exports:
-
-- local `MOTA`
-- event-level replay `IDF1`
-- candidate-pair CSVs
-- ROC curves
-- Precision-Recall curves
-- positive/negative score distributions
-
-Reference configs:
-
-- `insightface_demo_assets/runtime/config/quantitative_evaluation.single_source_sequential_c6_cache_benchmark.yaml`
-- `insightface_demo_assets/runtime/config/threshold_analysis.single_source_sequential_c6_cache_benchmark.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`

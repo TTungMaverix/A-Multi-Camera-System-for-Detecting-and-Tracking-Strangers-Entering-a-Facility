@@ -21,7 +21,7 @@
       color: var(--ink);
     }
     .shell {
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
       padding: 24px;
     }
@@ -38,7 +38,7 @@
     .hero p {
       margin: 0;
       color: var(--muted);
-      max-width: 760px;
+      max-width: 840px;
     }
     .hero a {
       color: var(--accent);
@@ -69,16 +69,21 @@
       font-weight: 700;
       margin-top: 6px;
     }
-    .event-grid {
+    .event-grid,
+    .timeline-grid,
+    .appearance-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 16px;
     }
+    .event-grid {
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    }
     .timeline-grid {
-      display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 16px;
       margin-top: 24px;
+    }
+    .appearance-grid {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     }
     .event-card {
       display: grid;
@@ -89,18 +94,32 @@
       border-radius: 18px;
       padding: 14px;
       box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
+      cursor: pointer;
+    }
+    .event-card img,
+    .timeline-card img,
+    .appearance-card img {
+      object-fit: cover;
+      background: #d5d0c2;
     }
     .event-card img {
       width: 120px;
       height: 120px;
-      object-fit: cover;
       border-radius: 12px;
-      background: #d5d0c2;
+    }
+    .event-card.pending {
+      border-style: dashed;
+      background: rgba(255, 255, 255, 0.75);
+    }
+    .event-info,
+    .timeline-card,
+    .timeline-detail {
+      display: grid;
+      gap: 10px;
     }
     .event-info {
-      display: grid;
-      gap: 6px;
       align-content: start;
+      gap: 6px;
     }
     .pill {
       display: inline-flex;
@@ -124,10 +143,6 @@
       color: #4d5550;
       border: 1px dashed #8f9992;
     }
-    .event-card.pending {
-      border-style: dashed;
-      background: rgba(255,255,255,0.75);
-    }
     .meta {
       color: var(--muted);
       font-size: 13px;
@@ -140,14 +155,21 @@
       color: var(--muted);
       background: rgba(255,255,255,0.55);
     }
-    .timeline-card {
+    .timeline-card,
+    .timeline-detail,
+    .appearance-card {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 16px;
       box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
-      display: grid;
-      gap: 12px;
+    }
+    .timeline-card {
+      cursor: pointer;
+    }
+    .timeline-card.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(13, 107, 76, 0.18) inset, 0 12px 32px rgba(25, 33, 27, 0.07);
     }
     .timeline-card .hero-shot {
       display: grid;
@@ -158,9 +180,7 @@
     .timeline-card img {
       width: 96px;
       height: 96px;
-      object-fit: cover;
       border-radius: 12px;
-      background: #d5d0c2;
     }
     .timeline-steps {
       display: grid;
@@ -172,20 +192,42 @@
       font-size: 13px;
       color: var(--muted);
     }
+    .detail-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .appearance-card {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 10px;
+      padding: 10px;
+    }
+    .appearance-card img {
+      width: 72px;
+      height: 72px;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
   <main class="shell">
     <section class="hero">
       <h1>Realtime Stranger Event Demo</h1>
-      <p>This page polls the live event output files and shows the latest known/unknown decisions, camera origin, subzone metadata, and snapshot evidence.</p>
+      <p>This page reads real event and timeline artifacts from the current run directory. It is for debugging and defense presentation: latest event cards show the current decision state, and the Unknown timeline below reconstructs the cross-camera history from real resolved events.</p>
       <p><a href="/calibration.html">Open manual calibration tool</a></p>
     </section>
     <section class="summary" id="summary"></section>
     <section class="event-grid" id="events"></section>
     <section class="timeline-grid" id="timeline"></section>
+    <section class="timeline-detail" id="timelineDetail"></section>
   </main>
   <script>
+    const browserState = {
+      selectedIdentityId: "",
+      timelines: [],
+    };
+
     async function fetchJson(url) {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) {
@@ -213,10 +255,17 @@
       ].join("");
     }
 
+    function selectIdentity(identityId) {
+      if (!identityId) return;
+      browserState.selectedIdentityId = identityId;
+      renderTimeline(browserState.timelines);
+      renderTimelineDetail(browserState.timelines);
+    }
+
     function renderEvents(events) {
       const root = document.getElementById("events");
       if (!events.length) {
-        root.innerHTML = `<div class="empty">No live events yet. Start the live pipeline first, then refresh or wait for polling.</div>`;
+        root.innerHTML = `<div class="empty">No live events yet. Run the benchmark or live pipeline first.</div>`;
         return;
       }
       root.innerHTML = events.slice().reverse().map((event) => {
@@ -224,31 +273,37 @@
         const cardClass = event.identity_type === "pending" ? "event-card pending" : "event-card";
         const label = event.identity_type === "pending"
           ? (event.identity_label || "Analyzing...")
-          : `${event.identity_type.toUpperCase()} ${event.identity_id || ""}`.trim();
+          : `${event.identity_type?.toUpperCase() || "UNKNOWN"} ${event.identity_id || ""}`.trim();
         const imageHtml = event.snapshot_url
           ? `<img src="${event.snapshot_url}" alt="snapshot">`
           : `<img alt="no snapshot">`;
         return `
-          <article class="${cardClass}">
+          <article class="${cardClass}" data-identity-id="${event.identity_id || ""}">
             ${imageHtml}
             <div class="event-info">
               <div class="pill ${badgeClass}">${label}</div>
-              <strong>${event.camera_id} · ${event.direction || "N/A"}</strong>
-              <div class="meta">zone=${event.zone_id || "-"} · subzone=${event.subzone_id || "-"}</div>
-              <div class="meta">primary=${event.modality_primary || "-"} · secondary=${event.modality_secondary || "-"}</div>
-              <div class="meta">body_fallback=${String(!!event.body_fallback_used)} · latency=${event.latency_sec || 0}s</div>
+              <strong>${event.camera_id} - ${event.direction || "N/A"}</strong>
+              <div class="meta">zone=${event.zone_id || "-"} - subzone=${event.subzone_id || "-"}</div>
+              <div class="meta">primary=${event.modality_primary || "-"} - secondary=${event.modality_secondary || "-"}</div>
+              <div class="meta">body_fallback=${String(!!event.body_fallback_used)} - latency=${event.latency_sec || 0}s</div>
               <div class="meta">reason=${event.decision_reason || event.reason_code || "-"}</div>
             </div>
           </article>
         `;
       }).join("");
+      [...root.querySelectorAll("[data-identity-id]")].forEach((node) => {
+        node.addEventListener("click", () => selectIdentity(node.dataset.identityId || ""));
+      });
     }
 
     function renderTimeline(identities) {
       const root = document.getElementById("timeline");
       if (!identities.length) {
-        root.innerHTML = `<div class="empty">No identity timeline available yet. Run the replay benchmark or live pipeline first.</div>`;
+        root.innerHTML = `<div class="empty">No Unknown timeline available yet.</div>`;
         return;
+      }
+      if (!browserState.selectedIdentityId) {
+        browserState.selectedIdentityId = identities[0].identity_id || "";
       }
       root.innerHTML = identities.map((identity) => {
         const heroShot = identity.representative_snapshot_url
@@ -257,23 +312,72 @@
         const steps = (identity.appearances || []).map((appearance) => `
           <div class="timeline-step">
             <strong>${appearance.camera_id}</strong> @ ${appearance.relative_sec || 0}s<br>
-            zone=${appearance.zone_id || "-"} · subzone=${appearance.subzone_id || "-"} · primary=${appearance.modality_primary_used || "-"}
+            zone=${appearance.zone_id || "-"} - subzone=${appearance.subzone_id || "-"} - primary=${appearance.modality_primary_used || "-"}
           </div>
         `).join("");
+        const activeClass = browserState.selectedIdentityId === identity.identity_id ? "active" : "";
         return `
-          <article class="timeline-card">
+          <article class="timeline-card ${activeClass}" data-identity-id="${identity.identity_id || ""}">
             <div class="hero-shot">
               ${heroShot}
               <div>
                 <div class="pill unknown">${identity.identity_label || identity.identity_id}</div>
                 <strong>${identity.first_seen_camera} @ ${identity.first_seen_relative_sec || 0}s</strong>
-                <div class="meta">appearances=${identity.appearance_count || 0} · cameras=${(identity.camera_sequence || []).join(" → ")}</div>
+                <div class="meta">appearances=${identity.appearance_count || 0} - cameras=${(identity.camera_sequence || []).join(" -> ")}</div>
               </div>
             </div>
             <div class="timeline-steps">${steps}</div>
           </article>
         `;
       }).join("");
+      [...root.querySelectorAll("[data-identity-id]")].forEach((node) => {
+        node.addEventListener("click", () => selectIdentity(node.dataset.identityId || ""));
+      });
+    }
+
+    function renderTimelineDetail(identities) {
+      const root = document.getElementById("timelineDetail");
+      if (!identities.length) {
+        root.innerHTML = `<div class="empty">No identity detail available yet.</div>`;
+        return;
+      }
+      const selected = identities.find((item) => item.identity_id === browserState.selectedIdentityId) || identities[0];
+      if (!selected) {
+        root.innerHTML = `<div class="empty">No selected identity.</div>`;
+        return;
+      }
+      const camerasSeen = [...new Set((selected.appearances || []).map((item) => item.camera_id).filter(Boolean))];
+      const modalities = [...new Set((selected.appearances || []).map((item) => item.modality_primary_used).filter(Boolean))];
+      const appearancesHtml = (selected.appearances || []).map((appearance) => {
+        const imageHtml = appearance.snapshot_url
+          ? `<img src="${appearance.snapshot_url}" alt="appearance snapshot">`
+          : `<img alt="no snapshot">`;
+        return `
+          <article class="appearance-card">
+            ${imageHtml}
+            <div>
+              <strong>${appearance.camera_id} @ ${appearance.relative_sec || 0}s</strong>
+              <div class="meta">zone=${appearance.zone_id || "-"} - subzone=${appearance.subzone_id || "-"}</div>
+              <div class="meta">primary=${appearance.modality_primary_used || "-"} - state=${appearance.ui_identity_state || appearance.identity_status || "-"}</div>
+              <div class="meta">reason=${appearance.decision_reason || appearance.reason_code || "-"}</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+      root.innerHTML = `
+        <div class="hero" style="margin-bottom:0;">
+          <h1 style="font-size:24px;">${selected.identity_label || selected.identity_id}</h1>
+          <p>Appearance history is generated from real resolved events. Pending identities are intentionally not finalized here until the backend resolves them.</p>
+        </div>
+        <div class="detail-metrics">
+          ${metric("First Seen", `${selected.first_seen_camera || "-"} @ ${selected.first_seen_relative_sec || 0}s`)}
+          ${metric("Last Seen", `${selected.last_seen_camera || "-"} @ ${selected.last_seen_relative_sec || 0}s`)}
+          ${metric("Appearances", selected.appearance_count || 0)}
+          ${metric("Cameras", camerasSeen.join(" -> ") || "-")}
+          ${metric("Modalities", modalities.join(", ") || "-")}
+        </div>
+        <div class="appearance-grid">${appearancesHtml || `<div class="empty">No appearance detail.</div>`}</div>
+      `;
     }
 
     async function refresh() {
@@ -283,12 +387,18 @@
           fetchJson("/api/latest-events"),
           fetchJson("/api/timeline"),
         ]);
+        browserState.timelines = timeline.identities || [];
+        if (browserState.selectedIdentityId && !browserState.timelines.some((item) => item.identity_id === browserState.selectedIdentityId)) {
+          browserState.selectedIdentityId = "";
+        }
         renderSummary(summary);
         renderEvents(latest.events || []);
-        renderTimeline(timeline.identities || []);
+        renderTimeline(browserState.timelines);
+        renderTimelineDetail(browserState.timelines);
       } catch (error) {
         document.getElementById("events").innerHTML = `<div class="empty">Failed to load live data: ${error.message}</div>`;
         document.getElementById("timeline").innerHTML = "";
+        document.getElementById("timelineDetail").innerHTML = "";
       }
     }
 

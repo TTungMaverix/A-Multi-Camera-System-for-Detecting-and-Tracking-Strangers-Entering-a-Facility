@@ -1,9 +1,11 @@
 import json
 
 from evaluation_utils import (
+    aggregate_local_tracking_metrics,
     build_unknown_timeline,
     compute_event_level_idf1,
     match_event_rows_to_gt,
+    summarize_unknown_handoffs,
     summarize_latency_records,
 )
 from run_threshold_analysis import choose_recommended_threshold
@@ -141,3 +143,57 @@ def test_choose_recommended_threshold_keeps_current_value_inside_safe_gap():
         "best_f1_threshold": {"threshold": 0.2361},
     }
     assert choose_recommended_threshold(metrics, 0.618) == 0.618
+
+
+def test_aggregate_local_tracking_metrics_sums_counts_and_recomputes_mota():
+    payload = aggregate_local_tracking_metrics(
+        {
+            "C3": {
+                "frame_count": 10,
+                "gt_detection_count": 20,
+                "pred_track_count": 4,
+                "gt_track_count": 3,
+                "tracking_idf1": 0.5,
+                "id_switches": 1,
+                "fp": 4,
+                "fn": 3,
+            },
+            "C6": {
+                "frame_count": 8,
+                "gt_detection_count": 10,
+                "pred_track_count": 2,
+                "gt_track_count": 2,
+                "tracking_idf1": 0.2,
+                "id_switches": 0,
+                "fp": 1,
+                "fn": 2,
+            },
+        }
+    )
+    assert payload["frame_count"] == 18
+    assert payload["gt_detection_count"] == 30
+    assert payload["pred_track_count"] == 6
+    assert payload["gt_track_count"] == 5
+    assert payload["id_switches"] == 1
+    assert payload["fp"] == 5
+    assert payload["fn"] == 5
+    assert payload["mota"] == 0.6333
+    assert payload["tracking_idf1"] == 0.4
+
+
+def test_summarize_unknown_handoffs_extracts_cross_camera_edges():
+    summary = summarize_unknown_handoffs(
+        [
+            {"identity_status": "unknown", "resolved_global_id": "UNK_0001", "camera_id": "C3", "relative_sec": "1.0", "event_id": "E1"},
+            {"identity_status": "unknown", "resolved_global_id": "UNK_0001", "camera_id": "C6", "relative_sec": "2.0", "event_id": "E2"},
+            {"identity_status": "unknown", "resolved_global_id": "UNK_0001", "camera_id": "C5", "relative_sec": "3.0", "event_id": "E3"},
+            {"identity_status": "unknown", "resolved_global_id": "UNK_0002", "camera_id": "C7", "relative_sec": "4.0", "event_id": "E4"},
+        ]
+    )
+    assert summary["unknown_identity_count"] == 2
+    assert summary["multi_camera_identity_count"] == 1
+    assert summary["handoff_edge_count"] == 2
+    assert summary["handoff_edges"] == [
+        {"src_camera_id": "C3", "dst_camera_id": "C6", "count": 1},
+        {"src_camera_id": "C6", "dst_camera_id": "C5", "count": 1},
+    ]

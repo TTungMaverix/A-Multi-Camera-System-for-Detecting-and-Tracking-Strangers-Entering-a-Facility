@@ -115,6 +115,22 @@ def test_single_source_sequential_inference_cache_benchmark_config_is_present():
     assert config["single_source_replay"]["inference"]["cache"]["enabled"] is True
 
 
+def test_wildtrack_4cam_roi_benchmark_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "wildtrack_video_inference"
+    assert sorted(config["dataset"]["video_sources"].keys()) == ["C3", "C5", "C6", "C7"]
+    assert config["multi_source_inference"]["roi_filter"]["enabled"] is True
+
+
+def test_wildtrack_4cam_no_roi_benchmark_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "wildtrack_video_inference"
+    assert sorted(config["dataset"]["video_sources"].keys()) == ["C3", "C5", "C6", "C7"]
+    assert config["multi_source_inference"]["roi_filter"]["enabled"] is False
+
+
 def test_tracklet_linking_reconnects_short_occlusion():
     rows = [
         _track_row(10, 0, 10, 10, 50, 110),

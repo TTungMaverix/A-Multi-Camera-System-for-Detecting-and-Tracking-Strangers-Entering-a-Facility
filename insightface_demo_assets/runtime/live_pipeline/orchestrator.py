@@ -21,9 +21,7 @@ from association_core import (
 )
 from evaluation_utils import summarize_latency_records
 from offline_pipeline.event_builder import (
-    camera_processing_polygon,
     get_head_rect,
-    test_point_in_polygon,
     write_image_unicode,
 )
 from offline_pipeline.direction_logic import evaluate_direction
@@ -37,9 +35,11 @@ from run_face_resolution_demo import (
 )
 from scene_calibration import (
     apply_processing_mask,
+    build_processing_mask,
     apply_scene_calibration_to_transition_map,
     apply_scene_calibration_to_wildtrack_config,
     draw_scene_overlay,
+    filter_boxes_by_processing_roi,
     load_runtime_scene_calibration,
     probe_frame_from_source,
 )
@@ -465,19 +465,6 @@ def _worker_should_emit(camera_cfg, track, frame_idx, transition_map, output_dir
     )
 
 
-def _filter_detections_by_roi(detections, camera_cfg):
-    polygon = camera_processing_polygon(camera_cfg)
-    if not polygon:
-        return detections
-    kept = []
-    for det in detections:
-        foot_x = (det["xmin"] + det["xmax"]) / 2.0
-        foot_y = float(det["ymax"])
-        if test_point_in_polygon(foot_x, foot_y, polygon):
-            kept.append(det)
-    return kept
-
-
 def live_camera_worker(worker_context, queue):
     camera_id = worker_context["camera_cfg"]["camera_id"]
     source_cfg = worker_context["source_cfg"]
@@ -522,6 +509,19 @@ def live_camera_worker(worker_context, queue):
         last_emit = 0.0
         processed_frames = 0
         emitted_events = 0
+        raw_detection_count = 0
+        detections_after_roi_count = 0
+        roi_killed_count = 0
+        roi_killed_footpoint_count = 0
+        roi_killed_low_coverage_count = 0
+        roi_filter_cfg = {
+            "enabled": bool(worker_context["processing_cfg"].get("roi_mask_enabled", True)),
+            "pre_mask_enabled": bool(worker_context["processing_cfg"].get("mask_outside_polygon", True)),
+            "post_filter_enabled": True,
+            "require_footpoint_inside": True,
+            "min_bbox_coverage": float(worker_context["processing_cfg"].get("min_bbox_coverage", 0.25)),
+        }
+        roi_mask = None
         while True:
             if duration_sec > 0.0 and (time.time() - start_time) > duration_sec:
                 break
@@ -535,16 +535,38 @@ def live_camera_worker(worker_context, queue):
             last_emit = now
             processed_frames += 1
             inference_start_timestamp = time.time()
+            if roi_mask is None and roi_filter_cfg["enabled"]:
+                roi_mask = build_processing_mask(frame.shape, worker_context["camera_cfg"])
             masked_frame = apply_processing_mask(
                 frame,
                 worker_context["camera_cfg"],
-                enabled=bool(worker_context["processing_cfg"].get("roi_mask_enabled", True)),
+                enabled=bool(roi_filter_cfg["enabled"] and roi_filter_cfg["pre_mask_enabled"]),
             )
             detections = detector.detect(
                 masked_frame,
                 resize_width=int(worker_context["detector_cfg"].get("resize_width", 960)),
             )
-            detections = _filter_detections_by_roi(detections, worker_context["camera_cfg"])
+            raw_detection_count += len(detections)
+            if roi_filter_cfg["enabled"] and roi_filter_cfg["post_filter_enabled"]:
+                detections, roi_stats = filter_boxes_by_processing_roi(
+                    detections,
+                    worker_context["camera_cfg"],
+                    min_bbox_coverage=float(roi_filter_cfg["min_bbox_coverage"]),
+                    require_footpoint_inside=bool(roi_filter_cfg["require_footpoint_inside"]),
+                    mask=roi_mask,
+                )
+            else:
+                roi_stats = {
+                    "input_count": len(detections),
+                    "kept_count": len(detections),
+                    "killed_count": 0,
+                    "killed_footpoint_count": 0,
+                    "killed_low_coverage_count": 0,
+                }
+            detections_after_roi_count += int(roi_stats["kept_count"])
+            roi_killed_count += int(roi_stats["killed_count"])
+            roi_killed_footpoint_count += int(roi_stats["killed_footpoint_count"])
+            roi_killed_low_coverage_count += int(roi_stats["killed_low_coverage_count"])
             tracks = tracker.update(detections, frame_idx)
             inference_end_timestamp = time.time()
             for track in tracks:
@@ -599,6 +621,11 @@ def live_camera_worker(worker_context, queue):
                 "worker_runtime_sec": round(max(time.time() - start_time, 1e-9), 3),
                 "producer_fps": round(processed_frames / max(time.time() - start_time, 1e-9), 3),
                 "event_fps": round(emitted_events / max(time.time() - start_time, 1e-9), 3),
+                "raw_detection_count": raw_detection_count,
+                "detections_after_roi_count": detections_after_roi_count,
+                "roi_killed_count": roi_killed_count,
+                "roi_killed_footpoint_count": roi_killed_footpoint_count,
+                "roi_killed_low_coverage_count": roi_killed_low_coverage_count,
             },
             timeout_sec=float(worker_context["live_cfg"].get("queue_put_timeout_sec", 0.5)),
         )
@@ -758,6 +785,9 @@ def run_live_pipeline(config_path: Path):
         "body_fallback_used_count": 0,
         "dropped_frames_total": 0,
         "queue_dropped_packets_total": 0,
+        "raw_detection_count": 0,
+        "detections_after_roi_count": 0,
+        "roi_killed_count": 0,
     }
     live_jsonl = output_root / "events" / "live_event_stream.jsonl"
     live_jsonl.write_text("", encoding="utf-8")
@@ -853,9 +883,17 @@ def run_live_pipeline(config_path: Path):
                 "worker_runtime_sec": packet.get("worker_runtime_sec", 0.0),
                 "producer_fps": packet.get("producer_fps", 0.0),
                 "event_fps": packet.get("event_fps", 0.0),
+                "raw_detection_count": packet.get("raw_detection_count", 0),
+                "detections_after_roi_count": packet.get("detections_after_roi_count", 0),
+                "roi_killed_count": packet.get("roi_killed_count", 0),
+                "roi_killed_footpoint_count": packet.get("roi_killed_footpoint_count", 0),
+                "roi_killed_low_coverage_count": packet.get("roi_killed_low_coverage_count", 0),
             }
             counters["dropped_frames_total"] += int(packet.get("dropped_frames", 0))
             counters["queue_dropped_packets_total"] += int(packet.get("queue_dropped_packets", 0))
+            counters["raw_detection_count"] += int(packet.get("raw_detection_count", 0))
+            counters["detections_after_roi_count"] += int(packet.get("detections_after_roi_count", 0))
+            counters["roi_killed_count"] += int(packet.get("roi_killed_count", 0))
         elif packet_type == "worker_error":
             errors.append(packet)
         elif packet_type == "worker_done":
@@ -877,6 +915,9 @@ def run_live_pipeline(config_path: Path):
         "body_fallback_used_count": counters["body_fallback_used_count"],
         "dropped_frames_total": counters["dropped_frames_total"],
         "queue_dropped_packets_total": counters["queue_dropped_packets_total"],
+        "raw_detection_count": counters["raw_detection_count"],
+        "detections_after_roi_count": counters["detections_after_roi_count"],
+        "roi_killed_count": counters["roi_killed_count"],
         "avg_latency_sec": latency_summary["avg_latency_sec"],
         "p50_latency_sec": latency_summary["p50_latency_sec"],
         "p95_latency_sec": latency_summary["p95_latency_sec"],

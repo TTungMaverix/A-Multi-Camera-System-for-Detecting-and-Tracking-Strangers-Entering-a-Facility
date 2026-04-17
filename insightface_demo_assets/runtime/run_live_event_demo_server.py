@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import cv2
 
+from calibration_editor import SHAPE_TYPE_PRESETS, build_shape_catalog
 from scene_calibration import (
     build_blank_camera_calibration,
     build_runtime_camera_calibration,
@@ -19,7 +20,7 @@ from scene_calibration import (
 )
 
 
-DEFAULT_SCENE_CALIBRATION_PATH = "insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json"
+DEFAULT_SCENE_CALIBRATION_PATH = "insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack_4cam_phase.yaml"
 
 
 def resolve_path(project_root: Path, value: str) -> Path:
@@ -151,6 +152,41 @@ def load_live_summary(output_root: Path):
     return {}
 
 
+def resolve_preview_source(project_root: Path, camera_cfg, *, source_type_override="", source_override=""):
+    source_type = source_type_override or camera_cfg.get("preview_source_type", "file")
+    source_value = source_override or camera_cfg.get("preview_source", "")
+    if not source_value:
+        raise RuntimeError("preview_source_missing")
+    resolved = resolve_path(project_root, source_value)
+    return source_type, str(resolved)
+
+
+def render_calibration_preview(
+    calibration,
+    camera_id,
+    project_root: Path,
+    *,
+    source_type_override="",
+    source_override="",
+    frame_idx=0,
+    overlay_enabled=True,
+):
+    camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
+    if not camera_cfg:
+        raise RuntimeError(f"camera_not_found:{camera_id}")
+    source_type, source_value = resolve_preview_source(
+        project_root,
+        camera_cfg,
+        source_type_override=source_type_override,
+        source_override=source_override,
+    )
+    frame = probe_frame_from_source(source_type, source_value, frame_idx=int(frame_idx or 0))
+    if overlay_enabled:
+        runtime_camera = build_runtime_camera_calibration(camera_cfg, frame.shape[1], frame.shape[0])
+        frame = draw_scene_overlay(frame, runtime_camera)
+    return frame
+
+
 def read_request_json(handler):
     length = int(handler.headers.get("Content-Length", "0") or "0")
     if length <= 0:
@@ -214,33 +250,43 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
     def _preview_source_for_camera(self, camera_cfg, query):
         source_type = parse_qs(query).get("source_type", [camera_cfg.get("preview_source_type", "file")])[0]
         source_value = parse_qs(query).get("source", [camera_cfg.get("preview_source", "")])[0]
-        if not source_value:
-            raise RuntimeError("preview_source_missing")
-        resolved = resolve_path(self.project_root, source_value)
-        return source_type, str(resolved)
+        return resolve_preview_source(
+            self.project_root,
+            camera_cfg,
+            source_type_override=source_type,
+            source_override=source_value,
+        )
 
     def _preview_frame(self, calibration, camera_id, query, overlay_enabled=True):
-        camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
-        if not camera_cfg:
-            raise RuntimeError(f"camera_not_found:{camera_id}")
         query_params = parse_qs(query)
+        camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
         source_type, source_value = self._preview_source_for_camera(camera_cfg, query)
         frame_idx = int(query_params.get("frame_idx", ["0"])[0] or 0)
-        frame = probe_frame_from_source(source_type, source_value, frame_idx=frame_idx)
-        if overlay_enabled:
-            runtime_camera = build_runtime_camera_calibration(camera_cfg, frame.shape[1], frame.shape[0])
-            frame = draw_scene_overlay(frame, runtime_camera)
-        return frame
+        return render_calibration_preview(
+            calibration,
+            camera_id,
+            self.project_root,
+            source_type_override=source_type,
+            source_override=source_value,
+            frame_idx=frame_idx,
+            overlay_enabled=overlay_enabled,
+        )
 
     def _calibration_state_payload(self):
         calibration, runtime = self._load_calibration(required=False)
         errors, warnings = validate_scene_calibration(calibration)
+        shape_catalog = {
+            camera_id: build_shape_catalog(camera_cfg)
+            for camera_id, camera_cfg in ((calibration.get("cameras", {}) or {}).items())
+        }
         return _json_success(
             {
                 "config_path": str(self.scene_calibration_path),
                 "scene_calibration": calibration,
                 "runtime": runtime,
                 "validation": {"errors": errors, "warnings": warnings},
+                "shape_catalog": shape_catalog,
+                "shape_presets": SHAPE_TYPE_PRESETS,
             }
         )
 

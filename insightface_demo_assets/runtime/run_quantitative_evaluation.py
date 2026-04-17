@@ -8,6 +8,7 @@ import yaml
 
 from association_core import load_camera_transition_map
 from evaluation_utils import (
+    aggregate_local_tracking_metrics,
     compute_event_level_idf1,
     compute_local_tracking_mota,
     extract_aligned_gt_rows_from_annotations,
@@ -50,32 +51,54 @@ def build_source_lookup(project_root: Path, offline_config):
     return lookup
 
 
-def build_local_tracking_gt_rows(project_root: Path, benchmark_offline_config, pred_local_rows):
-    replay_cfg = benchmark_offline_config.get("single_source_replay", {}) or {}
-    source_camera_id = replay_cfg.get("source_camera_id", "C6")
-    source_template_path = resolve_path(project_root, replay_cfg.get("source_template_config", "wildtrack_demo/wildtrack_demo_config.json"))
-    source_template = load_json(source_template_path)
-    source_camera_cfg = (source_template.get("cameras", {}) or {}).get(source_camera_id, {})
-    view_index = safe_int(source_camera_cfg.get("view_index"), 5)
+def _load_scene_processing_polygon(project_root: Path, benchmark_offline_config, camera_id):
+    scene_cfg = benchmark_offline_config.get("scene_calibration_config", "")
+    if not scene_cfg:
+        return None
+    scene_path = resolve_path(project_root, scene_cfg)
+    if scene_path.suffix.lower() in {".yaml", ".yml"}:
+        scene_payload = yaml.safe_load(scene_path.read_text(encoding="utf-8")) or {}
+    else:
+        scene_payload = load_json(scene_path)
+    camera_payload = (((scene_payload.get("scene_calibration", {}) or {}).get("cameras", {}) or {}).get(camera_id, {}))
+    polygon = ((((camera_payload.get("processing_roi", {}) or {}).get("polygon")) or []))
+    frame_ref = (camera_payload.get("frame_size_ref", {}) or {})
+    frame_width = safe_float(frame_ref.get("width"), 1920.0)
+    frame_height = safe_float(frame_ref.get("height"), 1080.0)
+    if not polygon:
+        return None
+    return [
+        (safe_float(point[0]) * frame_width, safe_float(point[1]) * frame_height)
+        for point in polygon
+    ]
+
+
+def _view_index_for_camera(project_root: Path, benchmark_offline_config, camera_id):
+    if benchmark_offline_config.get("source_backend") == "single_source_sequential_replay":
+        replay_cfg = benchmark_offline_config.get("single_source_replay", {}) or {}
+        source_camera_id = replay_cfg.get("source_camera_id", "C6")
+        source_template_path = resolve_path(
+            project_root,
+            replay_cfg.get("source_template_config", "wildtrack_demo/wildtrack_demo_config.json"),
+        )
+        source_template = load_json(source_template_path)
+        source_camera_cfg = (source_template.get("cameras", {}) or {}).get(source_camera_id, {})
+        return safe_int(source_camera_cfg.get("view_index"), 5)
+    wildtrack_config = load_json(resolve_path(project_root, benchmark_offline_config["wildtrack_demo_config"]))
+    source_camera_cfg = (wildtrack_config.get("cameras", {}) or {}).get(camera_id, {})
+    return safe_int(source_camera_cfg.get("view_index"), 0)
+
+
+def build_local_tracking_gt_rows(project_root: Path, benchmark_offline_config, pred_local_rows, camera_id):
+    view_index = _view_index_for_camera(project_root, benchmark_offline_config, camera_id)
     dataset_root = resolve_path(project_root, benchmark_offline_config.get("dataset", {}).get("root", "Wildtrack"))
     annotation_dir = dataset_root / "annotations_positions"
-    processing_polygon = None
-    scene_cfg = benchmark_offline_config.get("scene_calibration_config", "")
-    if scene_cfg:
-        scene_payload = load_json(resolve_path(project_root, scene_cfg))
-        camera_payload = (((scene_payload.get("scene_calibration", {}) or {}).get("cameras", {}) or {}).get("C1", {}))
-        polygon = ((((camera_payload.get("processing_roi", {}) or {}).get("polygon")) or []))
-        frame_ref = (camera_payload.get("frame_size_ref", {}) or {})
-        frame_width = safe_float(frame_ref.get("width"), 1920.0)
-        frame_height = safe_float(frame_ref.get("height"), 1080.0)
-        if polygon:
-            processing_polygon = [
-                (safe_float(point[0]) * frame_width, safe_float(point[1]) * frame_height)
-                for point in polygon
-            ]
+    processing_polygon = _load_scene_processing_polygon(project_root, benchmark_offline_config, camera_id)
     logical_to_actual_frames = {}
     for row in pred_local_rows:
-        logical_to_actual_frames[safe_int(row.get("frame_id"))] = safe_int(row.get("source_frame_id_actual", row.get("frame_id")))
+        logical_to_actual_frames[safe_int(row.get("frame_id"))] = safe_int(
+            row.get("source_frame_id_actual", row.get("frame_id"))
+        )
     return extract_aligned_gt_rows_from_annotations(
         annotation_dir,
         view_index,
@@ -97,8 +120,11 @@ def build_gt_stage_inputs(project_root: Path, benchmark_config_path: Path, gt_ou
     benchmark_offline_config["project_root"] = str(project_root)
     benchmark_offline_config["output_root"] = str(gt_output_root)
     benchmark_offline_config = copy.deepcopy(benchmark_offline_config)
-    benchmark_offline_config.setdefault("single_source_replay", {})
-    benchmark_offline_config["single_source_replay"]["track_provider"] = "gt_annotations"
+    if benchmark_offline_config.get("source_backend") == "single_source_sequential_replay":
+        benchmark_offline_config.setdefault("single_source_replay", {})
+        benchmark_offline_config["single_source_replay"]["track_provider"] = "gt_annotations"
+    else:
+        benchmark_offline_config["source_backend"] = "wildtrack_gt_annotations"
 
     wildtrack_config_path = resolve_path(project_root, benchmark_offline_config["wildtrack_demo_config"])
     wildtrack_config = load_json(wildtrack_config_path)
@@ -183,15 +209,30 @@ def main(config_path: Path):
     )
     event_metrics = compute_event_level_idf1(gt_queue_rows, resolved_event_rows, event_matches)
 
-    local_camera_id = eval_config.get("mota", {}).get("local_camera_id", "C1")
-    pred_local_rows = [row for row in pred_track_rows if row.get("camera_id") == local_camera_id]
-    gt_local_rows = build_local_tracking_gt_rows(project_root, benchmark_offline_config, pred_local_rows)
-    local_tracking_metrics = compute_local_tracking_mota(
-        gt_local_rows,
-        pred_local_rows,
-        iou_threshold=safe_float(eval_config.get("mota", {}).get("iou_threshold", 0.5), 0.5),
+    mota_cfg = eval_config.get("mota", {}) or {}
+    local_camera_ids = mota_cfg.get("local_camera_ids") or [mota_cfg.get("local_camera_id", "C1")]
+    per_camera_metrics = {}
+    for local_camera_id in local_camera_ids:
+        pred_local_rows = [row for row in pred_track_rows if row.get("camera_id") == local_camera_id]
+        gt_local_rows = build_local_tracking_gt_rows(project_root, benchmark_offline_config, pred_local_rows, local_camera_id)
+        per_camera_metrics[local_camera_id] = compute_local_tracking_mota(
+            gt_local_rows,
+            pred_local_rows,
+            iou_threshold=safe_float(mota_cfg.get("iou_threshold", 0.5), 0.5),
+        )
+    local_tracking_metrics = (
+        aggregate_local_tracking_metrics(per_camera_metrics)
+        if len(local_camera_ids) > 1
+        else next(iter(per_camera_metrics.values()))
     )
 
+    source_backend = benchmark_offline_config.get("source_backend", "wildtrack_gt_annotations")
+    if source_backend == "single_source_sequential_replay":
+        source_mode = "Cam6 sequential replay"
+        camera_scope = benchmark_offline_config.get("single_source_replay", {}).get("virtual_camera_ids", [])
+    else:
+        source_mode = "Wildtrack four-camera actual videos"
+        camera_scope = benchmark_offline_config.get("dataset", {}).get("video_sources", {}).keys()
     contingency_rows = build_identity_contingency_rows(event_matches)
     metrics_summary = {
         "evaluation_name": eval_config.get("evaluation_name", "single_source_sequential_c6_cache_benchmark"),
@@ -199,7 +240,7 @@ def main(config_path: Path):
         "gt_output_root": str(gt_output_root),
         "benchmark_config_path": str(benchmark_config_path),
         "gt_clip_definition": {
-            "source_mode": "Cam6 sequential replay",
+            "source_mode": source_mode,
             "frame_range": {
                 "start_frame": benchmark_offline_config.get("low_load", {}).get("start_frame", 0),
                 "end_frame": benchmark_offline_config.get("low_load", {}).get("end_frame", ""),
@@ -210,7 +251,7 @@ def main(config_path: Path):
                 / max(59.94, 1e-9),
                 3,
             ),
-            "virtual_cameras": benchmark_offline_config.get("single_source_replay", {}).get("virtual_camera_ids", []),
+            "cameras": list(camera_scope),
         },
         "local_tracking_mota": local_tracking_metrics,
         "cross_camera_event_idf1": event_metrics,
@@ -220,12 +261,21 @@ def main(config_path: Path):
             "unmatched_pred_event_count": len(unmatched_pred_events),
         },
         "limitations": [
-            "MOTA is measured on the first virtual replay camera only, because sequential replay duplicates one physical source video.",
-            "Local-tracking GT is taken from raw Wildtrack annotations aligned to the actual source frames used by the replay benchmark and filtered to the configured processing ROI.",
-            "IDF1 is measured on direction-filtered handoff events across C1->C4, not as a full public MTMCT benchmark over all pedestrians in all views.",
-            "Event-level GT for IDF1 is generated from the same replay config in explicit gt_annotations mode, then matched back to predicted events by camera/anchor-frame/anchor-foot proximity.",
+            "Local-tracking GT is taken from raw Wildtrack annotations aligned to the actual source frames used by the benchmark and filtered to the configured processing ROI.",
+            "IDF1 is measured on direction-filtered handoff events emitted by this pipeline, not as a full public MTMCT benchmark over all pedestrians in all views.",
+            "Event-level GT for IDF1 is generated from the same pipeline config in explicit gt_annotations mode, then matched back to predicted events by camera/anchor-frame/anchor-foot proximity.",
         ],
     }
+    if source_backend == "single_source_sequential_replay":
+        metrics_summary["limitations"].insert(
+            0,
+            "MOTA is measured on the virtual replay cameras generated from one physical source video, so it reflects ROI-filtered local tracking quality rather than a public 4-view benchmark.",
+        )
+    else:
+        metrics_summary["limitations"].insert(
+            0,
+            "MOTA is aggregated across the selected real Wildtrack videos by summing per-camera FP/FN/ID-switch counts; the benchmark window remains intentionally short for fast ROI debugging.",
+        )
 
     save_json(evaluation_output_root / "quantitative_metrics_summary.json", metrics_summary)
     write_csv_rows(evaluation_output_root / "gt_entry_events.csv", gt_queue_rows)

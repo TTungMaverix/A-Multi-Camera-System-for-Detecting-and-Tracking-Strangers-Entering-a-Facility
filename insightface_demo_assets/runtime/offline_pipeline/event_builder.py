@@ -12,6 +12,7 @@ import numpy as np
 
 from association_core.spatial_context import resolve_spatial_context
 from offline_pipeline.direction_logic import evaluate_direction
+from scene_calibration import apply_processing_mask, build_processing_mask, filter_boxes_by_processing_roi
 
 
 def load_json(path: Path):
@@ -554,6 +555,20 @@ def _merge_cache_cfg(cache_cfg=None):
     return merged
 
 
+def _merge_roi_filter_cfg(roi_filter_cfg=None, processing_cfg=None):
+    processing_cfg = processing_cfg or {}
+    merged = {
+        "enabled": bool(processing_cfg.get("roi_mask_enabled", True)),
+        "pre_mask_enabled": bool(processing_cfg.get("mask_outside_polygon", True)),
+        "post_filter_enabled": True,
+        "require_footpoint_inside": True,
+        "min_bbox_coverage": 0.25,
+    }
+    for key, value in (roi_filter_cfg or {}).items():
+        merged[key] = value
+    return merged
+
+
 def _resolve_cache_dir(cache_cfg, default_root: Path):
     cache_dir = cache_cfg.get("cache_dir", "") or ""
     if cache_dir:
@@ -570,6 +585,7 @@ def _cache_signature(
     low_load_cfg,
     inference_cfg,
     linking_cfg,
+    roi_filter_cfg,
     actual_video_fps,
     target_timeline_fps,
 ):
@@ -593,6 +609,7 @@ def _cache_signature(
         "target_timeline_fps": round(float(target_timeline_fps), 4),
         "actual_video_fps": round(float(actual_video_fps or 0.0), 4),
         "tracklet_linking": copy.deepcopy(linking_cfg or {}),
+        "roi_filter": copy.deepcopy(roi_filter_cfg or {}),
     }
 
 
@@ -685,6 +702,7 @@ def extract_inference_track_rows(
     low_load_cfg,
     frame_source_mode,
     inference_cfg,
+    processing_cfg=None,
 ):
     try:
         from ultralytics import YOLO
@@ -702,7 +720,7 @@ def extract_inference_track_rows(
     device = str(inference_cfg.get("device", "cpu"))
     verbose = bool(inference_cfg.get("verbose", False))
     target_timeline_fps = float(inference_cfg.get("target_timeline_fps", fps))
-    polygon = camera_processing_polygon(camera_cfg)
+    roi_filter_cfg = _merge_roi_filter_cfg((inference_cfg or {}).get("roi_filter"), processing_cfg)
     start_frame = as_int(low_load_cfg.get("start_frame", 0))
     end_frame_raw = low_load_cfg.get("end_frame")
     end_frame = None if end_frame_raw in ("", None) else as_int(end_frame_raw)
@@ -723,6 +741,7 @@ def extract_inference_track_rows(
         low_load_cfg,
         inference_cfg,
         linking_cfg,
+        roi_filter_cfg,
         actual_video_fps,
         target_timeline_fps,
     )
@@ -756,10 +775,15 @@ def extract_inference_track_rows(
     track_rows = []
     processed_frames = 0
     raw_detection_count = 0
+    detections_after_roi_count = 0
+    roi_killed_count = 0
+    roi_killed_footpoint_count = 0
+    roi_killed_low_coverage_count = 0
     emitted_track_rows = 0
     runtime_started = time.perf_counter()
     frame_id = -1
     synthetic_track_id = 1000000
+    roi_mask = None
     try:
         while True:
             ok, frame = capture.read()
@@ -774,8 +798,15 @@ def extract_inference_track_rows(
                 continue
 
             processed_frames += 1
-            result_list = model.track(
+            if roi_mask is None and roi_filter_cfg.get("enabled", False):
+                roi_mask = build_processing_mask(frame.shape, camera_cfg)
+            inference_frame = apply_processing_mask(
                 frame,
+                camera_cfg,
+                enabled=bool(roi_filter_cfg.get("enabled", False) and roi_filter_cfg.get("pre_mask_enabled", True)),
+            )
+            result_list = model.track(
+                inference_frame,
                 persist=True,
                 tracker=tracker_name,
                 classes=[person_class_id],
@@ -796,6 +827,7 @@ def extract_inference_track_rows(
             ids = boxes.id.cpu().numpy().tolist() if boxes.id is not None else [None] * len(xyxy)
             confs = boxes.conf.cpu().numpy().tolist() if boxes.conf is not None else [0.0] * len(xyxy)
             raw_detection_count += len(xyxy)
+            raw_detections = []
             for box, track_id_value, det_score in zip(xyxy, ids, confs):
                 xmin, ymin, xmax, ymax = [int(round(value)) for value in box]
                 xmin = max(0, xmin)
@@ -806,12 +838,49 @@ def extract_inference_track_rows(
                 height = ymax - ymin
                 if width <= 0 or height <= 0:
                     continue
+                raw_detections.append(
+                    {
+                        "xmin": xmin,
+                        "ymin": ymin,
+                        "xmax": xmax,
+                        "ymax": ymax,
+                        "track_id_value": track_id_value,
+                        "detection_score": round(float(det_score), 4),
+                    }
+                )
+            if roi_filter_cfg.get("enabled", False) and roi_filter_cfg.get("post_filter_enabled", True):
+                filtered_detections, roi_stats = filter_boxes_by_processing_roi(
+                    raw_detections,
+                    camera_cfg,
+                    min_bbox_coverage=float(roi_filter_cfg.get("min_bbox_coverage", 0.25)),
+                    require_footpoint_inside=bool(roi_filter_cfg.get("require_footpoint_inside", True)),
+                    mask=roi_mask,
+                )
+            else:
+                filtered_detections = list(raw_detections)
+                roi_stats = {
+                    "input_count": len(raw_detections),
+                    "kept_count": len(raw_detections),
+                    "killed_count": 0,
+                    "killed_footpoint_count": 0,
+                    "killed_low_coverage_count": 0,
+                }
+            detections_after_roi_count += int(roi_stats["kept_count"])
+            roi_killed_count += int(roi_stats["killed_count"])
+            roi_killed_footpoint_count += int(roi_stats["killed_footpoint_count"])
+            roi_killed_low_coverage_count += int(roi_stats["killed_low_coverage_count"])
+            for det in filtered_detections:
+                xmin = int(det["xmin"])
+                ymin = int(det["ymin"])
+                xmax = int(det["xmax"])
+                ymax = int(det["ymax"])
+                width = xmax - xmin
+                height = ymax - ymin
                 center_x = round((xmin + xmax) / 2.0, 2)
                 center_y = round((ymin + ymax) / 2.0, 2)
                 foot_x = center_x
                 foot_y = float(ymax)
-                if polygon and not test_point_in_polygon(foot_x, foot_y, polygon):
-                    continue
+                track_id_value = det.get("track_id_value")
                 if track_id_value is None:
                     track_id = synthetic_track_id
                     synthetic_track_id += 1
@@ -848,7 +917,9 @@ def extract_inference_track_rows(
                         "video_path": str(video_source),
                         "frame_source_mode": frame_source_mode,
                         "track_provider": "ultralytics_yolo_bytetrack",
-                        "detection_score": round(float(det_score), 4),
+                        "detection_score": round(float(det.get("detection_score", 0.0)), 4),
+                        "roi_bbox_coverage": round(float(det.get("roi_bbox_coverage", 1.0)), 4),
+                        "roi_footpoint_inside": bool(det.get("roi_footpoint_inside", True)),
                     }
                 )
     finally:
@@ -877,6 +948,10 @@ def extract_inference_track_rows(
         "frame_stride": frame_stride,
         "processed_frames": processed_frames,
         "raw_detection_count": raw_detection_count,
+        "detections_after_roi_count": detections_after_roi_count,
+        "roi_killed_count": roi_killed_count,
+        "roi_killed_footpoint_count": roi_killed_footpoint_count,
+        "roi_killed_low_coverage_count": roi_killed_low_coverage_count,
         "emitted_track_rows": emitted_track_rows,
         "elapsed_sec": round(elapsed_sec, 3),
         "processed_fps": round(processed_frames / elapsed_sec, 3),
@@ -886,9 +961,20 @@ def extract_inference_track_rows(
         "identity_seed_field": "source_track_surrogate_id",
         "tracklet_linking": linking_runtime,
         "cache_runtime": cache_runtime,
+        "roi_filter": {
+            "enabled": bool(roi_filter_cfg.get("enabled", False)),
+            "pre_mask_enabled": bool(roi_filter_cfg.get("pre_mask_enabled", True)),
+            "post_filter_enabled": bool(roi_filter_cfg.get("post_filter_enabled", True)),
+            "require_footpoint_inside": bool(roi_filter_cfg.get("require_footpoint_inside", True)),
+            "min_bbox_coverage": round(float(roi_filter_cfg.get("min_bbox_coverage", 0.25)), 4),
+            "detections_before_roi": raw_detection_count,
+            "detections_after_roi": detections_after_roi_count,
+            "detections_killed_by_roi": roi_killed_count,
+        },
         "notes": [
             "Track rows are generated from YOLO person detection plus ByteTrack on the real source video.",
             "ByteTrack output is passed through a short-gap intra-camera linker before the replay flow continues.",
+            "Processing ROI is applied twice in inference mode: first as a pre-mask on the frame, then as a bbox-level hard filter on the detector output.",
             "global_gt_id is reused as a source-track surrogate ID in this inference-backed replay mode for compatibility with downstream audit files.",
             "GT-backed annotations are not used to create the source tracks in this mode.",
             "frame_id and relative_sec are normalized onto the configured timeline FPS so fake travel-time logic stays consistent with the replay topology.",
@@ -1623,6 +1709,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                 low_load_cfg,
                 frame_source_mode,
                 inference_cfg,
+                processing_cfg=wildtrack_config.get("processing", {}),
             )
         else:
             raise RuntimeError(
@@ -1686,6 +1773,68 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
         result["video_sources"] = {camera_id: str(source_video_path) for camera_id in virtual_camera_ids}
         result["replay_manifest_json"] = str(output_root / "summaries" / "single_source_replay_manifest.json")
         result["source_backend"] = "single_source_sequential_replay"
+        return result
+
+    if source_backend == "wildtrack_video_inference":
+        frame_source_mode = offline_config.get("frame_source_mode", "video_files")
+        fps = float(wildtrack_config["assumed_video_fps"])
+        low_load_cfg = offline_config.get("low_load", {})
+        video_sources = {}
+        for camera_id, video_path in (offline_config["dataset"].get("video_sources", {}) or {}).items():
+            resolved = Path(video_path)
+            if not resolved.is_absolute():
+                resolved = (project_root / resolved).resolve()
+            video_sources[camera_id] = resolved
+        inference_cfg = copy.deepcopy(offline_config.get("multi_source_inference", {}) or {})
+        cache_cfg = (inference_cfg.get("cache", {}) or {})
+        if cache_cfg.get("cache_dir"):
+            cache_dir = Path(cache_cfg["cache_dir"])
+            if not cache_dir.is_absolute():
+                cache_cfg["cache_dir"] = str((project_root / cache_dir).resolve())
+            inference_cfg["cache"] = cache_cfg
+        track_rows_by_camera = {}
+        per_camera_runtime = {}
+        for camera_id in wildtrack_config["selected_cameras"]:
+            if camera_id not in video_sources:
+                raise RuntimeError(f"Missing video source for {camera_id} in offline pipeline config.")
+            source_rows, source_track_runtime = extract_inference_track_rows(
+                camera_id,
+                wildtrack_config["cameras"][camera_id],
+                fps,
+                video_sources[camera_id],
+                low_load_cfg,
+                frame_source_mode,
+                inference_cfg,
+                processing_cfg=wildtrack_config.get("processing", {}),
+            )
+            track_rows_by_camera[camera_id] = source_rows
+            per_camera_runtime[camera_id] = source_track_runtime
+        result = materialize_stage_inputs(
+            project_root,
+            dataset_root,
+            wildtrack_config_path,
+            wildtrack_config,
+            output_root,
+            track_rows_by_camera,
+            frame_source_mode,
+            low_load_cfg,
+            transition_map,
+            pipeline_backend="wildtrack_video_inference",
+            extra_stage_summary={
+                "multi_source_inference": {
+                    "track_provider": "inference_yolo_bytetrack",
+                    "selected_cameras": list(wildtrack_config.get("selected_cameras", [])),
+                    "per_camera_runtime": per_camera_runtime,
+                },
+                "notes": [
+                    "This run uses four real Wildtrack video files with true detector+tracker inference per camera.",
+                    "Processing ROI pre-masks frames and hard-filters detector outputs before downstream ReID and association consume them.",
+                    "The purpose of this backend is to benchmark real 4-camera transition logic instead of the easier single-source replay path.",
+                ],
+            },
+        )
+        result["video_sources"] = {camera_id: str(path) for camera_id, path in video_sources.items()}
+        result["source_backend"] = "wildtrack_video_inference"
         return result
 
     frame_source_mode = offline_config.get("frame_source_mode", "video_files")

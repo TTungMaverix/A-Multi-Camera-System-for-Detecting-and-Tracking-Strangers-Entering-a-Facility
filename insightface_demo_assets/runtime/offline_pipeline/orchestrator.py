@@ -98,12 +98,14 @@ def sync_final_outputs(output_root: Path):
 
     copy_pairs = [
         (runtime_dir / "resolved_events_template.csv", events_dir / "resolved_events.csv"),
+        (runtime_dir / "latest_events.json", events_dir / "latest_events.json"),
         (runtime_dir / "stream_identity_timeline.csv", timelines_dir / "stream_identity_timeline.csv"),
         (runtime_dir / "unknown_identity_timeline.csv", timelines_dir / "unknown_identity_timeline.csv"),
         (runtime_dir / "unknown_identity_timeline.json", timelines_dir / "unknown_identity_timeline.json"),
         (runtime_dir / "unknown_profiles_template.csv", timelines_dir / "unknown_profiles.csv"),
         (runtime_dir / "face_resolution_summary.json", summaries_dir / "face_resolution_summary.json"),
         (runtime_dir / "face_body_usage_summary.json", summaries_dir / "face_body_usage_summary.json"),
+        (runtime_dir / "cross_camera_handoff_summary.json", summaries_dir / "cross_camera_handoff_summary.json"),
     ]
     for src, dst in copy_pairs:
         if src.exists():
@@ -241,12 +243,14 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         },
         "final_outputs": {
             "resolved_events_csv": str(output_root / "events" / "resolved_events.csv"),
+            "latest_events_json": str(output_root / "events" / "latest_events.json"),
             "unknown_id_mapping_csv": unknown_id_mapping_csv,
             "stream_identity_timeline_csv": str(output_root / "timelines" / "stream_identity_timeline.csv"),
             "unknown_identity_timeline_csv": str(output_root / "timelines" / "unknown_identity_timeline.csv"),
             "unknown_identity_timeline_json": str(output_root / "timelines" / "unknown_identity_timeline.json"),
             "summary_json": str(output_root / "summaries" / "face_resolution_summary.json"),
             "face_body_usage_summary_json": str(output_root / "summaries" / "face_body_usage_summary.json"),
+            "cross_camera_handoff_summary_json": str(output_root / "summaries" / "cross_camera_handoff_summary.json"),
             "association_logs_dir": str(output_root / "association_logs"),
             "audit_dir": str(output_root / "audit"),
         },

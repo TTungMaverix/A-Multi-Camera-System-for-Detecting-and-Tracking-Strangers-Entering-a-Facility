@@ -1,0 +1,238 @@
+scene_calibration:
+  version: 1
+  coordinate_space: normalized
+  processing:
+    require_manual_calibration: true
+    roi_mask_enabled: true
+    mask_outside_polygon: true
+    preview_overlay_enabled: true
+    preview_interval_sec: 1.0
+    min_bbox_coverage: 0.35
+  direction_filter:
+    history_window: 6
+    minimum_points: 4
+    minimum_inward_motion_px: 18
+    minimum_inside_ratio: 0.55
+    require_zone_transition: false
+    allow_line_cross_only_when_history_short: false
+    inward_zone_types: [exit, interior, overlap, transit]
+    outward_zone_types: [entry, outer, approach]
+  cameras:
+    C3:
+      camera_id: C3
+      role: followup
+      description: ROI-focused follow-up plaza view for the 4-camera benchmark.
+      preview_source: Wildtrack/cam3.mp4
+      preview_source_type: file
+      frame_size_ref: { width: 1920, height: 1080 }
+      processing_roi:
+        polygon:
+          - [0.0770, 0.1957]
+          - [0.3234, 0.1155]
+          - [0.6399, 0.2143]
+          - [0.6735, 0.2460]
+          - [0.1012, 0.5031]
+      entry_line: { points: [], in_side_point: [] }
+      default_zone_id: c3_followup_main
+      default_subzone_id: c3_overlap_entry
+      entry_zones: [c3_followup_main]
+      exit_zones: [c3_followup_main]
+      zones:
+        - zone_id: c3_followup_main
+          zone_type: transit
+          polygon:
+            - [0.0770, 0.1957]
+            - [0.3234, 0.1155]
+            - [0.6399, 0.2143]
+            - [0.6735, 0.2460]
+            - [0.1012, 0.5031]
+          priority: 100
+          description: Main visible corridor for C3 after ROI tightening.
+          placeholder: false
+      subzones:
+        - subzone_id: c3_overlap_entry
+          parent_zone_id: c3_followup_main
+          subzone_type: overlap
+          polygon:
+            - [0.1074, 0.4957]
+            - [0.6672, 0.2460]
+            - [0.6389, 0.2180]
+            - [0.3244, 0.1202]
+            - [0.0802, 0.1985]
+          priority: 110
+          description: Main overlap arrival region from entry-side cameras.
+          placeholder: false
+          allowed_transitions: []
+    C5:
+      camera_id: C5
+      role: entry
+      description: Entry-side ROI for the front-facing camera.
+      preview_source: Wildtrack/cam5.mp4
+      preview_source_type: file
+      frame_size_ref: { width: 1920, height: 1080 }
+      processing_roi:
+        polygon:
+          - [0.4282, 0.1789]
+          - [0.9418, 0.1714]
+          - [0.9953, 0.2441]
+          - [0.9900, 0.8721]
+          - [0.4638, 0.9504]
+      entry_line:
+        points:
+          - [0.6787, 0.3820]
+          - [0.9911, 0.5982]
+        in_side_point: [0.9439, 0.4416]
+      default_zone_id: c5_entry_main
+      default_subzone_id: c5_inner_overlap
+      entry_zones: [c5_entry_main]
+      exit_zones: [c5_entry_main]
+      zones:
+        - zone_id: c5_entry_main
+          zone_type: entry
+          polygon:
+            - [0.4345, 0.1910]
+            - [0.9387, 0.1761]
+            - [0.9911, 0.2469]
+            - [0.9827, 0.8507]
+            - [0.4785, 0.9271]
+          priority: 100
+          description: Main entry ROI kept after masking.
+          placeholder: false
+      subzones:
+        - subzone_id: c5_outer_entry
+          parent_zone_id: c5_entry_main
+          subzone_type: entry
+          polygon:
+            - [0.6284, 0.1826]
+            - [0.7448, 0.1770]
+            - [0.9911, 0.4062]
+            - [0.9889, 0.6038]
+            - [0.6724, 0.3690]
+          priority: 100
+          description: Approach region before the inward crossing.
+          placeholder: false
+          allowed_transitions: []
+        - subzone_id: c5_inner_overlap
+          parent_zone_id: c5_entry_main
+          subzone_type: overlap
+          polygon:
+            - [0.4387, 0.1966]
+            - [0.4785, 0.9271]
+            - [0.9827, 0.8507]
+            - [0.9911, 0.2469]
+            - [0.9387, 0.1761]
+          priority: 110
+          description: Interior/overlap region after entry crossing.
+          placeholder: false
+          allowed_transitions: []
+    C6:
+      camera_id: C6
+      role: entry
+      description: Entry-side diagonal camera for 4-camera transition benchmarking.
+      preview_source: Wildtrack/cam6.mp4
+      preview_source_type: file
+      frame_size_ref: { width: 1920, height: 1080 }
+      processing_roi:
+        polygon:
+          - [0.0844, 0.3056]
+          - [0.5498, 0.2441]
+          - [0.6032, 0.1454]
+          - [0.9953, 0.2162]
+          - [0.9890, 0.9746]
+          - [0.0529, 0.9783]
+      entry_line:
+        points:
+          - [0.0865, 0.3857]
+          - [0.6619, 0.2870]
+        in_side_point: [0.5487, 0.5311]
+      default_zone_id: c6_entry_main
+      default_subzone_id: c6_inner_overlap
+      entry_zones: [c6_entry_main]
+      exit_zones: [c6_entry_main]
+      zones:
+        - zone_id: c6_entry_main
+          zone_type: entry
+          polygon:
+            - [0.0854, 0.3746]
+            - [0.6284, 0.2777]
+            - [0.6735, 0.1528]
+            - [0.9911, 0.2124]
+            - [0.9858, 0.9634]
+            - [0.0561, 0.9690]
+          priority: 100
+          description: Main diagonal entry ROI kept after masking.
+          placeholder: false
+      subzones:
+        - subzone_id: c6_outer_entry
+          parent_zone_id: c6_entry_main
+          subzone_type: entry
+          polygon:
+            - [0.0854, 0.3746]
+            - [0.6284, 0.2777]
+            - [0.6735, 0.1528]
+            - [0.7238, 0.1668]
+            - [0.6787, 0.2991]
+            - [0.0844, 0.4016]
+          priority: 100
+          description: Approach region before entry.
+          placeholder: false
+          allowed_transitions: []
+        - subzone_id: c6_inner_overlap
+          parent_zone_id: c6_entry_main
+          subzone_type: overlap
+          polygon:
+            - [0.0844, 0.4016]
+            - [0.6787, 0.2991]
+            - [0.7238, 0.1668]
+            - [0.9879, 0.2208]
+            - [0.9827, 0.9569]
+            - [0.0624, 0.9588]
+          priority: 110
+          description: Interior region after entry crossing, used for overlap handoffs.
+          placeholder: false
+          allowed_transitions: []
+    C7:
+      camera_id: C7
+      role: followup
+      description: Right-side follow-up ROI for real 4-camera handoff evaluation.
+      preview_source: Wildtrack/cam7.mp4
+      preview_source_type: file
+      frame_size_ref: { width: 1920, height: 1080 }
+      processing_roi:
+        polygon:
+          - [0.0215, 0.2199]
+          - [0.4764, 0.1509]
+          - [0.9575, 0.8274]
+          - [0.7814, 0.9355]
+          - [0.0110, 0.9411]
+      entry_line: { points: [], in_side_point: [] }
+      default_zone_id: c7_followup_main
+      default_subzone_id: c7_overlap_entry
+      entry_zones: [c7_followup_main]
+      exit_zones: [c7_followup_main]
+      zones:
+        - zone_id: c7_followup_main
+          zone_type: transit
+          polygon:
+            - [0.0215, 0.2199]
+            - [0.4764, 0.1509]
+            - [0.9575, 0.8274]
+            - [0.7814, 0.9355]
+            - [0.0110, 0.9411]
+          priority: 100
+          description: Main visible corridor for C7 after ROI tightening.
+          placeholder: false
+      subzones:
+        - subzone_id: c7_overlap_entry
+          parent_zone_id: c7_followup_main
+          subzone_type: overlap
+          polygon:
+            - [0.0267, 0.2255]
+            - [0.4743, 0.1603]
+            - [0.9460, 0.8199]
+            - [0.7794, 0.9224]
+            - [0.0162, 0.9224]
+          priority: 110
+          description: Overlap arrival corridor from C3/C6.
+          placeholder: false
+          allowed_transitions: []

@@ -319,6 +319,55 @@ def compute_local_tracking_mota(gt_rows, pred_rows, iou_threshold=0.5):
     }
 
 
+def aggregate_local_tracking_metrics(per_camera_metrics):
+    if not per_camera_metrics:
+        return {
+            "frame_count": 0,
+            "gt_detection_count": 0,
+            "pred_track_count": 0,
+            "gt_track_count": 0,
+            "mota": 0.0,
+            "tracking_idf1": 0.0,
+            "id_switches": 0,
+            "fp": 0,
+            "fn": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "per_camera": {},
+        }
+    total_gt = sum(int(item.get("gt_detection_count", 0)) for item in per_camera_metrics.values())
+    total_fp = sum(int(item.get("fp", 0)) for item in per_camera_metrics.values())
+    total_fn = sum(int(item.get("fn", 0)) for item in per_camera_metrics.values())
+    total_switches = sum(int(item.get("id_switches", 0)) for item in per_camera_metrics.values())
+    total_frames = sum(int(item.get("frame_count", 0)) for item in per_camera_metrics.values())
+    total_pred_tracks = sum(int(item.get("pred_track_count", 0)) for item in per_camera_metrics.values())
+    total_gt_tracks = sum(int(item.get("gt_track_count", 0)) for item in per_camera_metrics.values())
+    total_tp = max(0, total_gt - total_fn)
+    mota = 1.0 - ((total_fp + total_fn + total_switches) / max(total_gt, 1))
+    precision = total_tp / max(total_tp + total_fp, 1)
+    recall = total_tp / max(total_gt, 1)
+    weighted_idf1 = 0.0
+    if total_gt > 0:
+        weighted_idf1 = sum(
+            float(item.get("tracking_idf1", 0.0)) * int(item.get("gt_detection_count", 0))
+            for item in per_camera_metrics.values()
+        ) / float(total_gt)
+    return {
+        "frame_count": total_frames,
+        "gt_detection_count": total_gt,
+        "pred_track_count": total_pred_tracks,
+        "gt_track_count": total_gt_tracks,
+        "mota": round(float(mota), 4),
+        "tracking_idf1": round(float(weighted_idf1), 4),
+        "id_switches": total_switches,
+        "fp": total_fp,
+        "fn": total_fn,
+        "precision": round(float(precision), 4),
+        "recall": round(float(recall), 4),
+        "per_camera": per_camera_metrics,
+    }
+
+
 def build_unknown_timeline(resolved_rows):
     grouped = defaultdict(list)
     for row in resolved_rows:
@@ -383,6 +432,46 @@ def build_unknown_timeline(resolved_rows):
             }
         )
     return timeline_rows, timeline_json
+
+
+def summarize_unknown_handoffs(resolved_rows):
+    grouped = defaultdict(list)
+    for row in resolved_rows:
+        identity_id = normalize_identity_id(row)
+        if row.get("identity_status") != "unknown" or not identity_id:
+            continue
+        grouped[identity_id].append(row)
+    edge_counts = Counter()
+    sequences = []
+    for identity_id, rows in sorted(grouped.items(), key=lambda item: item[0]):
+        ordered = sorted(rows, key=lambda row: (safe_float(row.get("relative_sec")), row.get("camera_id", ""), row.get("event_id", "")))
+        camera_sequence = []
+        for row in ordered:
+            camera_id = row.get("camera_id", "")
+            if not camera_sequence or camera_sequence[-1] != camera_id:
+                camera_sequence.append(camera_id)
+        for index in range(1, len(camera_sequence)):
+            edge_counts[(camera_sequence[index - 1], camera_sequence[index])] += 1
+        sequences.append(
+            {
+                "identity_id": identity_id,
+                "camera_sequence": camera_sequence,
+                "appearance_count": len(ordered),
+                "first_seen_relative_sec": round(safe_float(ordered[0].get("relative_sec")), 3) if ordered else 0.0,
+                "last_seen_relative_sec": round(safe_float(ordered[-1].get("relative_sec")), 3) if ordered else 0.0,
+            }
+        )
+    multi_camera_sequences = [item for item in sequences if len(item["camera_sequence"]) >= 2]
+    return {
+        "unknown_identity_count": len(sequences),
+        "multi_camera_identity_count": len(multi_camera_sequences),
+        "handoff_edge_count": sum(edge_counts.values()),
+        "handoff_edges": [
+            {"src_camera_id": src, "dst_camera_id": dst, "count": count}
+            for (src, dst), count in sorted(edge_counts.items())
+        ],
+        "identity_sequences": sequences,
+    }
 
 
 def summarize_latency_records(records):
