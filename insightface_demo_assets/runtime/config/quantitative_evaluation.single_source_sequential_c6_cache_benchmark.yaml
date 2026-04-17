@@ -1,0 +1,13 @@
+quantitative_evaluation:
+  project_root: ../../..
+  evaluation_name: single_source_sequential_c6_cache_benchmark
+  offline_pipeline_config: insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml
+  benchmark_output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark
+  evaluation_output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark/evaluation
+  gt_output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark/evaluation/gt_reference
+  event_match:
+    frame_tolerance: 3
+    max_foot_distance_px: 80.0
+  mota:
+    local_camera_id: C1
+    iou_threshold: 0.5

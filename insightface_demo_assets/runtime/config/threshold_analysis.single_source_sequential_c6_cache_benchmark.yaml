@@ -1,0 +1,5 @@
+threshold_analysis:
+  project_root: ../../..
+  benchmark_output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark
+  quantitative_eval_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark/evaluation
+  output_root: outputs/offline_runs/single_source_sequential_c6_inference_cache_benchmark/evaluation/threshold_analysis

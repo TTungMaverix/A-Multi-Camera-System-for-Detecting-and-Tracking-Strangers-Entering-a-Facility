@@ -164,6 +164,7 @@ For each offline run:
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
 - `outputs/offline_runs/<run_name>/runtime/`
+- `outputs/offline_runs/<run_name>/evaluation/`
 
 Main final files:
 
@@ -171,6 +172,8 @@ Main final files:
 - `events/unknown_id_mapping.csv`
 - `timelines/stream_identity_timeline.csv`
 - `summaries/face_resolution_summary.json`
+- `summaries/offline_pipeline_summary.json`
+- `timelines/unknown_identity_timeline.json`
 - `summaries/single_source_replay_manifest.json`
 - `association_logs/association_decisions.jsonl`
 - `audit/audit_report.md`
@@ -178,3 +181,24 @@ Main final files:
 - `audit/audit_event_generation_subzones.csv`
 
 The audit CSV files include line-aware best-shot metadata so event creation and unknown ID reuse can be debugged without rerunning the full pipeline. The summaries directory now also exports `face_body_usage_summary.json` for video-phase face-vs-body evidence.
+
+## Quantitative Evaluation Add-on
+
+The offline replay benchmark now has a separate evaluation layer:
+
+- `run_quantitative_evaluation.py`
+- `run_threshold_analysis.py`
+
+This evaluation layer does not change runtime association. It reads generated benchmark artifacts and exports:
+
+- local `MOTA`
+- event-level replay `IDF1`
+- candidate-pair CSVs
+- ROC curves
+- Precision-Recall curves
+- positive/negative score distributions
+
+Reference configs:
+
+- `insightface_demo_assets/runtime/config/quantitative_evaluation.single_source_sequential_c6_cache_benchmark.yaml`
+- `insightface_demo_assets/runtime/config/threshold_analysis.single_source_sequential_c6_cache_benchmark.yaml`

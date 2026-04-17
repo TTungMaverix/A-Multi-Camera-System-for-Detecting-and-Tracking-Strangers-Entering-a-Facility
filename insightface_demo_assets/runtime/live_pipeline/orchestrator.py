@@ -19,6 +19,7 @@ from association_core import (
     load_camera_transition_map,
     resolve_spatial_context,
 )
+from evaluation_utils import summarize_latency_records
 from offline_pipeline.event_builder import (
     camera_processing_polygon,
     get_head_rect,
@@ -527,11 +528,13 @@ def live_camera_worker(worker_context, queue):
             frame, frame_idx, dropped_frames = reader.get(timeout_sec=1.0)
             if frame is None:
                 break
+            ingest_timestamp = time.time()
             now = time.time()
             if (now - last_emit) < min_interval:
                 continue
             last_emit = now
             processed_frames += 1
+            inference_start_timestamp = time.time()
             masked_frame = apply_processing_mask(
                 frame,
                 worker_context["camera_cfg"],
@@ -543,6 +546,7 @@ def live_camera_worker(worker_context, queue):
             )
             detections = _filter_detections_by_roi(detections, worker_context["camera_cfg"])
             tracks = tracker.update(detections, frame_idx)
+            inference_end_timestamp = time.time()
             for track in tracks:
                 _append_track_spatial_context(
                     track,
@@ -575,6 +579,10 @@ def live_camera_worker(worker_context, queue):
                         "camera_id": camera_id,
                         "event": packet_event,
                         "dropped_frames": dropped_frames,
+                        "ingest_timestamp": ingest_timestamp,
+                        "dequeue_ready_timestamp": time.time(),
+                        "inference_start_timestamp": inference_start_timestamp,
+                        "inference_end_timestamp": inference_end_timestamp,
                     },
                     timeout_sec=float(worker_context["live_cfg"].get("queue_put_timeout_sec", 0.5)),
                 ):
@@ -634,6 +642,7 @@ def _build_live_event_view(latest_row, event, latest_log, pipeline_start_time):
     identity_state = latest_row.get("ui_identity_state", latest_row["identity_status"])
     return {
         "timestamp": time.time(),
+        "event_id": latest_row.get("event_id", ""),
         "camera_id": latest_row["camera_id"],
         "identity_type": identity_state,
         "identity_id": latest_row["resolved_global_id"] or latest_row["matched_known_id"] or "",
@@ -756,6 +765,8 @@ def run_live_pipeline(config_path: Path):
     resolved_jsonl.write_text("", encoding="utf-8")
     decision_jsonl = output_root / "association_logs" / "live_decision_stream.jsonl"
     decision_jsonl.write_text("", encoding="utf-8")
+    simulated_trace_jsonl = output_root / "events" / "simulated_realtime_trace.jsonl"
+    simulated_trace_jsonl.write_text("", encoding="utf-8")
     consumer_started = time.time()
     while len(done) < len(workers):
         packet = queue.get()
@@ -764,14 +775,18 @@ def run_live_pipeline(config_path: Path):
         packet_type = packet["packet_type"]
         if packet_type == "live_event":
             event = packet["event"]
+            dequeue_timestamp = time.time()
+            crop_analysis_started = time.time()
             analyzed = analyze_event_crops(
                 app,
                 [event],
                 quality_policy=policy.get("quality_gate"),
                 body_reid_policy=policy.get("body_reid"),
             )[0]
+            crop_analysis_finished = time.time()
             analyzed_events.append(analyzed)
             analyzed_events.sort(key=lambda item: float(item["event"]["relative_sec"]))
+            association_started = time.time()
             resolved_rows, _profiles, _trace_rows, debug = assign_model_identities(
                 analyzed_events,
                 identity_means,
@@ -781,11 +796,35 @@ def run_live_pipeline(config_path: Path):
                 policy=policy,
                 return_debug_bundle=True,
             )
+            association_finished = time.time()
             latest_row = resolved_rows[-1]
             latest_log = debug["decision_logs"][-1]
             live_event = _build_live_event_view(latest_row, event, latest_log, pipeline_start_time)
+            emitted_timestamp = time.time()
+            end_to_end_latency_sec = max(0.0, emitted_timestamp - float(packet.get("ingest_timestamp", emitted_timestamp)))
+            live_event["latency_sec"] = round(end_to_end_latency_sec, 3)
             latest_state.append(live_event)
             latency_values.append(float(live_event["latency_sec"]))
+            _append_jsonl(
+                simulated_trace_jsonl,
+                {
+                    "camera_id": packet["camera_id"],
+                    "event_id": latest_row.get("event_id", ""),
+                    "ingest_timestamp": packet.get("ingest_timestamp", 0.0),
+                    "dequeue_ready_timestamp": packet.get("dequeue_ready_timestamp", 0.0),
+                    "dequeue_timestamp": dequeue_timestamp,
+                    "inference_start_timestamp": packet.get("inference_start_timestamp", 0.0),
+                    "inference_end_timestamp": packet.get("inference_end_timestamp", 0.0),
+                    "crop_analysis_start_timestamp": crop_analysis_started,
+                    "crop_analysis_end_timestamp": crop_analysis_finished,
+                    "association_start_timestamp": association_started,
+                    "association_end_timestamp": association_finished,
+                    "event_emitted_timestamp": emitted_timestamp,
+                    "end_to_end_latency_sec": round(end_to_end_latency_sec, 4),
+                    "identity_type": live_event["identity_type"],
+                    "identity_id": live_event["identity_id"],
+                },
+            )
             if live_event["identity_type"] == "known":
                 counters["known_event_count"] += 1
             elif live_event["identity_type"] == "pending":
@@ -825,6 +864,7 @@ def run_live_pipeline(config_path: Path):
     for process in workers:
         process.join()
 
+    latency_summary = summarize_latency_records(latency_values)
     summary = {
         "pipeline_name": live_config.get("pipeline_name", "live_multicam_demo"),
         "config_path": str(config_path),
@@ -837,10 +877,17 @@ def run_live_pipeline(config_path: Path):
         "body_fallback_used_count": counters["body_fallback_used_count"],
         "dropped_frames_total": counters["dropped_frames_total"],
         "queue_dropped_packets_total": counters["queue_dropped_packets_total"],
-        "avg_latency_sec": round(sum(latency_values) / len(latency_values), 3) if latency_values else 0.0,
-        "max_latency_sec": round(max(latency_values), 3) if latency_values else 0.0,
+        "avg_latency_sec": latency_summary["avg_latency_sec"],
+        "p50_latency_sec": latency_summary["p50_latency_sec"],
+        "p95_latency_sec": latency_summary["p95_latency_sec"],
+        "max_latency_sec": latency_summary["max_latency_sec"],
         "consumer_runtime_sec": round(max(time.time() - consumer_started, 1e-9), 3),
         "consumer_fps": round(len(latest_state) / max(time.time() - consumer_started, 1e-9), 3),
+        "event_throughput_fps": round(len(latest_state) / max(time.time() - pipeline_start_time, 1e-9), 3),
+        "drop_rate": round(
+            counters["dropped_frames_total"] / max(counters["dropped_frames_total"] + sum(item["processed_frames"] for item in worker_summaries.values()), 1),
+            4,
+        ),
         "worker_summaries": worker_summaries,
         "error_count": len(errors),
         "errors": errors,
@@ -848,6 +895,8 @@ def run_live_pipeline(config_path: Path):
         "camera_transition_map_runtime": transition_runtime,
         "scene_calibration_runtime": scene_runtime,
         "architecture_mode": "asynchronous_producer_consumer",
+        "runtime_mode": "simulated_realtime_recorded_video",
+        "trace_artifact": str(simulated_trace_jsonl),
     }
     save_json(output_root / "summaries" / "live_pipeline_summary.json", summary)
     save_json(output_root / "logs" / "live_worker_packets.json", logs)

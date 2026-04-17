@@ -17,6 +17,7 @@ The UI only needs to show:
 - which ID was assigned
 - which zone/subzone it belongs to
 - which snapshot was stored
+- how the same `Unknown_ID` moves through cameras over time
 
 The same lightweight server now also provides a calibration page so ROI/zone/subzone geometry can be edited without adding a second demo app.
 
@@ -41,6 +42,7 @@ The UI reads the outputs created by the live pipeline:
 
 - `outputs/live_runs/<run_name>/events/latest_events.json`
 - `outputs/live_runs/<run_name>/summaries/live_pipeline_summary.json`
+- `outputs/live_runs/<run_name>/events/simulated_realtime_trace.jsonl`
 
 `live_pipeline_summary.json` now also exposes the concurrency audit fields used in the latest phase:
 
@@ -49,6 +51,12 @@ The UI reads the outputs created by the live pipeline:
 - per-camera `event_fps`
 - overall `consumer_fps`
 - dropped-frame counters
+
+For offline replay demos, the same server can also read:
+
+- `outputs/offline_runs/<run_name>/timelines/unknown_identity_timeline.json`
+
+That lets the same UI show a proper Unknown-ID timeline even when the source run is a sequential replay benchmark instead of the live path.
 
 Snapshot images are served through:
 
@@ -62,6 +70,7 @@ The server validates that the requested file still stays inside the project root
 - `/calibration.html`
 - `/api/latest-events`
 - `/api/summary`
+- `/api/timeline`
 - `/api/calibration/state`
 - `/api/calibration/preview?camera_id=...`
 - `/api/calibration/save`
@@ -95,3 +104,11 @@ This is a defense-oriented UI, not a finished monitoring product.
 The live page reflects whatever the current live pipeline emits. If an event is still under pending association, the card now stays gray/dashed and shows `Analyzing...` until the backend resolves or garbage-collects that pending state.
 
 The live page reflects whatever the current live pipeline emits. If the live ingestion is run through file replay or only 2 cameras, the page will reflect that exact setup.
+
+The timeline section is the defense-oriented view:
+
+- one card per finalized unknown identity
+- first seen camera/time
+- ordered camera sequence
+- representative best-shot
+- appearance history with modality and zone/subzone context

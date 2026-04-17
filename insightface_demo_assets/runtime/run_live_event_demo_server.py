@@ -62,8 +62,93 @@ def load_latest_events(output_root: Path):
     return [build_browser_event(event) for event in events]
 
 
+def _timeline_payload_with_urls(payload):
+    item = dict(payload)
+    item["representative_snapshot_url"] = artifact_url(item.get("representative_snapshot_path", ""))
+    item["representative_head_snapshot_url"] = artifact_url(item.get("representative_head_snapshot_path", ""))
+    appearances = []
+    for appearance in item.get("appearances", []):
+        updated = dict(appearance)
+        updated["snapshot_url"] = artifact_url(updated.get("best_body_crop", ""))
+        updated["head_snapshot_url"] = artifact_url(updated.get("best_head_crop", ""))
+        appearances.append(updated)
+    item["appearances"] = appearances
+    return item
+
+
+def load_identity_timeline(output_root: Path):
+    timeline_json = output_root / "timelines" / "unknown_identity_timeline.json"
+    if timeline_json.exists():
+        payload = load_json_file(timeline_json, [])
+        return [_timeline_payload_with_urls(item) for item in payload]
+
+    latest_events = load_latest_events(output_root)
+    grouped = {}
+    for event in latest_events:
+        identity_id = event.get("identity_id") or event.get("identity_label") or event.get("camera_id")
+        grouped.setdefault(
+            identity_id,
+            {
+                "identity_id": identity_id,
+                "identity_label": event.get("identity_label") or identity_id,
+                "identity_status": event.get("identity_type", ""),
+                "appearance_count": 0,
+                "camera_sequence": [],
+                "first_seen_camera": event.get("camera_id", ""),
+                "first_seen_relative_sec": event.get("relative_sec", 0.0),
+                "last_seen_camera": event.get("camera_id", ""),
+                "last_seen_relative_sec": event.get("relative_sec", 0.0),
+                "representative_snapshot_path": event.get("snapshot_path", ""),
+                "representative_head_snapshot_path": event.get("head_snapshot_path", ""),
+                "appearances": [],
+            },
+        )
+        grouped[identity_id]["appearance_count"] += 1
+        grouped[identity_id]["camera_sequence"].append(event.get("camera_id", ""))
+        grouped[identity_id]["last_seen_camera"] = event.get("camera_id", "")
+        grouped[identity_id]["last_seen_relative_sec"] = event.get("relative_sec", 0.0)
+        grouped[identity_id]["appearances"].append(
+            {
+                "event_id": event.get("event_id", ""),
+                "camera_id": event.get("camera_id", ""),
+                "relative_sec": event.get("relative_sec", 0.0),
+                "relation_type": event.get("direction", ""),
+                "zone_id": event.get("zone_id", ""),
+                "subzone_id": event.get("subzone_id", ""),
+                "identity_status": event.get("identity_type", ""),
+                "ui_identity_state": event.get("identity_type", ""),
+                "ui_identity_label": event.get("identity_label", ""),
+                "modality_primary_used": event.get("modality_primary", ""),
+                "modality_secondary_used": event.get("modality_secondary", ""),
+                "decision_reason": event.get("decision_reason", ""),
+                "reason_code": event.get("reason_code", ""),
+                "best_body_crop": event.get("snapshot_path", ""),
+                "best_head_crop": event.get("head_snapshot_path", ""),
+            }
+        )
+    return [_timeline_payload_with_urls(item) for item in grouped.values()]
+
+
 def load_live_summary(output_root: Path):
-    return load_json_file(output_root / "summaries" / "live_pipeline_summary.json", {})
+    live_summary_path = output_root / "summaries" / "live_pipeline_summary.json"
+    if live_summary_path.exists():
+        return load_json_file(live_summary_path, {})
+    face_summary_path = output_root / "summaries" / "face_resolution_summary.json"
+    if face_summary_path.exists():
+        payload = load_json_file(face_summary_path, {})
+        mode_b = payload.get("mode_b_true_assoc", {})
+        return {
+            "pipeline_name": "offline_replay_summary",
+            "live_event_count": mode_b.get("total_event_count", 0),
+            "known_event_count": mode_b.get("known_accept_count", 0),
+            "unknown_event_count": mode_b.get("unknown_event_count", 0),
+            "pending_event_count": mode_b.get("pending_count", 0),
+            "body_fallback_used_count": mode_b.get("body_fallback_used_count", 0),
+            "avg_latency_sec": 0.0,
+            "dropped_frames_total": 0,
+            "worker_summaries": {},
+        }
+    return {}
 
 
 def read_request_json(handler):
@@ -165,6 +250,8 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             return self._send_json({"events": load_latest_events(self.output_root)})
         if parsed.path == "/api/summary":
             return self._send_json(load_live_summary(self.output_root))
+        if parsed.path == "/api/timeline":
+            return self._send_json({"identities": load_identity_timeline(self.output_root)})
         if parsed.path == "/api/calibration/state":
             return self._send_json(self._calibration_state_payload())
         if parsed.path == "/api/calibration/preview":

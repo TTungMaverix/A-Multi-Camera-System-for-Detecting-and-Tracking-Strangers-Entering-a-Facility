@@ -74,6 +74,12 @@
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 16px;
     }
+    .timeline-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
     .event-card {
       display: grid;
       grid-template-columns: 120px 1fr;
@@ -134,6 +140,38 @@
       color: var(--muted);
       background: rgba(255,255,255,0.55);
     }
+    .timeline-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
+      display: grid;
+      gap: 12px;
+    }
+    .timeline-card .hero-shot {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    .timeline-card img {
+      width: 96px;
+      height: 96px;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #d5d0c2;
+    }
+    .timeline-steps {
+      display: grid;
+      gap: 8px;
+    }
+    .timeline-step {
+      border-left: 3px solid var(--accent);
+      padding-left: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -145,6 +183,7 @@
     </section>
     <section class="summary" id="summary"></section>
     <section class="event-grid" id="events"></section>
+    <section class="timeline-grid" id="timeline"></section>
   </main>
   <script>
     async function fetchJson(url) {
@@ -205,16 +244,51 @@
       }).join("");
     }
 
+    function renderTimeline(identities) {
+      const root = document.getElementById("timeline");
+      if (!identities.length) {
+        root.innerHTML = `<div class="empty">No identity timeline available yet. Run the replay benchmark or live pipeline first.</div>`;
+        return;
+      }
+      root.innerHTML = identities.map((identity) => {
+        const heroShot = identity.representative_snapshot_url
+          ? `<img src="${identity.representative_snapshot_url}" alt="identity snapshot">`
+          : `<img alt="no snapshot">`;
+        const steps = (identity.appearances || []).map((appearance) => `
+          <div class="timeline-step">
+            <strong>${appearance.camera_id}</strong> @ ${appearance.relative_sec || 0}s<br>
+            zone=${appearance.zone_id || "-"} · subzone=${appearance.subzone_id || "-"} · primary=${appearance.modality_primary_used || "-"}
+          </div>
+        `).join("");
+        return `
+          <article class="timeline-card">
+            <div class="hero-shot">
+              ${heroShot}
+              <div>
+                <div class="pill unknown">${identity.identity_label || identity.identity_id}</div>
+                <strong>${identity.first_seen_camera} @ ${identity.first_seen_relative_sec || 0}s</strong>
+                <div class="meta">appearances=${identity.appearance_count || 0} · cameras=${(identity.camera_sequence || []).join(" → ")}</div>
+              </div>
+            </div>
+            <div class="timeline-steps">${steps}</div>
+          </article>
+        `;
+      }).join("");
+    }
+
     async function refresh() {
       try {
-        const [summary, latest] = await Promise.all([
+        const [summary, latest, timeline] = await Promise.all([
           fetchJson("/api/summary"),
           fetchJson("/api/latest-events"),
+          fetchJson("/api/timeline"),
         ]);
         renderSummary(summary);
         renderEvents(latest.events || []);
+        renderTimeline(timeline.identities || []);
       } catch (error) {
         document.getElementById("events").innerHTML = `<div class="empty">Failed to load live data: ${error.message}</div>`;
+        document.getElementById("timeline").innerHTML = "";
       }
     }
 

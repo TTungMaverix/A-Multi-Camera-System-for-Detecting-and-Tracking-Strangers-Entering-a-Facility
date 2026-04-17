@@ -27,6 +27,11 @@ Current verified run in this repository:
 - `file`-mode sanity replay through the live code path
 - config: `insightface_demo_assets/runtime/config/live_pipeline_demo.file_sanity.yaml`
 
+Current simulated real-time benchmark for thesis wording:
+
+- `file`-mode replay through the live queue path with per-event latency tracing
+- config: `insightface_demo_assets/runtime/config/live_pipeline_demo.simulated_realtime_file.yaml`
+
 This is a pragmatic sanity step because the current Codex environment does not guarantee 4 real cameras or RTSP streams at the same time.
 
 ## Architecture
@@ -91,6 +96,7 @@ For a live run, outputs go to:
 - `outputs/live_runs/<run_name>/events/live_event_stream.jsonl`
 - `outputs/live_runs/<run_name>/events/latest_events.json`
 - `outputs/live_runs/<run_name>/events/resolved_live_events.jsonl`
+- `outputs/live_runs/<run_name>/events/simulated_realtime_trace.jsonl`
 - `outputs/live_runs/<run_name>/association_logs/live_decision_stream.jsonl`
 - `outputs/live_runs/<run_name>/association_logs/latest_decision_log.json`
 - `outputs/live_runs/<run_name>/summaries/live_pipeline_summary.json`
@@ -122,6 +128,13 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
 ```
 
+Simulated real-time file-queue run:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.simulated_realtime_file.yaml"
+```
+
 RTSP config template:
 
 - `insightface_demo_assets/runtime/config/live_pipeline_demo.rtsp.example.yaml`
@@ -129,6 +142,23 @@ RTSP config template:
 Webcam config template:
 
 - `insightface_demo_assets/runtime/config/live_pipeline_demo.webcam.example.yaml`
+
+## Simulated Real-time Wording
+
+For the thesis defense, this pipeline should be described as:
+
+- `event-driven`
+- `asynchronous producer-consumer`
+- `simulated real-time processing over recorded video streams`
+
+Why:
+
+- recorded video is ingested by per-camera producers
+- packets enter a real internal queue
+- the central consumer performs crop analysis and association
+- per-event latency is measured from ingest to emit
+
+This is more precise than claiming "live real-time" on hardware that does not sustain full 4-stream inference.
 
 ## Current Limitations
 

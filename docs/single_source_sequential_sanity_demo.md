@@ -128,12 +128,31 @@ Important files:
 - `events/resolved_events.csv`
 - `events/unknown_id_mapping.csv`
 - `timelines/stream_identity_timeline.csv`
+- `timelines/unknown_identity_timeline.json`
 - `timelines/unknown_profiles.csv`
 - `summaries/face_resolution_summary.json`
 - `summaries/single_source_replay_manifest.json`
 - `association_logs/association_decisions.jsonl`
+- `evaluation/quantitative_metrics_summary.json`
+- `evaluation/threshold_analysis/threshold_recommendation_summary.json`
 - `audit/`
 
 ## Pass Criterion
 
 This sanity mode passes if the same unknown person from the single source video is assigned the same `Unknown_Global_ID` across the corresponding virtual passes `C1 -> C2 -> C3 -> C4`.
+
+## Quantitative Add-on
+
+The same replay benchmark now supports a quantitative pass:
+
+1. run the cache benchmark config
+2. run `run_quantitative_evaluation.py`
+3. run `run_threshold_analysis.py`
+
+This exports:
+
+- event-level `IDF1`
+- local `MOTA`
+- ROC / PR plots
+- positive-vs-negative score distributions
+- a timeline-ready Unknown-ID history JSON for the demo UI

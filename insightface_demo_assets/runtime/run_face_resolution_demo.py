@@ -38,6 +38,7 @@ from association_core import (
 )
 from association_core.body_reid import get_body_reid_extractor
 from association_core.quality_gate import evaluate_buffered_face_gate
+from evaluation_utils import build_unknown_timeline
 from offline_pipeline.event_builder import (
     FrameSourceCache,
     crop_event_buffer_records,
@@ -1903,6 +1904,8 @@ def main(config_path: Path):
     mode_b_timeline_csv = runtime_dir / "stream_identity_timeline_mode_b.csv"
     summary_json = runtime_dir / "face_resolution_summary.json"
     face_body_summary_json = runtime_dir / "face_body_usage_summary.json"
+    unknown_timeline_csv = runtime_dir / "unknown_identity_timeline.csv"
+    unknown_timeline_json = runtime_dir / "unknown_identity_timeline.json"
     unknown_profiles_csv = resolve_path(base_dir, config["unknown_profiles_csv"])
     fixed_event_csv = runtime_dir / "generated_candidate_events_mode_b.csv"
     fixed_crop_root = runtime_dir / "generated_event_crops"
@@ -2105,6 +2108,7 @@ def main(config_path: Path):
     face_buffer_audit_rows = build_face_buffer_audit_rows(analyzed_fixed)
     unknown_profile_rows = build_unknown_profile_rows(profiles)
     mode_b_timeline_rows = build_stream_timeline_from_events(track_rows, mode_b_resolved_rows)
+    unknown_timeline_rows, unknown_timeline_payload = build_unknown_timeline(mode_b_resolved_rows)
     event_assignment_audit_rows = [
         core_build_event_assignment_audit_row("mode_a_baseline", event) for event in baseline_events
     ] + [
@@ -2175,6 +2179,11 @@ def main(config_path: Path):
         mode_b_timeline_rows,
         fieldnames_for_rows(mode_b_timeline_rows, ["resolved_global_id"]),
     )
+    write_csv(
+        unknown_timeline_csv,
+        unknown_timeline_rows,
+        fieldnames_for_rows(unknown_timeline_rows, ["identity_id", "appearance_index", "event_id"]),
+    )
     write_csv(unknown_profiles_csv, unknown_profile_rows, fieldnames_for_rows(unknown_profile_rows, ["unknown_global_id"]))
     write_csv(audit_multicam_gt_coverage_csv, coverage_rows, fieldnames_for_rows(coverage_rows, ["global_gt_id"]))
     write_csv(audit_missing_event_reasons_csv, missing_rows, fieldnames_for_rows(missing_rows, ["run_mode"]))
@@ -2209,6 +2218,7 @@ def main(config_path: Path):
         },
     )
     save_json(face_body_summary_json, face_body_summary)
+    save_json(unknown_timeline_json, unknown_timeline_payload)
     write_csv(audit_overlap_cases_csv, overlap_rows, fieldnames_for_rows(overlap_rows, ["global_gt_id"]))
     write_csv(audit_gt_split_merge_csv, split_merge_rows, fieldnames_for_rows(split_merge_rows, ["run_mode"]))
     write_csv(
@@ -2268,6 +2278,11 @@ def main(config_path: Path):
         "face_body_usage": {
             "summary_json": str(face_body_summary_json),
             "metrics": face_body_summary,
+        },
+        "unknown_identity_timeline": {
+            "timeline_csv": str(unknown_timeline_csv),
+            "timeline_json": str(unknown_timeline_json),
+            "identity_count": len(unknown_timeline_payload),
         },
         "event_generation_audit": {
             "subzone_assignment_csv": str(audit_event_generation_subzones_csv),

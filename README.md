@@ -28,6 +28,7 @@ The current default runnable vertical slice is the supervisor-approved Cam6 vide
 11. hard-reject impossible camera transitions before face/body similarity is evaluated
 12. cache detector+tracker outputs so association/body-reid debug loops do not rerun YOLO+ByteTrack every time
 13. export resolved events, timelines, mapping tables, and audit logs into a single run folder
+14. evaluate the replay benchmark with event-level `IDF1`, local tracking `MOTA`, ROC/PR threshold analysis, and an Unknown-ID timeline view
 
 This phase is intentionally simpler than the harder real multi-camera case. The goal is to prove that the core reuse logic works in the easiest sequential sanity scenario before returning to more difficult multi-camera conditions.
 
@@ -40,7 +41,9 @@ Important limitation:
 - cross-camera appearance now supports `face only`, `body only`, and configurable `face+body fusion` with OSNet body embeddings
 - topology/travel-time is now a hard pre-similarity gate; impossible camera/time pairs are rejected before face/body scoring
 - detector+tracker cache now stores true YOLOv8n + ByteTrack source-track outputs for replay debug runs
+- replay benchmark runs now export quantitative evaluation artifacts under `evaluation/`, including `IDF1`, `MOTA`, ROC/PR curves, and score distributions
 - the current replay debug path is still synchronous, while the live file/RTSP path is the asynchronous producer-consumer implementation
+- the live file path is now documented as `simulated real-time processing over recorded video streams`, with per-event latency traces instead of vague live/FPS claims
 - a longer `90` second actual-video config exists for the same replay mode, but it exceeded the current local timeout budget during verification
 
 ## Association Source of Truth
@@ -83,6 +86,7 @@ Additional docs:
 - [docs/live_pipeline.md](docs/live_pipeline.md)
 - [docs/live_demo_ui.md](docs/live_demo_ui.md)
 - [docs/manual_scene_calibration.md](docs/manual_scene_calibration.md)
+- [docs/quantitative_evaluation.md](docs/quantitative_evaluation.md)
 
 ## Phase Status
 
@@ -179,6 +183,20 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.single_source_sequential_c6_inference_cache_benchmark.yaml"
 ```
 
+Quantitative evaluation on the same benchmark window:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_quantitative_evaluation.py" --config ".\insightface_demo_assets\runtime\config\quantitative_evaluation.single_source_sequential_c6_cache_benchmark.yaml"
+```
+
+Threshold analysis on the evaluated candidate pairs:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_threshold_analysis.py" --config ".\insightface_demo_assets\runtime\config\threshold_analysis.single_source_sequential_c6_cache_benchmark.yaml"
+```
+
 Low-load sanity run:
 
 ```cmd
@@ -198,6 +216,13 @@ Direct live orchestrator:
 ```cmd
 cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.file_sanity.yaml"
+```
+
+Simulated real-time file-queue benchmark:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_multicam_demo.py" --config ".\insightface_demo_assets\runtime\config\live_pipeline_demo.simulated_realtime_file.yaml"
 ```
 
 Start the lightweight web demo:
@@ -235,11 +260,14 @@ Main outputs:
 - `outputs/offline_runs/<run_name>/summaries/`
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
+- `outputs/offline_runs/<run_name>/evaluation/`
 - `outputs/offline_runs/<run_name>/events/unknown_id_mapping.csv`
 - `outputs/offline_runs/<run_name>/summaries/face_body_usage_summary.json`
+- `outputs/offline_runs/<run_name>/timelines/unknown_identity_timeline.json`
 - `outputs/live_runs/<run_name>/events/`
 - `outputs/live_runs/<run_name>/association_logs/`
 - `outputs/live_runs/<run_name>/summaries/`
+- `outputs/live_runs/<run_name>/events/simulated_realtime_trace.jsonl`
 - `insightface_demo_assets/runtime/face_resolution_summary.json`
 - `insightface_demo_assets/runtime/stream_identity_timeline.csv`
 - `insightface_demo_assets/runtime/audit_report.md`
