@@ -23,10 +23,10 @@ offline_pipeline:
       C7: Wildtrack/cam7.mp4
   multi_source_inference:
     detector_model: yolov8n.pt
-    tracker: bytetrack.yaml
+    tracker: insightface_demo_assets/runtime/config/bytetrack.wildtrack_4cam_strict.yaml
     device: cpu
-    conf_threshold: 0.25
-    iou_threshold: 0.5
+    conf_threshold: 0.45
+    iou_threshold: 0.35
     imgsz: 640
     person_class_id: 0
     target_timeline_fps: 10

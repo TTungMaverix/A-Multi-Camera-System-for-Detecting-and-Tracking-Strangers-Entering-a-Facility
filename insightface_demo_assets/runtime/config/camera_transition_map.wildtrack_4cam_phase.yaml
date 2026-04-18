@@ -49,7 +49,7 @@ camera_transition_map:
       allowed_exit_zones: [c5_entry_main]
       allowed_entry_zones: [c6_entry_main]
       allowed_exit_subzones: [c5_inner_overlap]
-      allowed_entry_subzones: [c6_inner_overlap]
+      allowed_entry_subzones: [c6_inner_overlap, c6_outer_entry]
       weak_link_support: false
       description: Entry-side overlap between the two left cameras.
     - transition_id: C6_to_C5_overlap
@@ -63,7 +63,7 @@ camera_transition_map:
       max_travel_time_sec: 2.5
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c5_entry_main]
-      allowed_exit_subzones: [c6_inner_overlap]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
       allowed_entry_subzones: [c5_inner_overlap]
       weak_link_support: false
       description: Reverse overlap from C6 back to C5.
@@ -78,7 +78,7 @@ camera_transition_map:
       max_travel_time_sec: 4.0
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c3_followup_main]
-      allowed_exit_subzones: [c6_inner_overlap]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
       allowed_entry_subzones: [c3_overlap_entry]
       weak_link_support: false
       description: Main handoff from diagonal entry view into the central follow-up camera.
@@ -138,7 +138,7 @@ camera_transition_map:
       max_travel_time_sec: 4.5
       allowed_exit_zones: [c6_entry_main]
       allowed_entry_zones: [c7_followup_main]
-      allowed_exit_subzones: [c6_inner_overlap]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
       allowed_entry_subzones: [c7_overlap_entry]
       weak_link_support: false
       description: Direct but weaker overlap from diagonal entry to right follow-up camera.
@@ -154,6 +154,6 @@ camera_transition_map:
       allowed_exit_zones: [c7_followup_main]
       allowed_entry_zones: [c6_entry_main]
       allowed_exit_subzones: [c7_overlap_entry]
-      allowed_entry_subzones: [c6_inner_overlap]
+      allowed_entry_subzones: [c6_inner_overlap, c6_outer_entry]
       weak_link_support: false
       description: Reverse overlap from C7 back to C6.

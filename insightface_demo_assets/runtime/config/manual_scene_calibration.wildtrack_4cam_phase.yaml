@@ -1,238 +1,629 @@
-scene_calibration:
-  version: 1
-  coordinate_space: normalized
-  processing:
-    require_manual_calibration: true
-    roi_mask_enabled: true
-    mask_outside_polygon: true
-    preview_overlay_enabled: true
-    preview_interval_sec: 1.0
-    min_bbox_coverage: 0.35
-  direction_filter:
-    history_window: 6
-    minimum_points: 4
-    minimum_inward_motion_px: 18
-    minimum_inside_ratio: 0.55
-    require_zone_transition: false
-    allow_line_cross_only_when_history_short: false
-    inward_zone_types: [exit, interior, overlap, transit]
-    outward_zone_types: [entry, outer, approach]
-  cameras:
-    C3:
-      camera_id: C3
-      role: followup
-      description: ROI-focused follow-up plaza view for the 4-camera benchmark.
-      preview_source: Wildtrack/cam3.mp4
-      preview_source_type: file
-      frame_size_ref: { width: 1920, height: 1080 }
-      processing_roi:
-        polygon:
-          - [0.0770, 0.1957]
-          - [0.3234, 0.1155]
-          - [0.6399, 0.2143]
-          - [0.6735, 0.2460]
-          - [0.1012, 0.5031]
-      entry_line: { points: [], in_side_point: [] }
-      default_zone_id: c3_followup_main
-      default_subzone_id: c3_overlap_entry
-      entry_zones: [c3_followup_main]
-      exit_zones: [c3_followup_main]
-      zones:
-        - zone_id: c3_followup_main
-          zone_type: transit
-          polygon:
-            - [0.0770, 0.1957]
-            - [0.3234, 0.1155]
-            - [0.6399, 0.2143]
-            - [0.6735, 0.2460]
-            - [0.1012, 0.5031]
-          priority: 100
-          description: Main visible corridor for C3 after ROI tightening.
-          placeholder: false
-      subzones:
-        - subzone_id: c3_overlap_entry
-          parent_zone_id: c3_followup_main
-          subzone_type: overlap
-          polygon:
-            - [0.1074, 0.4957]
-            - [0.6672, 0.2460]
-            - [0.6389, 0.2180]
-            - [0.3244, 0.1202]
-            - [0.0802, 0.1985]
-          priority: 110
-          description: Main overlap arrival region from entry-side cameras.
-          placeholder: false
-          allowed_transitions: []
-    C5:
-      camera_id: C5
-      role: entry
-      description: Entry-side ROI for the front-facing camera.
-      preview_source: Wildtrack/cam5.mp4
-      preview_source_type: file
-      frame_size_ref: { width: 1920, height: 1080 }
-      processing_roi:
-        polygon:
-          - [0.4282, 0.1789]
-          - [0.9418, 0.1714]
-          - [0.9953, 0.2441]
-          - [0.9900, 0.8721]
-          - [0.4638, 0.9504]
-      entry_line:
-        points:
-          - [0.6787, 0.3820]
-          - [0.9911, 0.5982]
-        in_side_point: [0.9439, 0.4416]
-      default_zone_id: c5_entry_main
-      default_subzone_id: c5_inner_overlap
-      entry_zones: [c5_entry_main]
-      exit_zones: [c5_entry_main]
-      zones:
-        - zone_id: c5_entry_main
-          zone_type: entry
-          polygon:
-            - [0.4345, 0.1910]
-            - [0.9387, 0.1761]
-            - [0.9911, 0.2469]
-            - [0.9827, 0.8507]
-            - [0.4785, 0.9271]
-          priority: 100
-          description: Main entry ROI kept after masking.
-          placeholder: false
-      subzones:
-        - subzone_id: c5_outer_entry
-          parent_zone_id: c5_entry_main
-          subzone_type: entry
-          polygon:
-            - [0.6284, 0.1826]
-            - [0.7448, 0.1770]
-            - [0.9911, 0.4062]
-            - [0.9889, 0.6038]
-            - [0.6724, 0.3690]
-          priority: 100
-          description: Approach region before the inward crossing.
-          placeholder: false
-          allowed_transitions: []
-        - subzone_id: c5_inner_overlap
-          parent_zone_id: c5_entry_main
-          subzone_type: overlap
-          polygon:
-            - [0.4387, 0.1966]
-            - [0.4785, 0.9271]
-            - [0.9827, 0.8507]
-            - [0.9911, 0.2469]
-            - [0.9387, 0.1761]
-          priority: 110
-          description: Interior/overlap region after entry crossing.
-          placeholder: false
-          allowed_transitions: []
-    C6:
-      camera_id: C6
-      role: entry
-      description: Entry-side diagonal camera for 4-camera transition benchmarking.
-      preview_source: Wildtrack/cam6.mp4
-      preview_source_type: file
-      frame_size_ref: { width: 1920, height: 1080 }
-      processing_roi:
-        polygon:
-          - [0.0844, 0.3056]
-          - [0.5498, 0.2441]
-          - [0.6032, 0.1454]
-          - [0.9953, 0.2162]
-          - [0.9890, 0.9746]
-          - [0.0529, 0.9783]
-      entry_line:
-        points:
-          - [0.0865, 0.3857]
-          - [0.6619, 0.2870]
-        in_side_point: [0.5487, 0.5311]
-      default_zone_id: c6_entry_main
-      default_subzone_id: c6_inner_overlap
-      entry_zones: [c6_entry_main]
-      exit_zones: [c6_entry_main]
-      zones:
-        - zone_id: c6_entry_main
-          zone_type: entry
-          polygon:
-            - [0.0854, 0.3746]
-            - [0.6284, 0.2777]
-            - [0.6735, 0.1528]
-            - [0.9911, 0.2124]
-            - [0.9858, 0.9634]
-            - [0.0561, 0.9690]
-          priority: 100
-          description: Main diagonal entry ROI kept after masking.
-          placeholder: false
-      subzones:
-        - subzone_id: c6_outer_entry
-          parent_zone_id: c6_entry_main
-          subzone_type: entry
-          polygon:
-            - [0.0854, 0.3746]
-            - [0.6284, 0.2777]
-            - [0.6735, 0.1528]
-            - [0.7238, 0.1668]
-            - [0.6787, 0.2991]
-            - [0.0844, 0.4016]
-          priority: 100
-          description: Approach region before entry.
-          placeholder: false
-          allowed_transitions: []
-        - subzone_id: c6_inner_overlap
-          parent_zone_id: c6_entry_main
-          subzone_type: overlap
-          polygon:
-            - [0.0844, 0.4016]
-            - [0.6787, 0.2991]
-            - [0.7238, 0.1668]
-            - [0.9879, 0.2208]
-            - [0.9827, 0.9569]
-            - [0.0624, 0.9588]
-          priority: 110
-          description: Interior region after entry crossing, used for overlap handoffs.
-          placeholder: false
-          allowed_transitions: []
-    C7:
-      camera_id: C7
-      role: followup
-      description: Right-side follow-up ROI for real 4-camera handoff evaluation.
-      preview_source: Wildtrack/cam7.mp4
-      preview_source_type: file
-      frame_size_ref: { width: 1920, height: 1080 }
-      processing_roi:
-        polygon:
-          - [0.0215, 0.2199]
-          - [0.4764, 0.1509]
-          - [0.9575, 0.8274]
-          - [0.7814, 0.9355]
-          - [0.0110, 0.9411]
-      entry_line: { points: [], in_side_point: [] }
-      default_zone_id: c7_followup_main
-      default_subzone_id: c7_overlap_entry
-      entry_zones: [c7_followup_main]
-      exit_zones: [c7_followup_main]
-      zones:
-        - zone_id: c7_followup_main
-          zone_type: transit
-          polygon:
-            - [0.0215, 0.2199]
-            - [0.4764, 0.1509]
-            - [0.9575, 0.8274]
-            - [0.7814, 0.9355]
-            - [0.0110, 0.9411]
-          priority: 100
-          description: Main visible corridor for C7 after ROI tightening.
-          placeholder: false
-      subzones:
-        - subzone_id: c7_overlap_entry
-          parent_zone_id: c7_followup_main
-          subzone_type: overlap
-          polygon:
-            - [0.0267, 0.2255]
-            - [0.4743, 0.1603]
-            - [0.9460, 0.8199]
-            - [0.7794, 0.9224]
-            - [0.0162, 0.9224]
-          priority: 110
-          description: Overlap arrival corridor from C3/C6.
-          placeholder: false
-          allowed_transitions: []
+{
+  "scene_calibration": {
+    "version": 1,
+    "coordinate_space": "normalized",
+    "processing": {
+      "require_manual_calibration": true,
+      "roi_mask_enabled": true,
+      "mask_outside_polygon": true,
+      "preview_overlay_enabled": true,
+      "preview_interval_sec": 1,
+      "min_bbox_coverage": 0.35
+    },
+    "direction_filter": {
+      "history_window": 6,
+      "minimum_points": 4,
+      "minimum_inward_motion_px": 18,
+      "minimum_inside_ratio": 0.55,
+      "require_zone_transition": false,
+      "allow_line_cross_only_when_history_short": false,
+      "inward_zone_types": [
+        "exit",
+        "interior",
+        "overlap",
+        "transit"
+      ],
+      "outward_zone_types": [
+        "entry",
+        "outer",
+        "approach"
+      ]
+    },
+    "cameras": {
+      "C3": {
+        "camera_id": "C3",
+        "role": "followup",
+        "description": "ROI-focused follow-up plaza view for the 4-camera benchmark.",
+        "preview_source": "Wildtrack/cam3.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [
+              0.08183079056865465,
+              0.1565046901430109
+            ],
+            [
+              0.08460471567267684,
+              0.2524604028909734
+            ],
+            [
+              0.10540915395284327,
+              0.5526295555897278
+            ],
+            [
+              0.7600554785020804,
+              0.3188912809472551
+            ],
+            [
+              0.7489597780859917,
+              0.19833153928955866
+            ],
+            [
+              0.3079056865464632,
+              0.12205904966938336
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [],
+          "in_side_point": []
+        },
+        "default_zone_id": "c3_followup_main",
+        "default_subzone_id": "c3_overlap_entry",
+        "entry_zones": [
+          "c3_followup_main"
+        ],
+        "exit_zones": [
+          "c3_followup_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c3_followup_main",
+            "zone_type": "main",
+            "polygon": [
+              [
+                0.08737864077669903,
+                0.1638858988159311
+              ],
+              [
+                0.08737864077669903,
+                0.2475395971090266
+              ],
+              [
+                0.10957004160887657,
+                0.5280255266799938
+              ],
+              [
+                0.7295423023578363,
+                0.3041288636014147
+              ],
+              [
+                0.7295423023578363,
+                0.20817315085345225
+              ],
+              [
+                0.3079056865464632,
+                0.12944025834230355
+              ]
+            ],
+            "priority": 100,
+            "description": "",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c3_overlap_entry",
+            "parent_zone_id": "c3_followup_main",
+            "subzone_type": "overlap",
+            "polygon": [
+              [
+                0.09292649098474341,
+                0.16880670459787792
+              ],
+              [
+                0.09292649098474341,
+                0.2524604028909734
+              ],
+              [
+                0.11373092926490985,
+                0.5034214977702599
+              ],
+              [
+                0.7184466019417476,
+                0.30166846071044134
+              ],
+              [
+                0.7212205270457698,
+                0.22539597109026602
+              ],
+              [
+                0.3092926490984743,
+                0.13682146701522374
+              ]
+            ],
+            "priority": 110,
+            "description": "Overlap arrival corridor from C3/C6.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C5": {
+        "camera_id": "C5",
+        "role": "entry",
+        "description": "Entry-side ROI for the front-facing camera.",
+        "preview_source": "Wildtrack/cam5.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [
+              0.47295423023578365,
+              0.18848992772566509
+            ],
+            [
+              0.46740638002773927,
+              0.392703367676457
+            ],
+            [
+              0.6282940360610264,
+              0.9659772412732585
+            ],
+            [
+              0.9875173370319001,
+              0.8651007227433493
+            ],
+            [
+              0.9930651872399445,
+              0.2475395971090266
+            ],
+            [
+              0.9944521497919556,
+              0.21309395663539904
+            ],
+            [
+              0.9459084604715673,
+              0.18848992772566509
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.665742024965326,
+              0.3877825618945102
+            ],
+            [
+              0.9833564493758669,
+              0.715016146393972
+            ]
+          ],
+          "in_side_point": [
+            0.9278779472954231,
+            0.4689758572966323
+          ]
+        },
+        "default_zone_id": "c5_entry_main",
+        "default_subzone_id": "c5_outer_entry",
+        "entry_zones": [
+          "c5_entry_main"
+        ],
+        "exit_zones": [
+          "c5_entry_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c5_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.478502080443828,
+                0.19587113639858528
+              ],
+              [
+                0.47156726768377255,
+                0.3877825618945102
+              ],
+              [
+                0.636615811373093,
+                0.9389128094725512
+              ],
+              [
+                0.9791955617198336,
+                0.8404966938336152
+              ],
+              [
+                0.9902912621359223,
+                0.21801476241734585
+              ],
+              [
+                0.9431345353675451,
+                0.18848992772566509
+              ]
+            ],
+            "priority": 100,
+            "description": "Main entry ROI kept after masking.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c5_outer_entry",
+            "parent_zone_id": "c5_entry_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.6754507628294036,
+                0.20079194218053206
+              ],
+              [
+                0.6837725381414702,
+                0.38286175611256346
+              ],
+              [
+                0.9722607489597781,
+                0.690412117484238
+              ],
+              [
+                0.9805825242718447,
+                0.33611410118406887
+              ],
+              [
+                0.7988904299583911,
+                0.19587113639858528
+              ]
+            ],
+            "priority": 100,
+            "description": "Main entry ROI kept after masking.",
+            "placeholder": false,
+            "allowed_transitions": []
+          },
+          {
+            "subzone_id": "c5_inner_overlap",
+            "parent_zone_id": "c5_entry_main",
+            "subzone_type": "overlap",
+            "polygon": [
+              [
+                0.4826629680998613,
+                0.20448254651699216
+              ],
+              [
+                0.47711511789181693,
+                0.3890127633399969
+              ],
+              [
+                0.636615811373093,
+                0.922920190681224
+              ],
+              [
+                0.9736477115117892,
+                0.8220436721513148
+              ],
+              [
+                0.986130374479889,
+                0.22416576964477933
+              ],
+              [
+                0.8848821081830791,
+                0.19956174073504537
+              ]
+            ],
+            "priority": 100,
+            "description": "Main entry ROI kept after masking.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C6": {
+        "camera_id": "C6",
+        "role": "entry",
+        "description": "Entry-side diagonal camera for 4-camera transition benchmarking.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [
+              0.6213592233009708,
+              0.15404428725203753
+            ],
+            [
+              0.17753120665742025,
+              0.23031677687221283
+            ],
+            [
+              0.18862690707350901,
+              0.38286175611256346
+            ],
+            [
+              0.4826629680998613,
+              0.968437644164232
+            ],
+            [
+              0.9694868238557559,
+              0.9364524065815777
+            ],
+            [
+              0.9875173370319001,
+              0.21063355374442566
+            ],
+            [
+              0.6393897364771152,
+              0.15404428725203753
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.22052704576976423,
+              0.392703367676457
+            ],
+            [
+              0.6255201109570042,
+              0.2918268491465478
+            ]
+          ],
+          "in_side_point": [
+            0.6893203883495146,
+            0.5501691526987544
+          ]
+        },
+        "default_zone_id": "c6_entry_main",
+        "default_subzone_id": "c6_inner_overlap",
+        "entry_zones": [
+          "c6_entry_main"
+        ],
+        "exit_zones": [
+          "c6_entry_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c6_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.18307905686546463,
+                0.2327771797631862
+              ],
+              [
+                0.6213592233009708,
+                0.15896509303398432
+              ],
+              [
+                0.9819694868238558,
+                0.21555435952637245
+              ],
+              [
+                0.9611650485436893,
+                0.9069275718898969
+              ],
+              [
+                0.4840499306518724,
+                0.9512148239274181
+              ],
+              [
+                0.19694868238557559,
+                0.38040135322159
+              ]
+            ],
+            "priority": 100,
+            "description": "Main diagonal entry ROI kept after masking.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c6_inner_overlap",
+            "parent_zone_id": "c6_entry_main",
+            "subzone_type": "overlap",
+            "polygon": [
+              [
+                0.18862690707350901,
+                0.23769798554513302
+              ],
+              [
+                0.20110957004160887,
+                0.37794095033061664
+              ],
+              [
+                0.4812760055478502,
+                0.9241503921267108
+              ],
+              [
+                0.9597780859916782,
+                0.6682684914654775
+              ],
+              [
+                0.9750346740638003,
+                0.21801476241734585
+              ],
+              [
+                0.6227461858529819,
+                0.16142549592495772
+              ]
+            ],
+            "priority": 100,
+            "description": "Main diagonal entry ROI kept after masking.",
+            "placeholder": false,
+            "allowed_transitions": []
+          },
+          {
+            "subzone_id": "c6_outer_entry",
+            "parent_zone_id": "c6_entry_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.24133148404993066,
+                0.2696832231277872
+              ],
+              [
+                0.2552011095700416,
+                0.4640550515146855
+              ],
+              [
+                0.3564493758668516,
+                0.6535060741196371
+              ],
+              [
+                0.9528432732316228,
+                0.43206981393203137
+              ],
+              [
+                0.9667128987517337,
+                0.23031677687221283
+              ],
+              [
+                0.6296809986130375,
+                0.18602952483469168
+              ]
+            ],
+            "priority": 100,
+            "description": "Main diagonal entry ROI kept after masking.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C7": {
+        "camera_id": "C7",
+        "role": "followup",
+        "description": "Right-side follow-up ROI for real 4-camera handoff evaluation.",
+        "preview_source": "Wildtrack/cam7.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "processing_roi": {
+          "polygon": [
+            [
+              0.015256588072122053,
+              0.14174227279717053
+            ],
+            [
+              0.47018030513176146,
+              0.0876134091957558
+            ],
+            [
+              0.970873786407767,
+              0.678110103029371
+            ],
+            [
+              0.9459084604715673,
+              0.8232738735968015
+            ],
+            [
+              0.6601941747572816,
+              0.9585960326003383
+            ],
+            [
+              0.019417475728155338,
+              0.9610564354913117
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [],
+          "in_side_point": []
+        },
+        "default_zone_id": "c7_followup_main",
+        "default_subzone_id": "c7_overlap_entry",
+        "entry_zones": [
+          "c7_followup_main"
+        ],
+        "exit_zones": [
+          "c7_followup_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c7_followup_main",
+            "zone_type": "transit",
+            "polygon": [
+              [
+                0.020804438280166437,
+                0.14789328002460403
+              ],
+              [
+                0.03467406380027739,
+                0.9376826080270644
+              ],
+              [
+                0.6490984743411928,
+                0.922920190681224
+              ],
+              [
+                0.9361997226074896,
+                0.804820851914501
+              ],
+              [
+                0.9597780859916782,
+                0.6793403044748577
+              ],
+              [
+                0.4590846047156727,
+                0.09868522220513609
+              ]
+            ],
+            "priority": 100,
+            "description": "Main visible corridor for C7 after ROI tightening.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c7_overlap_entry",
+            "parent_zone_id": "c7_followup_main",
+            "subzone_type": "overlap",
+            "polygon": [
+              [
+                0.03744798890429958,
+                0.19956174073504537
+              ],
+              [
+                0.46879334257975036,
+                0.13067045978779024
+              ],
+              [
+                0.9292649098474342,
+                0.6768799015838843
+              ],
+              [
+                0.9292649098474342,
+                0.6768799015838843
+              ],
+              [
+                0.9042995839112344,
+                0.792518837459634
+              ],
+              [
+                0.5866851595006934,
+                0.9007765646624635
+              ],
+              [
+                0.04299583911234397,
+                0.9155389820083039
+              ]
+            ],
+            "priority": 110,
+            "description": "Overlap arrival corridor from C3/C6.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      }
+    }
+  }
+}

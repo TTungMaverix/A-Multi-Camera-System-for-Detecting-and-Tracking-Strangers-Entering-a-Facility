@@ -539,6 +539,10 @@ def filter_boxes_by_processing_roi(
         mask = build_processing_mask((frame_height, frame_width), runtime_camera)
     kept = []
     for det in detections or []:
+        # Use the bottom-center foot point of the bbox as the geometry anchor.
+        # In CCTV / elevated viewpoints this point best approximates where the
+        # person stands on the ground plane, which is the right point to test
+        # against a walkable processing ROI.
         foot_x = (float(det["xmin"]) + float(det["xmax"])) / 2.0
         foot_y = float(det["ymax"])
         footpoint_inside = True

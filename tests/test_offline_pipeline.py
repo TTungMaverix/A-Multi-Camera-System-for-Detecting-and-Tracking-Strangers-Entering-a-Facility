@@ -15,6 +15,7 @@ from offline_pipeline.event_builder import (
     select_best_record,
 )
 from offline_pipeline.orchestrator import load_pipeline_config
+from scene_calibration import filter_boxes_by_processing_roi
 
 
 def _write_dummy_png(path: Path):
@@ -121,6 +122,9 @@ def test_wildtrack_4cam_roi_benchmark_config_is_present():
     assert config["source_backend"] == "wildtrack_video_inference"
     assert sorted(config["dataset"]["video_sources"].keys()) == ["C3", "C5", "C6", "C7"]
     assert config["multi_source_inference"]["roi_filter"]["enabled"] is True
+    assert config["multi_source_inference"]["conf_threshold"] == 0.45
+    assert config["multi_source_inference"]["iou_threshold"] == 0.35
+    assert config["multi_source_inference"]["tracker"].endswith("bytetrack.wildtrack_4cam_strict.yaml")
 
 
 def test_wildtrack_4cam_no_roi_benchmark_config_is_present():
@@ -129,6 +133,31 @@ def test_wildtrack_4cam_no_roi_benchmark_config_is_present():
     assert config["source_backend"] == "wildtrack_video_inference"
     assert sorted(config["dataset"]["video_sources"].keys()) == ["C3", "C5", "C6", "C7"]
     assert config["multi_source_inference"]["roi_filter"]["enabled"] is False
+    assert config["multi_source_inference"]["conf_threshold"] == 0.45
+    assert config["multi_source_inference"]["iou_threshold"] == 0.35
+    assert config["multi_source_inference"]["tracker"].endswith("bytetrack.wildtrack_4cam_strict.yaml")
+
+
+def test_processing_roi_filter_uses_bottom_center_footpoint():
+    detections = [
+        # Box center is inside the polygon, but the footpoint is below it and must be rejected.
+        {"xmin": 40, "ymin": 20, "xmax": 80, "ymax": 120, "confidence": 0.9, "class_id": 0, "track_id": 1},
+        # Box footpoint remains inside the polygon and must survive.
+        {"xmin": 20, "ymin": 20, "xmax": 60, "ymax": 60, "confidence": 0.9, "class_id": 0, "track_id": 2},
+    ]
+    runtime_camera = {
+        "processing_roi": [(0, 0), (100, 0), (100, 100), (0, 100)],
+    }
+    filtered, stats = filter_boxes_by_processing_roi(
+        detections,
+        runtime_camera,
+        require_footpoint_inside=True,
+        min_bbox_coverage=0.0,
+    )
+    kept_ids = {item["track_id"] for item in filtered}
+    assert kept_ids == {2}
+    assert stats["killed_count"] == 1
+    assert stats["killed_footpoint_count"] == 1
 
 
 def test_tracklet_linking_reconnects_short_occlusion():

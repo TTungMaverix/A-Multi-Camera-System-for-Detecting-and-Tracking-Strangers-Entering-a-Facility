@@ -581,6 +581,7 @@ def _resolve_cache_dir(cache_cfg, default_root: Path):
 
 def _cache_signature(
     camera_id,
+    camera_cfg,
     video_source: Path,
     low_load_cfg,
     inference_cfg,
@@ -589,6 +590,8 @@ def _cache_signature(
     actual_video_fps,
     target_timeline_fps,
 ):
+    processing_roi = copy.deepcopy((camera_cfg or {}).get("processing_roi", {}) or {})
+    frame_size_ref = copy.deepcopy((camera_cfg or {}).get("frame_size_ref", {}) or {})
     return {
         "camera_id": camera_id,
         "video_source": str(video_source),
@@ -610,6 +613,8 @@ def _cache_signature(
         "actual_video_fps": round(float(actual_video_fps or 0.0), 4),
         "tracklet_linking": copy.deepcopy(linking_cfg or {}),
         "roi_filter": copy.deepcopy(roi_filter_cfg or {}),
+        "processing_roi_geometry": processing_roi,
+        "frame_size_ref": frame_size_ref,
     }
 
 
@@ -737,6 +742,7 @@ def extract_inference_track_rows(
     cache_dir = _resolve_cache_dir(cache_cfg, video_source.parent)
     signature = _cache_signature(
         camera_id,
+        camera_cfg,
         video_source,
         low_load_cfg,
         inference_cfg,
@@ -779,6 +785,8 @@ def extract_inference_track_rows(
     roi_killed_count = 0
     roi_killed_footpoint_count = 0
     roi_killed_low_coverage_count = 0
+    raw_tracklet_ids_before_roi = set()
+    kept_tracklet_ids_after_roi = set()
     emitted_track_rows = 0
     runtime_started = time.perf_counter()
     frame_id = -1
@@ -848,6 +856,8 @@ def extract_inference_track_rows(
                         "detection_score": round(float(det_score), 4),
                     }
                 )
+                if track_id_value is not None:
+                    raw_tracklet_ids_before_roi.add(str(int(track_id_value)))
             if roi_filter_cfg.get("enabled", False) and roi_filter_cfg.get("post_filter_enabled", True):
                 filtered_detections, roi_stats = filter_boxes_by_processing_roi(
                     raw_detections,
@@ -886,6 +896,7 @@ def extract_inference_track_rows(
                     synthetic_track_id += 1
                 else:
                     track_id = int(track_id_value)
+                    kept_tracklet_ids_after_roi.add(str(track_id))
                 logical_frame_id = int(round((frame_id / max(actual_video_fps, 1e-9)) * target_timeline_fps))
                 frame_key = f"{logical_frame_id:08d}"
                 relative_sec = round(logical_frame_id / float(target_timeline_fps), 3)
@@ -948,10 +959,16 @@ def extract_inference_track_rows(
         "frame_stride": frame_stride,
         "processed_frames": processed_frames,
         "raw_detection_count": raw_detection_count,
+        "raw_detection_count_before_post_roi_filter": raw_detection_count,
         "detections_after_roi_count": detections_after_roi_count,
+        "detections_after_post_roi_filter_count": detections_after_roi_count,
         "roi_killed_count": roi_killed_count,
+        "roi_postfilter_killed_count": roi_killed_count,
         "roi_killed_footpoint_count": roi_killed_footpoint_count,
         "roi_killed_low_coverage_count": roi_killed_low_coverage_count,
+        "raw_tracklet_count_before_post_roi_filter": len(raw_tracklet_ids_before_roi),
+        "tracklet_count_after_post_roi_filter": len(kept_tracklet_ids_after_roi),
+        "tracklets_removed_fully_by_post_roi_filter_count": len(raw_tracklet_ids_before_roi - kept_tracklet_ids_after_roi),
         "emitted_track_rows": emitted_track_rows,
         "elapsed_sec": round(elapsed_sec, 3),
         "processed_fps": round(processed_frames / elapsed_sec, 3),
@@ -970,11 +987,15 @@ def extract_inference_track_rows(
             "detections_before_roi": raw_detection_count,
             "detections_after_roi": detections_after_roi_count,
             "detections_killed_by_roi": roi_killed_count,
+            "tracklets_before_roi": len(raw_tracklet_ids_before_roi),
+            "tracklets_after_roi": len(kept_tracklet_ids_after_roi),
+            "tracklets_removed_fully_by_roi": len(raw_tracklet_ids_before_roi - kept_tracklet_ids_after_roi),
         },
         "notes": [
             "Track rows are generated from YOLO person detection plus ByteTrack on the real source video.",
             "ByteTrack output is passed through a short-gap intra-camera linker before the replay flow continues.",
             "Processing ROI is applied twice in inference mode: first as a pre-mask on the frame, then as a bbox-level hard filter on the detector output.",
+            "raw_detection_count is measured after any frame pre-mask and before bbox-level ROI post-filter, so large FP drops can come from both pre-mask suppression and direct post-filter kills.",
             "global_gt_id is reused as a source-track surrogate ID in this inference-backed replay mode for compatibility with downstream audit files.",
             "GT-backed annotations are not used to create the source tracks in this mode.",
             "frame_id and relative_sec are normalized onto the configured timeline FPS so fake travel-time logic stays consistent with the replay topology.",
