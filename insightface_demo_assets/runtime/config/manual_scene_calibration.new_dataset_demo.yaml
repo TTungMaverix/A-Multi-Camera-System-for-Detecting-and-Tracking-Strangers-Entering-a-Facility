@@ -1,264 +1,658 @@
-scene_calibration:
-  version: 1
-  coordinate_space: normalized
-  processing:
-    require_manual_calibration: true
-    roi_mask_enabled: true
-    mask_outside_polygon: true
-    preview_overlay_enabled: true
-    preview_interval_sec: 1.0
-    min_bbox_coverage: 0.25
-  direction_filter:
-    history_window: 6
-    minimum_points: 3
-    minimum_inward_motion_px: 12.0
-    minimum_inside_ratio: 0.45
-    require_zone_transition: false
-    allow_line_cross_only_when_history_short: false
-    inward_zone_types: [interior, exit]
-    outward_zone_types: [entry, approach]
-  cameras:
-    C1:
-      camera_id: C1
-      role: entry
-      description: Physical Camera 1 at the outside approach to the facility door.
-      preview_source: New Dataset/Camera 1/a1.mp4
-      preview_source_type: file
-      frame_size_ref:
-        width: 1418
-        height: 720
-      anchor_point_mode: bottom_center
-      processing_roi:
-        polygon:
-          - [0.05, 0.08]
-          - [0.96, 0.08]
-          - [0.98, 0.98]
-          - [0.03, 0.98]
-      entry_line:
-        points:
-          - [0.10, 0.60]
-          - [0.94, 0.60]
-        in_side_point: [0.60, 0.88]
-      default_zone_id: c1_entry_main
-      default_subzone_id: c1_outer_entry
-      entry_zones: [c1_entry_main]
-      exit_zones: [c1_entry_main]
-      zones:
-        - zone_id: c1_entry_main
-          zone_type: entry
-          polygon:
-            - [0.05, 0.08]
-            - [0.96, 0.08]
-            - [0.98, 0.98]
-            - [0.03, 0.98]
-          priority: 100
-          description: Main processing ROI for the physical entrance camera.
-          placeholder: false
-      subzones:
-        - subzone_id: c1_outer_entry
-          parent_zone_id: c1_entry_main
-          subzone_type: entry
-          polygon:
-            - [0.05, 0.08]
-            - [0.96, 0.08]
-            - [0.96, 0.62]
-            - [0.05, 0.62]
-          priority: 110
-          description: Outside approach band before the inward crossing line.
-          placeholder: false
-          allowed_transitions: []
-        - subzone_id: c1_inner_entry
-          parent_zone_id: c1_entry_main
-          subzone_type: interior
-          polygon:
-            - [0.05, 0.58]
-            - [0.96, 0.58]
-            - [0.98, 0.98]
-            - [0.03, 0.98]
-          priority: 120
-          description: Door-adjacent band used as the outgoing region toward Camera 2.
-          placeholder: false
-          allowed_transitions: [C1_to_C2_physical]
-    C2:
-      camera_id: C2
-      role: entry
-      description: Physical Camera 2 inside the door, often seeing only upper-body / partial-body.
-      preview_source: New Dataset/Camera 2/a1.mp4
-      preview_source_type: file
-      frame_size_ref:
-        width: 1326
-        height: 720
-      anchor_point_mode: center_center
-      processing_roi:
-        polygon:
-          - [0.10, 0.08]
-          - [0.97, 0.08]
-          - [0.95, 0.95]
-          - [0.08, 0.95]
-      entry_line:
-        points:
-          - [0.12, 0.50]
-          - [0.90, 0.54]
-        in_side_point: [0.72, 0.84]
-      default_zone_id: c2_inside_main
-      default_subzone_id: c2_door_arrival
-      entry_zones: [c2_inside_main]
-      exit_zones: [c2_inside_main]
-      zones:
-        - zone_id: c2_inside_main
-          zone_type: entry
-          polygon:
-            - [0.10, 0.08]
-            - [0.97, 0.08]
-            - [0.95, 0.95]
-            - [0.08, 0.95]
-          priority: 100
-          description: Main processing ROI for the inside-door camera.
-          placeholder: false
-      subzones:
-        - subzone_id: c2_door_arrival
-          parent_zone_id: c2_inside_main
-          subzone_type: entry
-          polygon:
-            - [0.10, 0.08]
-            - [0.88, 0.12]
-            - [0.82, 0.52]
-            - [0.12, 0.48]
-          priority: 110
-          description: Arrival band near the doorway.
-          placeholder: false
-          allowed_transitions: [C1_to_C2_physical]
-        - subzone_id: c2_inner_corridor
-          parent_zone_id: c2_inside_main
-          subzone_type: exit
-          polygon:
-            - [0.14, 0.48]
-            - [0.92, 0.54]
-            - [0.95, 0.95]
-            - [0.08, 0.95]
-          priority: 120
-          description: Interior band after entering Camera 2.
-          placeholder: false
-          allowed_transitions: [C2_to_C3_demo]
-    C3:
-      camera_id: C3
-      role: entry
-      description: Logical demo copy of Camera 1.
-      preview_source: New Dataset/Camera 1/a1.mp4
-      preview_source_type: file
-      frame_size_ref:
-        width: 1418
-        height: 720
-      anchor_point_mode: bottom_center
-      processing_roi:
-        polygon:
-          - [0.05, 0.08]
-          - [0.96, 0.08]
-          - [0.98, 0.98]
-          - [0.03, 0.98]
-      entry_line:
-        points:
-          - [0.10, 0.60]
-          - [0.94, 0.60]
-        in_side_point: [0.60, 0.88]
-      default_zone_id: c3_entry_main
-      default_subzone_id: c3_outer_entry
-      entry_zones: [c3_entry_main]
-      exit_zones: [c3_entry_main]
-      zones:
-        - zone_id: c3_entry_main
-          zone_type: entry
-          polygon:
-            - [0.05, 0.08]
-            - [0.96, 0.08]
-            - [0.98, 0.98]
-            - [0.03, 0.98]
-          priority: 100
-          description: Logical copy of Camera 1 ROI.
-          placeholder: false
-      subzones:
-        - subzone_id: c3_outer_entry
-          parent_zone_id: c3_entry_main
-          subzone_type: entry
-          polygon:
-            - [0.05, 0.08]
-            - [0.96, 0.08]
-            - [0.96, 0.62]
-            - [0.05, 0.62]
-          priority: 110
-          description: Logical outside band before the inward crossing line.
-          placeholder: false
-          allowed_transitions: []
-        - subzone_id: c3_inner_entry
-          parent_zone_id: c3_entry_main
-          subzone_type: interior
-          polygon:
-            - [0.05, 0.58]
-            - [0.96, 0.58]
-            - [0.98, 0.98]
-            - [0.03, 0.98]
-          priority: 120
-          description: Logical outgoing band toward Camera 4.
-          placeholder: false
-          allowed_transitions: [C3_to_C4_demo]
-    C4:
-      camera_id: C4
-      role: entry
-      description: Logical demo copy of Camera 2.
-      preview_source: New Dataset/Camera 2/a1.mp4
-      preview_source_type: file
-      frame_size_ref:
-        width: 1326
-        height: 720
-      anchor_point_mode: center_center
-      processing_roi:
-        polygon:
-          - [0.10, 0.08]
-          - [0.97, 0.08]
-          - [0.95, 0.95]
-          - [0.08, 0.95]
-      entry_line:
-        points:
-          - [0.12, 0.50]
-          - [0.90, 0.54]
-        in_side_point: [0.72, 0.84]
-      default_zone_id: c4_inside_main
-      default_subzone_id: c4_door_arrival
-      entry_zones: [c4_inside_main]
-      exit_zones: [c4_inside_main]
-      zones:
-        - zone_id: c4_inside_main
-          zone_type: entry
-          polygon:
-            - [0.10, 0.08]
-            - [0.97, 0.08]
-            - [0.95, 0.95]
-            - [0.08, 0.95]
-          priority: 100
-          description: Logical copy of Camera 2 ROI.
-          placeholder: false
-      subzones:
-        - subzone_id: c4_door_arrival
-          parent_zone_id: c4_inside_main
-          subzone_type: entry
-          polygon:
-            - [0.10, 0.08]
-            - [0.88, 0.12]
-            - [0.82, 0.52]
-            - [0.12, 0.48]
-          priority: 110
-          description: Logical arrival band near the doorway.
-          placeholder: false
-          allowed_transitions: [C3_to_C4_demo]
-        - subzone_id: c4_inner_corridor
-          parent_zone_id: c4_inside_main
-          subzone_type: exit
-          polygon:
-            - [0.14, 0.48]
-            - [0.92, 0.54]
-            - [0.95, 0.95]
-            - [0.08, 0.95]
-          priority: 120
-          description: Logical post-entry interior band.
-          placeholder: false
-          allowed_transitions: []
+{
+  "scene_calibration": {
+    "version": 1,
+    "coordinate_space": "normalized",
+    "processing": {
+      "require_manual_calibration": true,
+      "roi_mask_enabled": true,
+      "mask_outside_polygon": true,
+      "preview_overlay_enabled": true,
+      "preview_interval_sec": 1,
+      "min_bbox_coverage": 0.25
+    },
+    "direction_filter": {
+      "history_window": 6,
+      "minimum_points": 3,
+      "minimum_inward_motion_px": 12,
+      "minimum_inside_ratio": 0.45,
+      "require_zone_transition": false,
+      "allow_line_cross_only_when_history_short": false,
+      "inward_zone_types": [
+        "interior",
+        "exit"
+      ],
+      "outward_zone_types": [
+        "entry",
+        "approach"
+      ]
+    },
+    "cameras": {
+      "C1": {
+        "camera_id": "C1",
+        "role": "entry",
+        "description": "Physical Camera 1 at the outside approach to the facility door.",
+        "preview_source": "New Dataset/Camera 1/a1.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1418,
+          "height": 720
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.5748148148148148,
+              0.37341928067006075
+            ],
+            [
+              0.6281481481481481,
+              0.9751601248152406
+            ],
+            [
+              0.9896296296296296,
+              0.9804155033667269
+            ],
+            [
+              0.9911111111111112,
+              0.725529643619642
+            ],
+            [
+              0.8681481481481481,
+              0.34714238791262936
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.6162962962962963,
+              0.6322466743307604
+            ],
+            [
+              0.9185185185185185,
+              0.5429052389554935
+            ]
+          ],
+          "in_side_point": [
+            0.8577777777777778,
+            0.789908030875349
+          ]
+        },
+        "default_zone_id": "c1_entry_main",
+        "default_subzone_id": "c1_outer_entry",
+        "entry_zones": [
+          "c1_entry_main"
+        ],
+        "exit_zones": [
+          "c1_entry_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c1_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.5777777777777777,
+                0.378674659221547
+              ],
+              [
+                0.6311111111111111,
+                0.9620216784365249
+              ],
+              [
+                0.9837037037037037,
+                0.9699047462637543
+              ],
+              [
+                0.9851851851851852,
+                0.725529643619642
+              ],
+              [
+                0.8637037037037038,
+                0.35239776646411564
+              ]
+            ],
+            "priority": 100,
+            "description": "Main processing ROI for the physical entrance camera.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c1_outer_entry",
+            "parent_zone_id": "c1_entry_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.5807407407407408,
+                0.38261619313516176
+              ],
+              [
+                0.6074074074074074,
+                0.6453851207094761
+              ],
+              [
+                0.922962962962963,
+                0.5481606175069798
+              ],
+              [
+                0.8607407407407407,
+                0.3563393003777303
+              ]
+            ],
+            "priority": 110,
+            "description": "Outside approach band before the inward crossing line",
+            "placeholder": false,
+            "allowed_transitions": []
+          },
+          {
+            "subzone_id": "c1_inner_entry",
+            "parent_zone_id": "c1_entry_main",
+            "subzone_type": "interior",
+            "polygon": [
+              [
+                0.6074074074074074,
+                0.6532681885367055
+              ],
+              [
+                0.6340740740740741,
+                0.9501970766956808
+              ],
+              [
+                0.9777777777777777,
+                0.9580801445229101
+              ],
+              [
+                0.9807407407407407,
+                0.7242157989817704
+              ],
+              [
+                0.922962962962963,
+                0.550788306782723
+              ]
+            ],
+            "priority": 120,
+            "description": "Door-adjacent band used as the outgoing region toward Camera 2.",
+            "placeholder": false,
+            "allowed_transitions": [
+              "C1_to_C2_physical"
+            ]
+          }
+        ]
+      },
+      "C2": {
+        "camera_id": "C2",
+        "role": "entry",
+        "description": "Physical Camera 2 inside the door, often seeing only upper-body / partial-body.",
+        "preview_source": "New Dataset/Camera 2/a1.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1326,
+          "height": 720
+        },
+        "anchor_point_mode": "center_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.10518518518518519,
+              0.40363770734110693
+            ],
+            [
+              0.5762962962962963,
+              0.16977336179996716
+            ],
+            [
+              0.7407407407407407,
+              0.23546559369354575
+            ],
+            [
+              0.7288888888888889,
+              0.46670224995894233
+            ],
+            [
+              0.24444444444444444,
+              0.8871325340778453
+            ],
+            [
+              0.13925925925925925,
+              0.642757431433733
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.16592592592592592,
+              0.6033420922975858
+            ],
+            [
+              0.7140740740740741,
+              0.2669978650024635
+            ]
+          ],
+          "in_side_point": [
+            0.4325925925925926,
+            0.5455329282312367
+          ]
+        },
+        "default_zone_id": "c2_inside_main",
+        "default_subzone_id": "c2_door_arrival",
+        "entry_zones": [
+          "c2_inside_main"
+        ],
+        "exit_zones": [
+          "c2_inside_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c2_inside_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.1111111111111111,
+                0.4088930858925932
+              ],
+              [
+                0.14222222222222222,
+                0.6375020528822467
+              ],
+              [
+                0.24444444444444444,
+                0.8766217769748728
+              ],
+              [
+                0.7244444444444444,
+                0.46144687140745605
+              ],
+              [
+                0.7377777777777778,
+                0.2380932829692889
+              ],
+              [
+                0.5748148148148148,
+                0.17502874035145344
+              ]
+            ],
+            "priority": 100,
+            "description": "Main processing ROI for the inside-door camera.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c2_door_arrival",
+            "parent_zone_id": "c2_inside_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.11555555555555555,
+                0.41940384299556577
+              ],
+              [
+                0.1437037037037037,
+                0.6322466743307604
+              ],
+              [
+                0.7318518518518519,
+                0.2551732632616193
+              ],
+              [
+                0.5748148148148148,
+                0.18159796354081129
+              ]
+            ],
+            "priority": 110,
+            "description": "Arrival band near the doorway.",
+            "placeholder": false,
+            "allowed_transitions": [
+              "C1_to_C2_physical"
+            ]
+          },
+          {
+            "subzone_id": "c2_inner_corridor",
+            "parent_zone_id": "c2_inside_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [
+                0.14666666666666667,
+                0.636188208244375
+              ],
+              [
+                0.7318518518518519,
+                0.2604286418131056
+              ],
+              [
+                0.72,
+                0.45750533749384137
+              ],
+              [
+                0.24444444444444444,
+                0.8674248645097717
+              ]
+            ],
+            "priority": 120,
+            "description": "Interior band after entering Camera 2.",
+            "placeholder": false,
+            "allowed_transitions": [
+              "C2_to_C3_demo"
+            ]
+          }
+        ]
+      },
+      "C3": {
+        "camera_id": "C3",
+        "role": "entry",
+        "description": "Logical demo copy of Camera 1.",
+        "preview_source": "New Dataset/Camera 1/a1.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1418,
+          "height": 720
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.5896296296296296,
+              0.3904992609623912
+            ],
+            [
+              0.8488888888888889,
+              0.3537116111019872
+            ],
+            [
+              0.9866666666666667,
+              0.7951634094268353
+            ],
+            [
+              0.9881481481481481,
+              0.9764739694531122
+            ],
+            [
+              0.6459259259259259,
+              0.9843570372803416
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.6296296296296297,
+              0.6690343241911644
+            ],
+            [
+              0.9066666666666666,
+              0.569182131712925
+            ]
+          ],
+          "in_side_point": [
+            0.8503703703703703,
+            0.7820249630481195
+          ]
+        },
+        "default_zone_id": "c3_entry_main",
+        "default_subzone_id": "c3_outer_entry",
+        "entry_zones": [
+          "c3_entry_main"
+        ],
+        "exit_zones": [
+          "c3_entry_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c3_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.5925925925925926,
+                0.39575463951387746
+              ],
+              [
+                0.6488888888888888,
+                0.9738462801773691
+              ],
+              [
+                0.9837037037037037,
+                0.9659632123501396
+              ],
+              [
+                0.9822222222222222,
+                0.7925357201510921
+              ],
+              [
+                0.8444444444444444,
+                0.35896698965347346
+              ]
+            ],
+            "priority": 100,
+            "description": "Logical copy of Camera 1 ROI.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c3_outer_entry",
+            "parent_zone_id": "c3_entry_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.5940740740740741,
+                0.39838232878962065
+              ],
+              [
+                0.6222222222222222,
+                0.6821727705698801
+              ],
+              [
+                0.9081481481481481,
+                0.5744375102644113
+              ],
+              [
+                0.8414814814814815,
+                0.3642223682049598
+              ]
+            ],
+            "priority": 110,
+            "description": "Outside approach band before the inward crossing line.",
+            "placeholder": false,
+            "allowed_transitions": []
+          },
+          {
+            "subzone_id": "c3_inner_entry",
+            "parent_zone_id": "c3_entry_main",
+            "subzone_type": "interior",
+            "polygon": [
+              [
+                0.6222222222222222,
+                0.6848004598456232
+              ],
+              [
+                0.6488888888888888,
+                0.9659632123501396
+              ],
+              [
+                0.9792592592592593,
+                0.9580801445229101
+              ],
+              [
+                0.9777777777777777,
+                0.7925357201510921
+              ],
+              [
+                0.9081481481481481,
+                0.5770651995401543
+              ]
+            ],
+            "priority": 120,
+            "description": "Door-adjacent band used as the outgoing region toward Camera 2.",
+            "placeholder": false,
+            "allowed_transitions": [
+              "C3_to_C4_demo"
+            ]
+          }
+        ]
+      },
+      "C4": {
+        "camera_id": "C4",
+        "role": "entry",
+        "description": "Logical demo copy of Camera 2.",
+        "preview_source": "New Dataset/Camera 2/a1.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1326,
+          "height": 720
+        },
+        "anchor_point_mode": "center_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.10518518518518519,
+              0.3931269502381343
+            ],
+            [
+              0.6281481481481481,
+              0.15926260469699458
+            ],
+            [
+              0.7718518518518519,
+              0.21181639021185744
+            ],
+            [
+              0.7570370370370371,
+              0.46144687140745605
+            ],
+            [
+              0.24888888888888888,
+              0.881877155526359
+            ],
+            [
+              0.14222222222222222,
+              0.6664066349154213
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.13925925925925925,
+              0.5823205780916406
+            ],
+            [
+              0.6311111111111111,
+              0.3037855148628675
+            ]
+          ],
+          "in_side_point": [
+            0.4474074074074074,
+            0.5061175890950895
+          ]
+        },
+        "default_zone_id": "c4_inside_main",
+        "default_subzone_id": "c4_door_arrival",
+        "entry_zones": [
+          "c4_inside_main"
+        ],
+        "exit_zones": [
+          "c4_inside_main"
+        ],
+        "zones": [
+          {
+            "zone_id": "c4_inside_main",
+            "zone_type": "entry",
+            "polygon": [
+              [
+                0.10962962962962963,
+                0.39838232878962065
+              ],
+              [
+                0.1451851851851852,
+                0.6585235670881918
+              ],
+              [
+                0.2474074074074074,
+                0.8713663984233865
+              ],
+              [
+                0.7525925925925926,
+                0.45619149285596977
+              ],
+              [
+                0.7674074074074074,
+                0.21575792412547215
+              ],
+              [
+                0.6281481481481481,
+                0.16583182788635245
+              ]
+            ],
+            "priority": 100,
+            "description": "Logical copy of Camera 2 ROI.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c4_inner_corridor",
+            "parent_zone_id": "c4_inside_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [
+                0.1451851851851852,
+                0.6309328296928888
+              ],
+              [
+                0.7555555555555555,
+                0.24729019543438988
+              ],
+              [
+                0.7481481481481481,
+                0.4496222696666119
+              ],
+              [
+                0.24888888888888888,
+                0.8595417966825423
+              ]
+            ],
+            "priority": 120,
+            "description": "Interior band after entering Camera 4.",
+            "placeholder": false,
+            "allowed_transitions": []
+          },
+          {
+            "subzone_id": "c4_door_arrival",
+            "parent_zone_id": "c4_inside_main",
+            "subzone_type": "entry",
+            "polygon": [
+              [
+                0.11407407407407408,
+                0.4049515519789785
+              ],
+              [
+                0.1451851851851852,
+                0.6204220725899162
+              ],
+              [
+                0.7585185185185185,
+                0.23415174905567418
+              ],
+              [
+                0.76,
+                0.2236409919527016
+              ],
+              [
+                0.6266666666666667,
+                0.17108720643783873
+              ]
+            ],
+            "priority": 110,
+            "description": "Interior band after entering Camera 4.",
+            "placeholder": false,
+            "allowed_transitions": [
+              "C3_to_C4_demo"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
