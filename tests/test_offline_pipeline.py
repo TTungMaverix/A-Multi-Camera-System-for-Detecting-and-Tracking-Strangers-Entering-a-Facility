@@ -138,6 +138,15 @@ def test_wildtrack_4cam_no_roi_benchmark_config_is_present():
     assert config["multi_source_inference"]["tracker"].endswith("bytetrack.wildtrack_4cam_strict.yaml")
 
 
+def test_new_dataset_logical_demo_config_is_present():
+    config_path = Path("insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml")
+    config = load_pipeline_config(config_path)
+    assert config["source_backend"] == "logical_demo_video_inference"
+    assert config["dataset_profile_config"].endswith("dataset_profile.new_dataset_demo.yaml")
+    assert config["multi_source_inference"]["tracker"].endswith("bytetrack.new_dataset_demo.yaml")
+    assert config["logical_demo"]["pair_id"] == ""
+
+
 def test_processing_roi_filter_uses_bottom_center_footpoint():
     detections = [
         # Box center is inside the polygon, but the footpoint is below it and must be rejected.
@@ -158,6 +167,27 @@ def test_processing_roi_filter_uses_bottom_center_footpoint():
     assert kept_ids == {2}
     assert stats["killed_count"] == 1
     assert stats["killed_footpoint_count"] == 1
+
+
+def test_processing_roi_filter_can_switch_to_center_center_anchor():
+    detections = [
+        {"xmin": 40, "ymin": 20, "xmax": 80, "ymax": 120, "confidence": 0.9, "class_id": 0, "track_id": 1},
+        {"xmin": 20, "ymin": 20, "xmax": 60, "ymax": 60, "confidence": 0.9, "class_id": 0, "track_id": 2},
+    ]
+    runtime_camera = {
+        "processing_roi": [(0, 0), (100, 0), (100, 100), (0, 100)],
+        "anchor_point_mode": "center_center",
+    }
+    filtered, stats = filter_boxes_by_processing_roi(
+        detections,
+        runtime_camera,
+        require_footpoint_inside=True,
+        min_bbox_coverage=0.0,
+    )
+    kept_ids = {item["track_id"] for item in filtered}
+    assert kept_ids == {1, 2}
+    assert stats["killed_count"] == 0
+    assert stats["anchor_point_mode"] == "center_center"
 
 
 def test_tracklet_linking_reconnects_short_occlusion():

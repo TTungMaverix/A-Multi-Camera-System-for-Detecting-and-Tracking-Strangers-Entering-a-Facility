@@ -1,27 +1,29 @@
-﻿{
+{
   "project_mode": "demo",
-  "insightface_repo_root": "C:\\Users\\Admin\\insightface-master",
-  "wildtrack_identity_queue_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\wildtrack_demo\\output\\events\\identity_resolution_queue.csv",
-  "known_face_manifest_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\known_face_manifest.csv",
-  "known_face_gallery_root": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\known_faces",
-  "known_face_embeddings_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\known_face_embeddings_template.csv",
-  "resolved_events_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\resolved_events_template.csv",
-  "unknown_profiles_csv": "D:\\ĐỒ ÁN TỐT NGHIỆP\\insightface_demo_assets\\runtime\\unknown_profiles_template.csv",
-  "association_policy_config": "config/association_policy.wildtrack_phase_f_tuned.yaml",
-  "camera_transition_map_config": "config/camera_transition_map.example.yaml",
-  "scene_calibration_config": "config/manual_scene_calibration.wildtrack.json",
+  "project_root": "../../..",
+  "insightface_repo_root": "",
+  "identity_queue_csv": "outputs/offline_runs/demo/events/identity_resolution_queue.csv",
+  "dataset_profile_path": "insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml",
+  "known_face_manifest_csv": "insightface_demo_assets/known_face_manifest.csv",
+  "known_face_gallery_root": "insightface_demo_assets/known_faces",
+  "known_face_embeddings_csv": "insightface_demo_assets/runtime/known_face_embeddings_template.csv",
+  "resolved_events_csv": "insightface_demo_assets/runtime/resolved_events_template.csv",
+  "unknown_profiles_csv": "insightface_demo_assets/runtime/unknown_profiles_template.csv",
+  "association_policy_config": "insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml",
+  "camera_transition_map_config": "insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml",
+  "scene_calibration_config": "insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml",
   "insightface_runtime": {
     "python_runtime_available": true,
     "model_pack_available": true,
     "recommended_model_name": "buffalo_l",
-    "recommended_model_root": "C:\\Users\\Admin\\.insightface",
-    "recommended_model_cache_dir": "C:\\Users\\Admin\\.insightface\\models\\buffalo_l",
+    "recommended_model_root": "",
+    "recommended_model_cache_dir": "",
     "provider": "CPUExecutionProvider"
   },
   "matching": {
-    "known_match_threshold": 0.65,
+    "known_match_threshold": 0.75,
     "fallback_to_body_feature": true,
-    "face_quality_policy": "use_best_head_crop_then_body_crop_from_wildtrack_queue"
+    "face_quality_policy": "use_best_head_crop_then_body_crop_from_identity_queue"
   },
   "unknown_handling": {
     "mode": "assign_unknown_global_id_when_no_known_match",

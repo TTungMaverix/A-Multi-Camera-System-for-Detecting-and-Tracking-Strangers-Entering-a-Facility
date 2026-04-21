@@ -11,8 +11,14 @@ import cv2
 import numpy as np
 
 from association_core.spatial_context import resolve_spatial_context
+from dataset_profiles import (
+    build_logical_demo_manifest,
+    load_dataset_profile_from_config,
+    materialize_profile_for_logical_demo,
+    resolve_dataset_root,
+)
 from offline_pipeline.direction_logic import evaluate_direction
-from scene_calibration import apply_processing_mask, build_processing_mask, filter_boxes_by_processing_roi
+from scene_calibration import apply_processing_mask, bbox_anchor_point, build_processing_mask, filter_boxes_by_processing_roi
 
 
 def load_json(path: Path):
@@ -273,6 +279,7 @@ def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, vi
     annotation_dir = dataset_root / "annotations_positions"
     polygon = camera_processing_polygon(camera_cfg)
     view_index = as_int(camera_cfg["view_index"])
+    anchor_point_mode = str(camera_cfg.get("anchor_point_mode", "bottom_center") or "bottom_center")
     rows = []
     for frame_id, objects in iter_annotation_payloads(annotation_dir, low_load_cfg):
         frame_key = f"{frame_id:08d}"
@@ -285,8 +292,9 @@ def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, vi
             height = int(view["ymax"] - view["ymin"])
             center_x = round((view["xmin"] + view["xmax"]) / 2.0, 2)
             center_y = round((view["ymin"] + view["ymax"]) / 2.0, 2)
-            foot_x = center_x
-            foot_y = float(view["ymax"])
+            anchor = bbox_anchor_point(view, anchor_point_mode=anchor_point_mode)
+            foot_x = float(anchor["x"])
+            foot_y = float(anchor["y"])
             if polygon and not test_point_in_polygon(foot_x, foot_y, polygon):
                 continue
             rows.append(
@@ -310,6 +318,7 @@ def extract_camera_track_rows(dataset_root: Path, camera_id, camera_cfg, fps, vi
                     "center_y": center_y,
                     "foot_x": foot_x,
                     "foot_y": foot_y,
+                    "anchor_point_mode": anchor["mode"],
                     "image_rel_path": f"Image_subsets\\{camera_id}\\{frame_key}.png",
                     "video_path": str(video_source),
                     "frame_source_mode": frame_source_mode,
@@ -592,6 +601,7 @@ def _cache_signature(
 ):
     processing_roi = copy.deepcopy((camera_cfg or {}).get("processing_roi", {}) or {})
     frame_size_ref = copy.deepcopy((camera_cfg or {}).get("frame_size_ref", {}) or {})
+    anchor_point_mode = str((camera_cfg or {}).get("anchor_point_mode", "bottom_center") or "bottom_center")
     return {
         "camera_id": camera_id,
         "video_source": str(video_source),
@@ -615,6 +625,7 @@ def _cache_signature(
         "roi_filter": copy.deepcopy(roi_filter_cfg or {}),
         "processing_roi_geometry": processing_roi,
         "frame_size_ref": frame_size_ref,
+        "anchor_point_mode": anchor_point_mode,
     }
 
 
@@ -726,6 +737,7 @@ def extract_inference_track_rows(
     verbose = bool(inference_cfg.get("verbose", False))
     target_timeline_fps = float(inference_cfg.get("target_timeline_fps", fps))
     roi_filter_cfg = _merge_roi_filter_cfg((inference_cfg or {}).get("roi_filter"), processing_cfg)
+    anchor_point_mode = str(camera_cfg.get("anchor_point_mode", "bottom_center") or "bottom_center")
     start_frame = as_int(low_load_cfg.get("start_frame", 0))
     end_frame_raw = low_load_cfg.get("end_frame")
     end_frame = None if end_frame_raw in ("", None) else as_int(end_frame_raw)
@@ -888,8 +900,12 @@ def extract_inference_track_rows(
                 height = ymax - ymin
                 center_x = round((xmin + xmax) / 2.0, 2)
                 center_y = round((ymin + ymax) / 2.0, 2)
-                foot_x = center_x
-                foot_y = float(ymax)
+                anchor = bbox_anchor_point(
+                    {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax},
+                    anchor_point_mode=anchor_point_mode,
+                )
+                foot_x = float(anchor["x"])
+                foot_y = float(anchor["y"])
                 track_id_value = det.get("track_id_value")
                 if track_id_value is None:
                     track_id = synthetic_track_id
@@ -924,6 +940,9 @@ def extract_inference_track_rows(
                         "center_y": center_y,
                         "foot_x": foot_x,
                         "foot_y": foot_y,
+                        "anchor_point_mode": det.get("roi_anchor_point_mode", anchor["mode"]),
+                        "roi_anchor_x": det.get("roi_anchor_x", round(float(foot_x), 4)),
+                        "roi_anchor_y": det.get("roi_anchor_y", round(float(foot_y), 4)),
                         "image_rel_path": f"VideoReplay\\{camera_id}\\{frame_key}.png",
                         "video_path": str(video_source),
                         "frame_source_mode": frame_source_mode,
@@ -984,6 +1003,7 @@ def extract_inference_track_rows(
             "post_filter_enabled": bool(roi_filter_cfg.get("post_filter_enabled", True)),
             "require_footpoint_inside": bool(roi_filter_cfg.get("require_footpoint_inside", True)),
             "min_bbox_coverage": round(float(roi_filter_cfg.get("min_bbox_coverage", 0.25)), 4),
+            "anchor_point_mode": anchor_point_mode,
             "detections_before_roi": raw_detection_count,
             "detections_after_roi": detections_after_roi_count,
             "detections_killed_by_roi": roi_killed_count,
@@ -1481,8 +1501,8 @@ def build_global_gt_summary(track_rows):
 def materialize_stage_inputs(
     project_root: Path,
     dataset_root: Path,
-    wildtrack_config_path: Path,
-    wildtrack_config,
+    dataset_profile_path: Path,
+    dataset_profile,
     output_root: Path,
     track_rows_by_camera,
     frame_source_mode,
@@ -1500,7 +1520,8 @@ def materialize_stage_inputs(
         directory.mkdir(parents=True, exist_ok=True)
 
     all_track_rows = []
-    for camera_id in wildtrack_config["selected_cameras"]:
+    selected_cameras = list(dataset_profile.get("selected_cameras", []))
+    for camera_id in selected_cameras:
         rows = track_rows_by_camera.get(camera_id, [])
         all_track_rows.extend(rows)
         write_csv(tracks_dir / f"{camera_id}_tracks.csv", rows, fieldnames_for_rows(rows))
@@ -1512,7 +1533,7 @@ def materialize_stage_inputs(
     try:
         entry_events, identity_queue_rows, assignment_rows = build_entry_events(
             dataset_root,
-            wildtrack_config,
+            dataset_profile,
             track_rows_by_camera,
             frame_cache,
             crops_dir,
@@ -1541,14 +1562,16 @@ def materialize_stage_inputs(
         "pipeline_backend": pipeline_backend,
         "project_root": str(project_root),
         "dataset_root": str(dataset_root),
-        "wildtrack_config_path": str(wildtrack_config_path),
+        "dataset_profile_path": str(dataset_profile_path),
+        "dataset_profile_name": dataset_profile.get("profile_name", ""),
+        "dataset_name": dataset_profile.get("dataset_name", ""),
         "frame_source_mode": frame_source_mode,
         "low_load": low_load_cfg,
-        "selected_cameras": list(wildtrack_config["selected_cameras"]),
+        "selected_cameras": selected_cameras,
         "filtered_track_rows": len(all_track_rows),
         "entry_in_events": len(entry_events),
         "identity_queue_rows": len(identity_queue_rows),
-        "per_camera_rows": {camera_id: len(track_rows_by_camera[camera_id]) for camera_id in wildtrack_config["selected_cameras"]},
+        "per_camera_rows": {camera_id: len(track_rows_by_camera[camera_id]) for camera_id in selected_cameras},
         "notes": [
             "Direction filtering is applied before face matching and only ENTRY_IN candidates are exported to the identity queue.",
             "Frame crops are taken from the configured frame source mode for reproducible best-shot generation.",
@@ -1557,7 +1580,7 @@ def materialize_stage_inputs(
     if pipeline_backend == "wildtrack_gt_annotations":
         stage_summary["notes"].insert(
             0,
-            "This offline stage uses GT-backed track rows as the detect/track provider for the thesis demo baseline.",
+            "This offline stage uses GT-backed track rows as the detect/track provider for a legacy baseline path.",
         )
     else:
         stage_summary["notes"].insert(
@@ -1567,12 +1590,14 @@ def materialize_stage_inputs(
     if extra_stage_summary:
         stage_summary.update(copy.deepcopy(extra_stage_summary))
     save_json(summaries_dir / "stage_input_summary.json", stage_summary)
-    save_json(summaries_dir / "wildtrack_demo_config.runtime.json", wildtrack_config)
+    save_json(summaries_dir / "dataset_profile.runtime.json", dataset_profile)
+    save_json(summaries_dir / "wildtrack_demo_config.runtime.json", dataset_profile)
 
     return {
         "project_root": str(project_root),
         "dataset_root": str(dataset_root),
-        "wildtrack_config_path": str(wildtrack_config_path),
+        "dataset_profile_path": str(dataset_profile_path),
+        "wildtrack_config_path": str(dataset_profile_path),
         "output_root": str(output_root),
         "tracks_csv": str(tracks_dir / "all_tracks_filtered.csv"),
         "identity_queue_csv": str(events_dir / "identity_resolution_queue.csv"),
@@ -1630,15 +1655,19 @@ def build_entry_anchor_packets(camera_id, camera_cfg, camera_rows, line_threshol
     return packets
 
 
-def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_override=None):
+def build_offline_stage_inputs(
+    offline_config,
+    transition_map,
+    dataset_profile_override=None,
+    wildtrack_config_override=None,
+):
     project_root = Path(offline_config["project_root"]).resolve()
-    dataset_root = Path(offline_config["dataset"]["root"])
-    if not dataset_root.is_absolute():
-        dataset_root = (project_root / dataset_root).resolve()
-    wildtrack_config_path = Path(offline_config["wildtrack_demo_config"])
-    if not wildtrack_config_path.is_absolute():
-        wildtrack_config_path = (project_root / wildtrack_config_path).resolve()
-    wildtrack_config = wildtrack_config_override or load_json(wildtrack_config_path)
+    dataset_profile_path, loaded_profile, _dataset_profile_runtime = load_dataset_profile_from_config(
+        offline_config,
+        project_root,
+    )
+    dataset_profile = dataset_profile_override or wildtrack_config_override or loaded_profile
+    dataset_root = resolve_dataset_root(project_root, offline_config, dataset_profile)
     output_root = Path(offline_config["output_root"])
     if not output_root.is_absolute():
         output_root = (project_root / output_root).resolve()
@@ -1661,16 +1690,16 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
         virtual_camera_ids = replay_cfg.get("virtual_camera_ids", []) or []
         if not virtual_camera_ids:
             raise RuntimeError("single_source_replay.virtual_camera_ids is required.")
-        if virtual_camera_ids != wildtrack_config.get("selected_cameras", []):
+        if virtual_camera_ids != dataset_profile.get("selected_cameras", []):
             raise RuntimeError(
-                "single_source_replay.virtual_camera_ids must match wildtrack_config.selected_cameras for the sequential replay demo."
+                "single_source_replay.virtual_camera_ids must match dataset_profile.selected_cameras for the sequential replay demo."
             )
         time_offsets = replay_cfg.get("virtual_time_offsets_sec", []) or []
         if not time_offsets:
             raise RuntimeError("single_source_replay.virtual_time_offsets_sec is required.")
         if len(time_offsets) != len(virtual_camera_ids):
             raise RuntimeError("single_source_replay.virtual_time_offsets_sec length must match virtual_camera_ids length.")
-        fps = float(wildtrack_config["assumed_video_fps"])
+        fps = float(dataset_profile["assumed_video_fps"])
         configured_frame_offsets = replay_cfg.get("virtual_frame_offsets", []) or []
         if configured_frame_offsets and len(configured_frame_offsets) != len(virtual_camera_ids):
             raise RuntimeError("single_source_replay.virtual_frame_offsets length must match virtual_camera_ids length.")
@@ -1687,7 +1716,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
         frame_source_mode = offline_config.get("frame_source_mode", "video_files")
         low_load_cfg = offline_config.get("low_load", {})
         source_camera_cfg = copy.deepcopy(source_template["cameras"][source_camera_id])
-        first_virtual_camera = wildtrack_config["cameras"][virtual_camera_ids[0]]
+        first_virtual_camera = dataset_profile["cameras"][virtual_camera_ids[0]]
         if first_virtual_camera.get("processing_roi"):
             source_camera_cfg["processing_roi"] = copy.deepcopy(first_virtual_camera.get("processing_roi", []))
             source_camera_cfg["entry_roi"] = copy.deepcopy(first_virtual_camera.get("processing_roi", []))
@@ -1710,7 +1739,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                 "frame_stride": max(1, as_int(low_load_cfg.get("frame_stride", 1), 1)),
                 "identity_seed_field": "global_gt_id",
                 "notes": [
-                    "This legacy mode seeds track rows directly from Wildtrack annotations.",
+                    "This legacy mode seeds track rows directly from dataset annotations.",
                     "It is kept only as an explicit opt-in fallback for audit/regression, not as the default runnable path.",
                 ],
             }
@@ -1730,7 +1759,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                 low_load_cfg,
                 frame_source_mode,
                 inference_cfg,
-                processing_cfg=wildtrack_config.get("processing", {}),
+                processing_cfg=dataset_profile.get("processing", {}),
             )
         else:
             raise RuntimeError(
@@ -1743,7 +1772,7 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
             cloned_rows = clone_track_rows_for_virtual_camera(
                 source_rows,
                 virtual_camera_id,
-                wildtrack_config["cameras"][virtual_camera_id].get("role", "entry"),
+                dataset_profile["cameras"][virtual_camera_id].get("role", "entry"),
                 float(time_offsets[index]),
                 int(frame_offsets[index]),
             )
@@ -1758,14 +1787,14 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                     "replay_pass_index": index + 1,
                     "fake_time_offset_sec": round(float(time_offsets[index]), 3),
                     "fake_frame_offset": int(frame_offsets[index]),
-                    "role": wildtrack_config["cameras"][virtual_camera_id].get("role", "entry"),
+                    "role": dataset_profile["cameras"][virtual_camera_id].get("role", "entry"),
                 }
             )
         result = materialize_stage_inputs(
             project_root,
             dataset_root,
-            wildtrack_config_path,
-            wildtrack_config,
+            dataset_profile_path,
+            dataset_profile,
             output_root,
             track_rows_by_camera,
             frame_source_mode,
@@ -1784,9 +1813,9 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
                     "source_track_runtime": source_track_runtime,
                 },
                 "notes": [
-                    "This run replays one real source video sequentially as multiple virtual cameras for the supervisor-approved sanity demo.",
+                    "This run replays one real source video sequentially as multiple virtual cameras for the sanity demo path.",
                     "All virtual cameras reuse the same source track rows with fake time offsets to test Unknown_Global_ID reuse in the easiest setting.",
-                    "The goal of this mode is to validate sequential cross-camera unknown reuse before returning to harder real multi-camera overlap scenarios.",
+                    "The goal of this mode is to validate sequential cross-camera unknown reuse before returning to harder real multi-camera scenarios.",
                 ],
             },
         )
@@ -1796,9 +1825,117 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
         result["source_backend"] = "single_source_sequential_replay"
         return result
 
+    if source_backend == "logical_demo_video_inference":
+        logical_demo_cfg = offline_config.get("logical_demo", {}) or {}
+        requested_pair_id = str(logical_demo_cfg.get("pair_id", "") or "").strip() or None
+        manifest = build_logical_demo_manifest(dataset_profile, project_root, requested_pair_id=requested_pair_id)
+        materialized_profile = materialize_profile_for_logical_demo(dataset_profile, manifest)
+        frame_source_mode = offline_config.get("frame_source_mode", "video_files")
+        fps = float(materialized_profile["assumed_video_fps"])
+        low_load_cfg = offline_config.get("low_load", {})
+        inference_cfg = copy.deepcopy(offline_config.get("multi_source_inference", {}) or {})
+        cache_cfg = (inference_cfg.get("cache", {}) or {})
+        if cache_cfg.get("cache_dir"):
+            cache_dir = Path(cache_cfg["cache_dir"])
+            if not cache_dir.is_absolute():
+                cache_cfg["cache_dir"] = str((project_root / cache_dir).resolve())
+            inference_cfg["cache"] = cache_cfg
+
+        physical_track_rows = {}
+        physical_runtime = {}
+        representative_logical = {}
+        for logical_row in manifest.get("logical_cameras", []):
+            representative_logical.setdefault(logical_row["physical_camera_id"], logical_row["logical_camera_id"])
+        for physical_camera_id, logical_camera_id in representative_logical.items():
+            logical_manifest_row = next(
+                item
+                for item in manifest.get("logical_cameras", [])
+                if item["logical_camera_id"] == logical_camera_id
+            )
+            source_rows, source_track_runtime = extract_inference_track_rows(
+                physical_camera_id,
+                materialized_profile["cameras"][logical_camera_id],
+                fps,
+                Path(logical_manifest_row["video_path"]),
+                low_load_cfg,
+                frame_source_mode,
+                inference_cfg,
+                processing_cfg=materialized_profile.get("processing", {}),
+            )
+            physical_track_rows[physical_camera_id] = source_rows
+            physical_runtime[physical_camera_id] = source_track_runtime
+
+        track_rows_by_camera = {}
+        logical_manifest_rows = []
+        for logical_row in manifest.get("logical_cameras", []):
+            logical_camera_id = logical_row["logical_camera_id"]
+            physical_camera_id = logical_row["physical_camera_id"]
+            cloned_rows = clone_track_rows_for_virtual_camera(
+                physical_track_rows.get(physical_camera_id, []),
+                logical_camera_id,
+                materialized_profile["cameras"][logical_camera_id].get("role", ""),
+                float(logical_row.get("timeline_offset_sec", 0.0) or 0.0),
+                int(logical_row.get("frame_offset", 0) or 0),
+            )
+            for row in cloned_rows:
+                row["source_physical_camera_id"] = physical_camera_id
+                row["logical_demo_copy"] = bool(logical_row.get("logical_demo_copy", False))
+                row["pair_id"] = manifest.get("pair_id", "")
+            track_rows_by_camera[logical_camera_id] = cloned_rows
+            logical_manifest_rows.append(
+                {
+                    "logical_camera_id": logical_camera_id,
+                    "physical_camera_id": physical_camera_id,
+                    "pair_id": manifest.get("pair_id", ""),
+                    "video_path": logical_row["video_path"],
+                    "timeline_offset_sec": logical_row["timeline_offset_sec"],
+                    "frame_offset": logical_row["frame_offset"],
+                    "logical_demo_copy": bool(logical_row.get("logical_demo_copy", False)),
+                    "anchor_point_mode": materialized_profile["cameras"][logical_camera_id].get("anchor_point_mode", "bottom_center"),
+                }
+            )
+
+        result = materialize_stage_inputs(
+            project_root,
+            dataset_root,
+            dataset_profile_path,
+            materialized_profile,
+            output_root,
+            track_rows_by_camera,
+            frame_source_mode,
+            low_load_cfg,
+            transition_map,
+            pipeline_backend="logical_demo_video_inference",
+            extra_stage_summary={
+                "logical_demo": {
+                    "pair_id": manifest.get("pair_id", ""),
+                    "available_pair_ids": manifest.get("available_pair_ids", []),
+                    "physical_sources": manifest.get("physical_sources", []),
+                    "logical_cameras": logical_manifest_rows,
+                    "notes": manifest.get("notes", []),
+                },
+                "multi_source_inference": {
+                    "track_provider": "inference_yolo_bytetrack",
+                    "selected_cameras": list(materialized_profile.get("selected_cameras", [])),
+                    "per_physical_camera_runtime": physical_runtime,
+                },
+                "notes": [
+                    "This backend expands 2 physical cameras from the New Dataset into 4 logical demo streams with explicit timeline offsets.",
+                    "Logical camera copies are documented demo adapters for scope alignment, not claims of four independent physical cameras.",
+                    "Cross-camera association for this dataset is expected to rely on travel-time windows and appearance evidence instead of overlap assumptions.",
+                ],
+            },
+        )
+        manifest_path = output_root / "summaries" / "logical_demo_manifest.json"
+        save_json(manifest_path, manifest)
+        result["video_sources"] = dict(manifest.get("video_sources", {}))
+        result["logical_demo_manifest_json"] = str(manifest_path)
+        result["source_backend"] = "logical_demo_video_inference"
+        return result
+
     if source_backend == "wildtrack_video_inference":
         frame_source_mode = offline_config.get("frame_source_mode", "video_files")
-        fps = float(wildtrack_config["assumed_video_fps"])
+        fps = float(dataset_profile["assumed_video_fps"])
         low_load_cfg = offline_config.get("low_load", {})
         video_sources = {}
         for camera_id, video_path in (offline_config["dataset"].get("video_sources", {}) or {}).items():
@@ -1815,26 +1952,26 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
             inference_cfg["cache"] = cache_cfg
         track_rows_by_camera = {}
         per_camera_runtime = {}
-        for camera_id in wildtrack_config["selected_cameras"]:
+        for camera_id in dataset_profile["selected_cameras"]:
             if camera_id not in video_sources:
                 raise RuntimeError(f"Missing video source for {camera_id} in offline pipeline config.")
             source_rows, source_track_runtime = extract_inference_track_rows(
                 camera_id,
-                wildtrack_config["cameras"][camera_id],
+                dataset_profile["cameras"][camera_id],
                 fps,
                 video_sources[camera_id],
                 low_load_cfg,
                 frame_source_mode,
                 inference_cfg,
-                processing_cfg=wildtrack_config.get("processing", {}),
+                processing_cfg=dataset_profile.get("processing", {}),
             )
             track_rows_by_camera[camera_id] = source_rows
             per_camera_runtime[camera_id] = source_track_runtime
         result = materialize_stage_inputs(
             project_root,
             dataset_root,
-            wildtrack_config_path,
-            wildtrack_config,
+            dataset_profile_path,
+            dataset_profile,
             output_root,
             track_rows_by_camera,
             frame_source_mode,
@@ -1844,13 +1981,13 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
             extra_stage_summary={
                 "multi_source_inference": {
                     "track_provider": "inference_yolo_bytetrack",
-                    "selected_cameras": list(wildtrack_config.get("selected_cameras", [])),
+                    "selected_cameras": list(dataset_profile.get("selected_cameras", [])),
                     "per_camera_runtime": per_camera_runtime,
                 },
                 "notes": [
-                    "This run uses four real Wildtrack video files with true detector+tracker inference per camera.",
+                    "This run uses true detector+tracker inference per camera.",
                     "Processing ROI pre-masks frames and hard-filters detector outputs before downstream ReID and association consume them.",
-                    "The purpose of this backend is to benchmark real 4-camera transition logic instead of the easier single-source replay path.",
+                    "The purpose of this backend is to benchmark real multi-camera transition logic instead of the easier single-source replay path.",
                 ],
             },
         )
@@ -1860,22 +1997,22 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
 
     frame_source_mode = offline_config.get("frame_source_mode", "video_files")
     video_sources = {}
-    for camera_id, video_path in (offline_config["dataset"].get("video_sources", {}) or {}).items():
+    for camera_id, video_path in (offline_config.get("dataset", {}).get("video_sources", {}) or {}).items():
         resolved = Path(video_path)
         if not resolved.is_absolute():
             resolved = (project_root / resolved).resolve()
         video_sources[camera_id] = resolved
 
-    fps = float(wildtrack_config["assumed_video_fps"])
+    fps = float(dataset_profile["assumed_video_fps"])
     low_load_cfg = offline_config.get("low_load", {})
     track_rows_by_camera = {}
-    for camera_id in wildtrack_config["selected_cameras"]:
+    for camera_id in dataset_profile["selected_cameras"]:
         if camera_id not in video_sources:
             raise RuntimeError(f"Missing video source for {camera_id} in offline pipeline config.")
         track_rows_by_camera[camera_id] = extract_camera_track_rows(
             dataset_root,
             camera_id,
-            wildtrack_config["cameras"][camera_id],
+            dataset_profile["cameras"][camera_id],
             fps,
             video_sources[camera_id],
             low_load_cfg,
@@ -1885,8 +2022,8 @@ def build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_
     result = materialize_stage_inputs(
         project_root,
         dataset_root,
-        wildtrack_config_path,
-        wildtrack_config,
+        dataset_profile_path,
+        dataset_profile,
         output_root,
         track_rows_by_camera,
         frame_source_mode,

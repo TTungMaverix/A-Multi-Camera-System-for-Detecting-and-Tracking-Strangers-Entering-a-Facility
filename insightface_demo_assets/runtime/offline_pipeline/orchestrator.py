@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from association_core import load_camera_transition_map
+from dataset_profiles import load_dataset_profile_from_config
 from offline_pipeline.event_builder import build_offline_stage_inputs, load_json, save_json
 from run_face_resolution_demo import main as run_face_resolution_main
 from scene_calibration import (
@@ -41,8 +42,11 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     runtime_config.update(
         {
             "project_root": str(project_root),
+            "dataset_root": stage_inputs["dataset_root"],
+            "dataset_profile_path": stage_inputs.get("dataset_profile_path", stage_inputs["wildtrack_config_path"]),
             "wildtrack_config_path": stage_inputs["wildtrack_config_path"],
             "tracks_csv": stage_inputs["tracks_csv"],
+            "identity_queue_csv": stage_inputs["identity_queue_csv"],
             "wildtrack_identity_queue_csv": stage_inputs["identity_queue_csv"],
             "resolved_events_csv": str(runtime_dir / "resolved_events_template.csv"),
             "unknown_profiles_csv": str(runtime_dir / "unknown_profiles_template.csv"),
@@ -192,11 +196,14 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     output_root = resolve_path(project_root, offline_config["output_root"])
     output_root.mkdir(parents=True, exist_ok=True)
 
-    wildtrack_config_path = resolve_path(project_root, offline_config["wildtrack_demo_config"])
-    wildtrack_config = load_json(wildtrack_config_path)
+    dataset_profile_path, dataset_profile, dataset_profile_runtime = load_dataset_profile_from_config(
+        offline_config,
+        project_root,
+        base_dir=config_path.parent,
+    )
     transition_config_path = offline_config.get("camera_transition_map_config", "")
     transition_map, transition_runtime = load_camera_transition_map(
-        wildtrack_config,
+        dataset_profile,
         config_path=str(resolve_path(project_root, transition_config_path)) if transition_config_path else "",
         base_dir=config_path.parent,
     )
@@ -204,16 +211,16 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     scene_calibration, _runtime_cameras, scene_runtime = load_runtime_scene_calibration(
         config_path=resolve_path(project_root, scene_calibration_config) if scene_calibration_config else None,
         base_dir=config_path.parent,
-        camera_ids=wildtrack_config.get("selected_cameras", []),
+        camera_ids=dataset_profile.get("selected_cameras", []),
         source_lookup=build_source_lookup(project_root, offline_config),
         required=True,
     )
     frame_sizes = scene_runtime.get("frame_sizes", {})
     transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
-    wildtrack_config = apply_scene_calibration_to_wildtrack_config(wildtrack_config, scene_calibration, frame_sizes)
+    dataset_profile = apply_scene_calibration_to_wildtrack_config(dataset_profile, scene_calibration, frame_sizes)
 
     stage_started = time.perf_counter()
-    stage_inputs = build_offline_stage_inputs(offline_config, transition_map, wildtrack_config_override=wildtrack_config)
+    stage_inputs = build_offline_stage_inputs(offline_config, transition_map, dataset_profile_override=dataset_profile)
     stage_elapsed_sec = round(max(time.perf_counter() - stage_started, 1e-9), 3)
     runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
     face_resolution_started = time.perf_counter()
@@ -232,6 +239,7 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         "output_root": str(output_root),
         "stage_inputs": stage_inputs,
         "runtime_config_path": str(runtime_config_path),
+        "dataset_profile_runtime": dataset_profile_runtime,
         "camera_transition_map_runtime": transition_runtime,
         "scene_calibration_runtime": scene_runtime,
         "face_runtime_config": {

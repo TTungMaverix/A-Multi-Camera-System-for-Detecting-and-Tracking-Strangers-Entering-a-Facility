@@ -27,7 +27,7 @@ def _flatten_missing_keys(defaults, loaded, prefix=""):
     return missing
 
 
-def _camera_zone_from_wildtrack(camera_id, camera_cfg):
+def _camera_zone_from_dataset_profile(camera_id, camera_cfg):
     polygon = camera_cfg.get("entry_roi") or camera_cfg.get("track_roi") or []
     role = camera_cfg.get("role", "")
     default_zone_id = f"{camera_id.lower()}_{'entry' if role == 'entry' else 'track'}_default"
@@ -47,7 +47,7 @@ def _camera_zone_from_wildtrack(camera_id, camera_cfg):
                 "zone_type": zone_type,
                 "polygon": polygon,
                 "placeholder": False,
-                "description": f"Derived from {'entry_roi' if camera_cfg.get('entry_roi') else 'track_roi'} in wildtrack_demo_config.json",
+                "description": f"Derived from {'entry_roi' if camera_cfg.get('entry_roi') else 'track_roi'} in the active dataset profile.",
             }
         ],
         "subzones": [
@@ -69,7 +69,7 @@ def build_default_transition_map(wildtrack_config):
     fps = float(wildtrack_config["assumed_video_fps"])
     cameras = {}
     for camera_id in wildtrack_config["selected_cameras"]:
-        cameras[camera_id] = _camera_zone_from_wildtrack(camera_id, wildtrack_config["cameras"][camera_id])
+        cameras[camera_id] = _camera_zone_from_dataset_profile(camera_id, wildtrack_config["cameras"][camera_id])
 
     transitions = []
     for src_camera, targets in wildtrack_config["camera_topology"].items():
@@ -94,7 +94,7 @@ def build_default_transition_map(wildtrack_config):
                     "allowed_exit_subzones": [],
                     "allowed_entry_subzones": [],
                     "placeholder": False,
-                    "description": "Derived from camera_topology in wildtrack_demo_config.json",
+                    "description": "Derived from camera_topology in the active dataset profile.",
                 }
             )
     return {

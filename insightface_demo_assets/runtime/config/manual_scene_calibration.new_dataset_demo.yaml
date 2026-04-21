@@ -1,0 +1,264 @@
+scene_calibration:
+  version: 1
+  coordinate_space: normalized
+  processing:
+    require_manual_calibration: true
+    roi_mask_enabled: true
+    mask_outside_polygon: true
+    preview_overlay_enabled: true
+    preview_interval_sec: 1.0
+    min_bbox_coverage: 0.25
+  direction_filter:
+    history_window: 6
+    minimum_points: 3
+    minimum_inward_motion_px: 12.0
+    minimum_inside_ratio: 0.45
+    require_zone_transition: false
+    allow_line_cross_only_when_history_short: false
+    inward_zone_types: [interior, exit]
+    outward_zone_types: [entry, approach]
+  cameras:
+    C1:
+      camera_id: C1
+      role: entry
+      description: Physical Camera 1 at the outside approach to the facility door.
+      preview_source: New Dataset/Camera 1/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1418
+        height: 720
+      anchor_point_mode: bottom_center
+      processing_roi:
+        polygon:
+          - [0.05, 0.08]
+          - [0.96, 0.08]
+          - [0.98, 0.98]
+          - [0.03, 0.98]
+      entry_line:
+        points:
+          - [0.10, 0.60]
+          - [0.94, 0.60]
+        in_side_point: [0.60, 0.88]
+      default_zone_id: c1_entry_main
+      default_subzone_id: c1_outer_entry
+      entry_zones: [c1_entry_main]
+      exit_zones: [c1_entry_main]
+      zones:
+        - zone_id: c1_entry_main
+          zone_type: entry
+          polygon:
+            - [0.05, 0.08]
+            - [0.96, 0.08]
+            - [0.98, 0.98]
+            - [0.03, 0.98]
+          priority: 100
+          description: Main processing ROI for the physical entrance camera.
+          placeholder: false
+      subzones:
+        - subzone_id: c1_outer_entry
+          parent_zone_id: c1_entry_main
+          subzone_type: entry
+          polygon:
+            - [0.05, 0.08]
+            - [0.96, 0.08]
+            - [0.96, 0.62]
+            - [0.05, 0.62]
+          priority: 110
+          description: Outside approach band before the inward crossing line.
+          placeholder: false
+          allowed_transitions: []
+        - subzone_id: c1_inner_entry
+          parent_zone_id: c1_entry_main
+          subzone_type: interior
+          polygon:
+            - [0.05, 0.58]
+            - [0.96, 0.58]
+            - [0.98, 0.98]
+            - [0.03, 0.98]
+          priority: 120
+          description: Door-adjacent band used as the outgoing region toward Camera 2.
+          placeholder: false
+          allowed_transitions: [C1_to_C2_physical]
+    C2:
+      camera_id: C2
+      role: entry
+      description: Physical Camera 2 inside the door, often seeing only upper-body / partial-body.
+      preview_source: New Dataset/Camera 2/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1326
+        height: 720
+      anchor_point_mode: center_center
+      processing_roi:
+        polygon:
+          - [0.10, 0.08]
+          - [0.97, 0.08]
+          - [0.95, 0.95]
+          - [0.08, 0.95]
+      entry_line:
+        points:
+          - [0.12, 0.50]
+          - [0.90, 0.54]
+        in_side_point: [0.72, 0.84]
+      default_zone_id: c2_inside_main
+      default_subzone_id: c2_door_arrival
+      entry_zones: [c2_inside_main]
+      exit_zones: [c2_inside_main]
+      zones:
+        - zone_id: c2_inside_main
+          zone_type: entry
+          polygon:
+            - [0.10, 0.08]
+            - [0.97, 0.08]
+            - [0.95, 0.95]
+            - [0.08, 0.95]
+          priority: 100
+          description: Main processing ROI for the inside-door camera.
+          placeholder: false
+      subzones:
+        - subzone_id: c2_door_arrival
+          parent_zone_id: c2_inside_main
+          subzone_type: entry
+          polygon:
+            - [0.10, 0.08]
+            - [0.88, 0.12]
+            - [0.82, 0.52]
+            - [0.12, 0.48]
+          priority: 110
+          description: Arrival band near the doorway.
+          placeholder: false
+          allowed_transitions: [C1_to_C2_physical]
+        - subzone_id: c2_inner_corridor
+          parent_zone_id: c2_inside_main
+          subzone_type: exit
+          polygon:
+            - [0.14, 0.48]
+            - [0.92, 0.54]
+            - [0.95, 0.95]
+            - [0.08, 0.95]
+          priority: 120
+          description: Interior band after entering Camera 2.
+          placeholder: false
+          allowed_transitions: [C2_to_C3_demo]
+    C3:
+      camera_id: C3
+      role: entry
+      description: Logical demo copy of Camera 1.
+      preview_source: New Dataset/Camera 1/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1418
+        height: 720
+      anchor_point_mode: bottom_center
+      processing_roi:
+        polygon:
+          - [0.05, 0.08]
+          - [0.96, 0.08]
+          - [0.98, 0.98]
+          - [0.03, 0.98]
+      entry_line:
+        points:
+          - [0.10, 0.60]
+          - [0.94, 0.60]
+        in_side_point: [0.60, 0.88]
+      default_zone_id: c3_entry_main
+      default_subzone_id: c3_outer_entry
+      entry_zones: [c3_entry_main]
+      exit_zones: [c3_entry_main]
+      zones:
+        - zone_id: c3_entry_main
+          zone_type: entry
+          polygon:
+            - [0.05, 0.08]
+            - [0.96, 0.08]
+            - [0.98, 0.98]
+            - [0.03, 0.98]
+          priority: 100
+          description: Logical copy of Camera 1 ROI.
+          placeholder: false
+      subzones:
+        - subzone_id: c3_outer_entry
+          parent_zone_id: c3_entry_main
+          subzone_type: entry
+          polygon:
+            - [0.05, 0.08]
+            - [0.96, 0.08]
+            - [0.96, 0.62]
+            - [0.05, 0.62]
+          priority: 110
+          description: Logical outside band before the inward crossing line.
+          placeholder: false
+          allowed_transitions: []
+        - subzone_id: c3_inner_entry
+          parent_zone_id: c3_entry_main
+          subzone_type: interior
+          polygon:
+            - [0.05, 0.58]
+            - [0.96, 0.58]
+            - [0.98, 0.98]
+            - [0.03, 0.98]
+          priority: 120
+          description: Logical outgoing band toward Camera 4.
+          placeholder: false
+          allowed_transitions: [C3_to_C4_demo]
+    C4:
+      camera_id: C4
+      role: entry
+      description: Logical demo copy of Camera 2.
+      preview_source: New Dataset/Camera 2/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1326
+        height: 720
+      anchor_point_mode: center_center
+      processing_roi:
+        polygon:
+          - [0.10, 0.08]
+          - [0.97, 0.08]
+          - [0.95, 0.95]
+          - [0.08, 0.95]
+      entry_line:
+        points:
+          - [0.12, 0.50]
+          - [0.90, 0.54]
+        in_side_point: [0.72, 0.84]
+      default_zone_id: c4_inside_main
+      default_subzone_id: c4_door_arrival
+      entry_zones: [c4_inside_main]
+      exit_zones: [c4_inside_main]
+      zones:
+        - zone_id: c4_inside_main
+          zone_type: entry
+          polygon:
+            - [0.10, 0.08]
+            - [0.97, 0.08]
+            - [0.95, 0.95]
+            - [0.08, 0.95]
+          priority: 100
+          description: Logical copy of Camera 2 ROI.
+          placeholder: false
+      subzones:
+        - subzone_id: c4_door_arrival
+          parent_zone_id: c4_inside_main
+          subzone_type: entry
+          polygon:
+            - [0.10, 0.08]
+            - [0.88, 0.12]
+            - [0.82, 0.52]
+            - [0.12, 0.48]
+          priority: 110
+          description: Logical arrival band near the doorway.
+          placeholder: false
+          allowed_transitions: [C3_to_C4_demo]
+        - subzone_id: c4_inner_corridor
+          parent_zone_id: c4_inside_main
+          subzone_type: exit
+          polygon:
+            - [0.14, 0.48]
+            - [0.92, 0.54]
+            - [0.95, 0.95]
+            - [0.08, 0.95]
+          priority: 120
+          description: Logical post-entry interior band.
+          placeholder: false
+          allowed_transitions: []

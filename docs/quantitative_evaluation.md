@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This phase adds a small but reproducible quantitative evaluation package on top of the sequential replay benchmark.
+This document describes the **legacy Wildtrack-based evaluation package** that remains in the repository for reference.
+
+The active dataset has moved to the self-recorded New Dataset, but the older Wildtrack evaluation scripts are still kept because they were used to quantify earlier phases.
 
 The goal is not to claim a full public MTMCT benchmark result. The goal is to replace "looks correct" with:
 

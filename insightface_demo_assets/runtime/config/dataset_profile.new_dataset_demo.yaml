@@ -1,0 +1,128 @@
+dataset_profile:
+  profile_name: new_dataset_demo
+  dataset_name: New Dataset
+  dataset_root: New Dataset
+  assumed_video_fps: 10.0
+  selected_cameras:
+    - C1
+    - C2
+    - C3
+    - C4
+  best_shot_window_frames: 60
+  line_crossing_distance_threshold: 100.0
+  best_shot_selection:
+    enabled: true
+    preferred_subzone_types: [interior, exit, entry]
+    minimum_frames_after_anchor:
+      sequential: 2
+      weak_link: 2
+  head_crop:
+    top_ratio: 0.02
+    bottom_ratio: 0.46
+    side_ratio: 0.18
+  face_buffer:
+    window_frames: 24
+    max_frames: 6
+    min_frame_step: 2
+  clip_pairing:
+    naming_mode: shared_stem
+    supported_extensions: [.mp4, .mov, .avi, .mkv]
+    default_pair_id: ""
+  physical_cameras:
+    CAM1:
+      label: Camera 1
+      root_dir: New Dataset/Camera 1
+      description: Physical camera at the facility door with a top-down-ish diagonal angle.
+    CAM2:
+      label: Camera 2
+      root_dir: New Dataset/Camera 2
+      description: Physical camera just inside the facility door with a more eye-level diagonal angle.
+  logical_demo:
+    enabled: true
+    description: 2 physical cameras are expanded into 4 logical demo streams by replaying paired clips with explicit timeline offsets.
+    logical_cameras:
+      C1:
+        source_physical_camera_id: CAM1
+        timeline_offset_sec: 0.0
+        logical_demo_copy: false
+      C2:
+        source_physical_camera_id: CAM2
+        timeline_offset_sec: 10.0
+        logical_demo_copy: false
+      C3:
+        source_physical_camera_id: CAM1
+        timeline_offset_sec: 20.0
+        logical_demo_copy: true
+      C4:
+        source_physical_camera_id: CAM2
+        timeline_offset_sec: 30.0
+        logical_demo_copy: true
+  camera_topology:
+    C1:
+      C2:
+        relation: sequential
+        min_frame_gap: 80
+        max_frame_gap: 160
+    C2:
+      C3:
+        relation: sequential
+        min_frame_gap: 80
+        max_frame_gap: 180
+    C3:
+      C4:
+        relation: sequential
+        min_frame_gap: 80
+        max_frame_gap: 160
+  cameras:
+    C1:
+      camera_id: C1
+      role: entry
+      description: Logical stream backed by physical Camera 1.
+      preview_source: New Dataset/Camera 1/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1418
+        height: 720
+      anchor_point_mode: bottom_center
+      source_physical_camera_id: CAM1
+      timeline_offset_sec: 0.0
+      logical_demo_copy: false
+    C2:
+      camera_id: C2
+      role: entry
+      description: Logical stream backed by physical Camera 2.
+      preview_source: New Dataset/Camera 2/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1326
+        height: 720
+      anchor_point_mode: center_center
+      source_physical_camera_id: CAM2
+      timeline_offset_sec: 10.0
+      logical_demo_copy: false
+    C3:
+      camera_id: C3
+      role: entry
+      description: Logical demo copy of physical Camera 1 for 4-camera scope alignment.
+      preview_source: New Dataset/Camera 1/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1418
+        height: 720
+      anchor_point_mode: bottom_center
+      source_physical_camera_id: CAM1
+      timeline_offset_sec: 20.0
+      logical_demo_copy: true
+    C4:
+      camera_id: C4
+      role: entry
+      description: Logical demo copy of physical Camera 2 for 4-camera scope alignment.
+      preview_source: New Dataset/Camera 2/a1.mp4
+      preview_source_type: file
+      frame_size_ref:
+        width: 1326
+        height: 720
+      anchor_point_mode: center_center
+      source_physical_camera_id: CAM2
+      timeline_offset_sec: 30.0
+      logical_demo_copy: true

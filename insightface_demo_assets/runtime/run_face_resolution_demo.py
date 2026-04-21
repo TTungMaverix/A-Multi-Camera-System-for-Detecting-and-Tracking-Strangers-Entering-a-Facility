@@ -19,6 +19,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import cv2
 import numpy as np
+import yaml
 from insightface.app import FaceAnalysis
 from association_core import (
     assign_model_identities as core_assign_model_identities,
@@ -56,7 +57,11 @@ CONFIG_DEFAULT = Path(__file__).with_name("face_demo_config.json")
 
 
 def load_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    text = path.read_text(encoding="utf-8-sig")
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        payload = yaml.safe_load(text) or {}
+        return payload.get("dataset_profile", payload) if isinstance(payload, dict) else payload
+    return json.loads(text)
 
 
 def save_json(path: Path, data):
@@ -1884,13 +1889,17 @@ def main(config_path: Path):
     association_policy_config = config.get("association_policy_config", "")
     camera_transition_map_config = config.get("camera_transition_map_config", "")
     scene_calibration_config = config.get("scene_calibration_config", "")
-    queue_csv = resolve_path(base_dir, config["wildtrack_identity_queue_csv"])
-    wildtrack_config_path = resolve_path(
+    queue_csv = resolve_path(base_dir, config.get("identity_queue_csv", config["wildtrack_identity_queue_csv"]))
+    dataset_profile_path = resolve_path(
         base_dir,
-        config.get("wildtrack_config_path", str(queue_csv.parents[2] / "wildtrack_demo_config.json")),
+        config.get(
+            "dataset_profile_path",
+            config.get("wildtrack_config_path", str(queue_csv.parents[2] / "wildtrack_demo_config.json")),
+        ),
     )
-    wildtrack_config = load_json(wildtrack_config_path)
-    dataset_root = resolve_path(base_dir, config.get("dataset_root", str(wildtrack_config_path.parent / wildtrack_config["dataset_root"])))
+    wildtrack_config_path = dataset_profile_path
+    wildtrack_config = load_json(dataset_profile_path)
+    dataset_root = resolve_path(base_dir, config.get("dataset_root", str(dataset_profile_path.parent / wildtrack_config["dataset_root"])))
     tracks_csv = resolve_path(base_dir, config.get("tracks_csv", str(queue_csv.parents[1] / "tracks" / "all_tracks_filtered.csv")))
     known_root = resolve_path(base_dir, config["known_face_gallery_root"])
     known_manifest_csv = resolve_path(base_dir, config["known_face_manifest_csv"])

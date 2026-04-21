@@ -2,28 +2,28 @@
 
 ## Current Phase
 
-The current offline debug path is the **Wildtrack 4-camera ROI benchmark**.
+The current active offline demo path is the **New Dataset logical 4-camera adapter**.
 
 It uses:
 
-- four different recorded videos: `C3`, `C5`, `C6`, `C7`
-- real `YOLOv8n + ByteTrack` inference per camera
+- 2 physical videos from the self-recorded dataset
+- a logical expansion into `C1 -> C2 -> C3 -> C4`
+- real `YOLOv8n + ByteTrack` inference
 - short-gap tracklet linking after ByteTrack
 - calibrated ROI masking before downstream identity logic
 - inward-direction filtering before event creation
-- face-first matching with pose-aware best-shot selection
-- OSNet body ReID fallback
+- face-first matching with OSNet body fallback
 - topology/travel-time hard filtering before similarity
 
-The earlier single-source sequential replay proof still exists, but it is no longer the primary benchmark of the current phase.
+The earlier Wildtrack benchmark path still remains in the repo for legacy comparison and regression checks, but it is no longer the active dataset narrative.
 
 ## Entry Points
 
-Current 4-camera ROI benchmark:
+Current New Dataset demo:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_wildtrack_4cam_roi_benchmark.ps1"
+powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
 ```
 
 Direct orchestrator wrapper:
@@ -37,29 +37,24 @@ Direct Python:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml"
-```
-
-Paired no-ROI baseline:
-
-```cmd
-cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
 ```
 
 ## Main Configs
 
-Primary 4-camera configs:
+Primary New Dataset configs:
 
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml`
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml`
-- `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack_4cam_phase.yaml`
-- `insightface_demo_assets/runtime/config/camera_transition_map.wildtrack_4cam_phase.yaml`
-- `insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml`
+- `insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml`
 
 Important config blocks in the current phase:
 
-- `multi_source_inference.camera_ids`
+- `dataset_profile_config`
+- `logical_demo.pair_id`
 - `multi_source_inference.tracklet_linking`
 - `multi_source_inference.roi_filter`
 - `multi_source_inference.cache`
@@ -69,7 +64,7 @@ Important config blocks in the current phase:
 
 ## Backend Flow
 
-For each configured camera video:
+For each configured logical camera stream:
 
 1. decode video frames
 2. optionally pre-mask the frame with the calibrated ROI
@@ -83,26 +78,37 @@ For each configured camera video:
 10. apply topology hard filter before face/body scoring
 11. emit resolved events, mappings, timelines, and handoff summaries
 
+For the New Dataset profile, the active offline demo path first builds a **logical manifest** from clip stems shared across the 2 physical camera folders, then expands them into 4 logical streams with explicit time offsets.
+
 ROI is not metadata in this phase. Boxes outside the configured processing polygon are killed before ReID and association.
 
-## Current Benchmark Pair
+## Current Demo Assumptions
 
-The current short benchmark window is:
+The current New Dataset assumptions are:
 
-- frame range: `0..360`
-- actual duration: `6.006s`
-- stride: `12`
-- cameras: `C3`, `C5`, `C6`, `C7`
+- physical camera folders: `Camera 1`, `Camera 2`
+- pairing rule: shared stem (`a1`, `a2`, `b1`, ...)
+- physical travel time `Camera 1 -> Camera 2`: about `10s`
+- logical demo timeline:
+  - `C1 @ 0s`
+  - `C2 @ 10s`
+  - `C3 @ 20s`
+  - `C4 @ 30s`
 
-Official phase numbers:
+Anchor-point defaults:
 
-- no ROI: `FP=1805`, `FN=249`, `MOTA=-6.3238`
-- ROI: `FP=526`, `FN=250`, `MOTA=-1.977`
+- `C1`, `C3`: `bottom_center`
+- `C2`, `C4`: `center_center`
 
-Interpretation:
+## Legacy Wildtrack Assets
 
-- ROI masking clearly reduces false positives
-- MOTA is still negative, so the local detect+track stage remains the main bottleneck
+Legacy Wildtrack configs and benchmark outputs are still present for audit and comparison, including:
+
+- `offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml`
+- `offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml`
+- the earlier sequential replay proof configs
+
+They are no longer the active default dataset path.
 
 ## Output Layout
 
@@ -123,12 +129,3 @@ Current phase artifacts that matter most:
 - `timelines/unknown_identity_timeline.json`
 - `summaries/cross_camera_handoff_summary.json`
 - `summaries/stage_input_summary.json`
-- `evaluation/quantitative_metrics_summary.json`
-
-## Sequential Replay Reference Path
-
-The earlier single-source replay proof remains available when a simpler, controlled sanity run is needed:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6.yaml`
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_50s.yaml`
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.single_source_sequential_c6_inference_90s.yaml`

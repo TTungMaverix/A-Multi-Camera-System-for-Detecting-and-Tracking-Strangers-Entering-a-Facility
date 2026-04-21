@@ -1,0 +1,84 @@
+camera_transition_map:
+  cameras:
+    C1:
+      role: entry
+      description: Physical Camera 1 outside the facility door.
+      default_zone_id: c1_entry_main
+      default_subzone_id: c1_outer_entry
+      entry_zones: [c1_entry_main]
+      exit_zones: [c1_entry_main]
+      zones: []
+      subzones: []
+    C2:
+      role: entry
+      description: Physical Camera 2 just inside the facility door.
+      default_zone_id: c2_inside_main
+      default_subzone_id: c2_door_arrival
+      entry_zones: [c2_inside_main]
+      exit_zones: [c2_inside_main]
+      zones: []
+      subzones: []
+    C3:
+      role: entry
+      description: Logical demo copy of physical Camera 1.
+      default_zone_id: c3_entry_main
+      default_subzone_id: c3_outer_entry
+      entry_zones: [c3_entry_main]
+      exit_zones: [c3_entry_main]
+      zones: []
+      subzones: []
+    C4:
+      role: entry
+      description: Logical demo copy of physical Camera 2.
+      default_zone_id: c4_inside_main
+      default_subzone_id: c4_door_arrival
+      entry_zones: [c4_inside_main]
+      exit_zones: [c4_inside_main]
+      zones: []
+      subzones: []
+  transitions:
+    - transition_id: C1_to_C2_physical
+      src_camera_id: C1
+      dst_camera_id: C2
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 8.0
+      avg_travel_time_sec: 10.0
+      max_travel_time_sec: 16.0
+      allowed_exit_zones: [c1_entry_main]
+      allowed_entry_zones: [c2_inside_main]
+      allowed_exit_subzones: [c1_inner_entry]
+      allowed_entry_subzones: [c2_door_arrival]
+      weak_link_support: false
+      description: Real physical handoff from the outside entrance camera to the inside-door camera.
+    - transition_id: C2_to_C3_demo
+      src_camera_id: C2
+      dst_camera_id: C3
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 8.0
+      avg_travel_time_sec: 12.0
+      max_travel_time_sec: 20.0
+      allowed_exit_zones: [c2_inside_main]
+      allowed_entry_zones: [c3_entry_main]
+      allowed_exit_subzones: [c2_inner_corridor]
+      allowed_entry_subzones: [c3_outer_entry]
+      weak_link_support: false
+      description: Logical demo continuation from the second physical camera back to the replayed first camera for 4-camera scope alignment.
+    - transition_id: C3_to_C4_demo
+      src_camera_id: C3
+      dst_camera_id: C4
+      relation_type: sequential
+      allowed_relation_types: [sequential]
+      same_area_overlap: false
+      min_travel_time_sec: 8.0
+      avg_travel_time_sec: 10.0
+      max_travel_time_sec: 16.0
+      allowed_exit_zones: [c3_entry_main]
+      allowed_entry_zones: [c4_inside_main]
+      allowed_exit_subzones: [c3_inner_entry]
+      allowed_entry_subzones: [c4_door_arrival]
+      weak_link_support: false
+      description: Logical demo continuation from the replayed first camera to the replayed second camera.

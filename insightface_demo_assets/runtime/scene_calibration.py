@@ -77,6 +77,7 @@ def _normalize_camera(camera_id, camera_cfg):
     normalized.setdefault("preview_source", "")
     normalized.setdefault("preview_source_type", "file")
     normalized.setdefault("frame_size_ref", {"width": 1920, "height": 1080})
+    normalized.setdefault("anchor_point_mode", "bottom_center")
     normalized.setdefault("processing_roi", {"polygon": []})
     normalized.setdefault("entry_line", {"points": [], "in_side_point": []})
     normalized.setdefault("default_zone_id", "")
@@ -257,6 +258,7 @@ def build_runtime_camera_calibration(camera_cfg, frame_width, frame_height):
     runtime_camera = copy.deepcopy(camera_cfg)
     runtime_camera["frame_width"] = int(frame_width)
     runtime_camera["frame_height"] = int(frame_height)
+    runtime_camera["anchor_point_mode"] = str(camera_cfg.get("anchor_point_mode", "bottom_center") or "bottom_center")
     runtime_camera["processing_roi"] = _polygon_to_pixels(
         (camera_cfg.get("processing_roi", {}) or {}).get("polygon", []),
         frame_width,
@@ -353,6 +355,7 @@ def apply_scene_calibration_to_wildtrack_config(wildtrack_config, calibration, f
         merged_camera = copy.deepcopy(merged["cameras"][camera_id])
         merged_camera["manual_calibration_active"] = True
         merged_camera["direction_filter"] = copy.deepcopy(calibration.get("direction_filter", {}) or {})
+        merged_camera["anchor_point_mode"] = runtime_camera.get("anchor_point_mode", "bottom_center")
         merged_camera["processing_roi"] = runtime_camera.get("processing_roi", [])
         if runtime_camera.get("role") == "entry":
             merged_camera["entry_roi"] = runtime_camera.get("processing_roi", [])
@@ -496,6 +499,25 @@ def _bbox_bounds(bbox, frame_width, frame_height):
     return xmin, ymin, xmax, ymax
 
 
+def bbox_anchor_point(bbox, anchor_point_mode="bottom_center"):
+    xmin = float(bbox.get("xmin", 0.0))
+    ymin = float(bbox.get("ymin", 0.0))
+    xmax = float(bbox.get("xmax", 0.0))
+    ymax = float(bbox.get("ymax", 0.0))
+    mode = str(anchor_point_mode or "bottom_center").strip().lower()
+    if mode == "center_center":
+        return {
+            "x": (xmin + xmax) / 2.0,
+            "y": (ymin + ymax) / 2.0,
+            "mode": "center_center",
+        }
+    return {
+        "x": (xmin + xmax) / 2.0,
+        "y": ymax,
+        "mode": "bottom_center",
+    }
+
+
 def bbox_roi_coverage_ratio(mask, bbox):
     if mask is None or mask.size == 0:
         return 1.0
@@ -538,13 +560,16 @@ def filter_boxes_by_processing_roi(
             frame_width = int(max(1, math.ceil(xmax)))
         mask = build_processing_mask((frame_height, frame_width), runtime_camera)
     kept = []
+    anchor_point_mode = str(runtime_camera.get("anchor_point_mode", "bottom_center") or "bottom_center")
+    stats["anchor_point_mode"] = anchor_point_mode
     for det in detections or []:
-        # Use the bottom-center foot point of the bbox as the geometry anchor.
-        # In CCTV / elevated viewpoints this point best approximates where the
-        # person stands on the ground plane, which is the right point to test
-        # against a walkable processing ROI.
-        foot_x = (float(det["xmin"]) + float(det["xmax"])) / 2.0
-        foot_y = float(det["ymax"])
+        # The point-in-polygon math stays unchanged; only the bbox anchor is configurable.
+        # `bottom_center` remains the default because it best approximates the ground-contact
+        # point in elevated CCTV views. `center_center` is available for eye-level / partial-
+        # body cameras where the detector may not see the real feet at all.
+        anchor = bbox_anchor_point(det, anchor_point_mode=anchor_point_mode)
+        foot_x = anchor["x"]
+        foot_y = anchor["y"]
         footpoint_inside = True
         if require_footpoint_inside:
             footpoint_inside = bool(polygon) and _point_in_polygon(foot_x, foot_y, polygon)
@@ -552,6 +577,9 @@ def filter_boxes_by_processing_roi(
         candidate = copy.deepcopy(det)
         candidate["roi_bbox_coverage"] = round(float(coverage), 4)
         candidate["roi_footpoint_inside"] = bool(footpoint_inside)
+        candidate["roi_anchor_point_mode"] = anchor["mode"]
+        candidate["roi_anchor_x"] = round(float(foot_x), 4)
+        candidate["roi_anchor_y"] = round(float(foot_y), 4)
         if require_footpoint_inside and not footpoint_inside:
             stats["killed_count"] += 1
             stats["killed_footpoint_count"] += 1
