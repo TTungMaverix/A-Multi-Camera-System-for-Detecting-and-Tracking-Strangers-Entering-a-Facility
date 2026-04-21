@@ -86,7 +86,7 @@ association_policy:
         fusion_primary: 0.56
         face_primary: 0.35
         face_secondary: 0.45
-        body_primary: 0.72
+        body_primary: 0.55
         body_secondary: 0.18
       weak_link:
         fusion_primary: 0.62
