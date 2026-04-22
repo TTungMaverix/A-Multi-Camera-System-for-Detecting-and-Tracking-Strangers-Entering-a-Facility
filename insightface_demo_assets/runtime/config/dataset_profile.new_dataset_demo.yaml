@@ -78,6 +78,7 @@ dataset_profile:
       camera_id: C1
       role: entry
       description: Logical stream backed by physical Camera 1.
+      face_capture_mode: body_anchor_only
       preview_source: New Dataset/Camera 1/a1.mp4
       preview_source_type: file
       frame_size_ref:
@@ -91,6 +92,7 @@ dataset_profile:
       camera_id: C2
       role: entry
       description: Logical stream backed by physical Camera 2.
+      face_capture_mode: best_shot_preferred
       preview_source: New Dataset/Camera 2/a1.mp4
       preview_source_type: file
       frame_size_ref:
@@ -104,6 +106,7 @@ dataset_profile:
       camera_id: C3
       role: entry
       description: Logical demo copy of physical Camera 1 for 4-camera scope alignment.
+      face_capture_mode: body_anchor_only
       preview_source: New Dataset/Camera 1/a1.mp4
       preview_source_type: file
       frame_size_ref:
@@ -117,6 +120,7 @@ dataset_profile:
       camera_id: C4
       role: entry
       description: Logical demo copy of physical Camera 2 for 4-camera scope alignment.
+      face_capture_mode: best_shot_preferred
       preview_source: New Dataset/Camera 2/a1.mp4
       preview_source_type: file
       frame_size_ref:

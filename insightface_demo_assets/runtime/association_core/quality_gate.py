@@ -70,10 +70,20 @@ def evaluate_buffered_face_gate(face_result, blur_score, policy=None):
     pose = estimate_face_pose(face_result.get("landmarks"))
     det_score = float(face_result.get("det_score") or 0.0)
     status = face_result.get("status", "missing")
+    bbox_width = float(face_result.get("bbox_width") or 0.0)
+    bbox_height = float(face_result.get("bbox_height") or 0.0)
+    bbox_area = float(face_result.get("bbox_area") or (bbox_width * bbox_height))
     reason = "accepted"
 
     if status != "ok":
         reason = "face_missing"
+        accepted = False
+    elif (
+        bbox_width < float(cfg.get("min_face_bbox_width", 36))
+        or bbox_height < float(cfg.get("min_face_bbox_height", 36))
+        or bbox_area < float(cfg.get("min_face_bbox_area", 1296))
+    ):
+        reason = "size_reject"
         accepted = False
     elif cfg.get("require_landmarks_for_face_buffer", True) and not pose["landmarks_available"]:
         reason = "missing_landmarks"
@@ -102,6 +112,9 @@ def evaluate_buffered_face_gate(face_result, blur_score, policy=None):
         "roll_deg": pose["roll_deg"],
         "blur_score": round(float(blur_score), 4),
         "det_score": round(det_score, 4),
+        "bbox_width": round(bbox_width, 4),
+        "bbox_height": round(bbox_height, 4),
+        "bbox_area": round(bbox_area, 4),
     }
 
 

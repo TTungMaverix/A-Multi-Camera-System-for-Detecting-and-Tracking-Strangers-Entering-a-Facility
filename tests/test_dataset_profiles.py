@@ -57,7 +57,7 @@ def test_new_dataset_transition_map_loads_physical_and_logical_windows():
     assert runtime["camera_count"] == 4
     assert runtime["transition_count"] == 3
     by_id = {item["transition_id"]: item for item in transition_map["transitions"]}
-    assert by_id["C1_to_C2_physical"]["min_travel_time_sec"] == 8.0
-    assert by_id["C1_to_C2_physical"]["max_travel_time_sec"] == 16.0
-    assert by_id["C2_to_C3_demo"]["allowed_entry_subzones"] == ["c3_outer_entry"]
+    assert by_id["C1_to_C2_physical"]["min_travel_time_sec"] == 5.0
+    assert by_id["C1_to_C2_physical"]["max_travel_time_sec"] == 30.0
+    assert by_id["C2_to_C3_demo"]["allowed_entry_subzones"] == ["c3_outer_entry", "c3_inner_entry"]
     assert by_id["C3_to_C4_demo"]["allowed_exit_subzones"] == ["c3_inner_entry"]

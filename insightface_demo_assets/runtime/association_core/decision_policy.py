@@ -71,6 +71,34 @@ def _relation_thresholds(policy, relation_type):
     return thresholds["weak_link"]
 
 
+def _topology_supported_accept(candidate, decision_cfg, primary_threshold):
+    cfg = decision_cfg.get("topology_supported_accept", {}) or {}
+    if not cfg.get("enabled", False):
+        return False
+    if candidate.get("primary_modality") != str(cfg.get("require_primary_modality", "body")):
+        return False
+    if candidate.get("relation_type") not in list(cfg.get("allowed_relations", ["sequential"])):
+        return False
+    if not candidate.get("hard_filter_pass", candidate.get("topology_allowed", False)):
+        return False
+    if float(candidate.get("time_score", 0.0)) < float(cfg.get("min_time_score", 0.9)):
+        return False
+    if bool(cfg.get("require_exact_zone", True)) and (
+        not candidate.get("zone_valid", False) or candidate.get("fallback_without_zone", False)
+    ):
+        return False
+    if bool(cfg.get("require_exact_subzone", True)) and (
+        not candidate.get("subzone_valid", False) or candidate.get("fallback_without_subzone", False)
+    ):
+        return False
+    shortfall = float(primary_threshold) - float(candidate.get("appearance_primary", 0.0))
+    if shortfall < 0.0:
+        shortfall = 0.0
+    if shortfall > float(cfg.get("max_primary_shortfall", 0.1)):
+        return False
+    return True
+
+
 def _candidate_acceptance(candidate, policy):
     if not candidate["quality_gate_pass"]:
         return False, "poor_quality", {}
@@ -108,6 +136,13 @@ def _candidate_acceptance(candidate, policy):
     }
 
     if candidate["appearance_primary"] < primary_threshold:
+        if _topology_supported_accept(candidate, policy, primary_threshold):
+            threshold_info["topology_supported_accept"] = True
+            threshold_info["topology_supported_shortfall"] = round(
+                float(primary_threshold) - float(candidate["appearance_primary"]),
+                4,
+            )
+            return True, "topology_supported_body_accept", threshold_info
         return False, "below_primary_threshold", threshold_info
     if (
         minimum_evidence["require_secondary_when_available"]
@@ -302,6 +337,8 @@ def _build_trace_row(event, candidate, decision_reason, reused_old_id=False, cre
         "event_subzone_id": event.get("subzone_id", ""),
         "event_subzone_type": event.get("subzone_type", ""),
         **candidate,
+        "source_camera_id": candidate.get("profile_camera", ""),
+        "target_camera_id": event["camera_id"],
         "reused_old_id": reused_old_id,
         "created_new_id": created_new_id,
         "selected_candidate": selected_candidate,
@@ -336,14 +373,22 @@ def _build_decision_log(
                 "candidate_unknown_global_id": candidate["candidate_unknown_global_id"],
                 "relation_type": candidate["relation_type"],
                 "transition_rule_used": candidate.get("transition_rule_used", ""),
+                "source_camera_id": candidate.get("profile_camera", ""),
+                "target_camera_id": event["camera_id"],
                 "source_zone_id": candidate.get("source_zone_id", ""),
                 "target_zone_id": candidate.get("target_zone_id", ""),
                 "source_subzone_id": candidate.get("source_subzone_id", ""),
                 "target_subzone_id": candidate.get("target_subzone_id", ""),
+                "min_travel_time": candidate.get("min_travel_time", ""),
+                "avg_travel_time": candidate.get("avg_travel_time", ""),
+                "max_travel_time": candidate.get("max_travel_time", ""),
+                "observed_delta_sec": candidate.get("delta_sec", ""),
+                "time_distance_to_expected_sec": candidate.get("time_distance_to_expected_sec", ""),
                 "topology_valid": candidate.get("topology_valid", candidate["topology_allowed"]),
                 "time_valid": candidate.get("time_valid", candidate["topology_allowed"]),
                 "zone_valid": candidate.get("zone_valid", candidate["zone_allowed"]),
                 "subzone_valid": candidate.get("subzone_valid", True),
+                "topology_support_level": candidate.get("topology_support_level", ""),
                 "zone_reason": candidate.get("zone_reason", ""),
                 "subzone_reason": candidate.get("subzone_reason", ""),
                 "time_reason": candidate.get("time_reason", ""),
@@ -399,6 +444,8 @@ def _build_decision_log(
         "selected_candidate_id": selected_candidate["candidate_unknown_global_id"] if selected_candidate else "",
         "relation_type": top_candidate["relation_type"] if top_candidate else "",
         "transition_rule_used": top_candidate.get("transition_rule_used", "") if top_candidate else "",
+        "source_camera_id": top_candidate.get("profile_camera", "") if top_candidate else "",
+        "target_camera_id": event["camera_id"],
         "topology_metadata": {
             "profile_camera": top_candidate["profile_camera"] if top_candidate else "",
             "topology_valid": top_candidate.get("topology_valid", False) if top_candidate else False,
@@ -408,8 +455,10 @@ def _build_decision_log(
             "zone_valid": top_candidate.get("zone_valid", False) if top_candidate else False,
             "subzone_valid": top_candidate.get("subzone_valid", False) if top_candidate else False,
             "zone_allowed": top_candidate["zone_allowed"] if top_candidate else False,
+            "topology_support_level": top_candidate.get("topology_support_level", "") if top_candidate else "",
         },
         "time_delta": top_candidate["delta_sec"] if top_candidate else "",
+        "time_distance_to_expected_sec": top_candidate.get("time_distance_to_expected_sec", "") if top_candidate else "",
         "travel_window": top_candidate.get("travel_window", {}) if top_candidate else {},
         "source_zone_id": top_candidate.get("source_zone_id", "") if top_candidate else "",
         "target_zone_id": top_candidate.get("target_zone_id", event.get("zone_id", "")) if top_candidate else event.get("zone_id", ""),

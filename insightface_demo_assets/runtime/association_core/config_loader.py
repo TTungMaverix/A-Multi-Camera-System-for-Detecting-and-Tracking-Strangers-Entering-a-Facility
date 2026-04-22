@@ -11,11 +11,15 @@ DEFAULT_ASSOCIATION_POLICY = {
         "full_body_area": 22000.0,
         "reliable_face_det_score": 0.20,
         "strong_face_det_score": 0.35,
+        "min_face_bbox_width": 36,
+        "min_face_bbox_height": 36,
+        "min_face_bbox_area": 1296,
         "min_face_blur_score": 45.0,
         "max_abs_yaw_deg": 30.0,
         "max_abs_pitch_deg": 20.0,
         "max_abs_roll_deg": 20.0,
         "require_landmarks_for_face_buffer": True,
+        "max_face_buffer_candidates_per_track": 3,
     },
     "topology_filter": {
         "relation_priors": {
@@ -61,6 +65,15 @@ DEFAULT_ASSOCIATION_POLICY = {
         "input_height": 256,
         "min_crop_width": 12,
         "min_crop_height": 24,
+        "clahe_enabled": True,
+        "clahe_clip_limit": 2.0,
+        "clahe_tile_grid_size": 8,
+        "gray_world_normalization": False,
+        "tracklet_pooling_max_candidates": 10,
+        "tracklet_pooling_top_k": 5,
+        "tracklet_pooling_min_blur_score": 25.0,
+        "tracklet_pooling_min_bbox_area": 1800.0,
+        "tracklet_pooling_min_relative_bbox_area": 0.55,
     },
     "gallery_lifecycle": {
         "top_k_face_refs": 3,
@@ -120,6 +133,15 @@ DEFAULT_ASSOCIATION_POLICY = {
         },
         "minimum_evidence": {
             "require_secondary_when_available": True,
+        },
+        "topology_supported_accept": {
+            "enabled": False,
+            "allowed_relations": ["sequential"],
+            "require_primary_modality": "body",
+            "min_time_score": 0.9,
+            "max_primary_shortfall": 0.1,
+            "require_exact_zone": True,
+            "require_exact_subzone": True,
         },
     },
 }

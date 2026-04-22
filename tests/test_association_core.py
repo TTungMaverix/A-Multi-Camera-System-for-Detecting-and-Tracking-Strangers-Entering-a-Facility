@@ -425,6 +425,66 @@ def test_topology_too_late_rejects_before_similarity():
     assert any(candidate.get("time_reason") == "too_late_travel_time" for candidate in debug["decision_logs"][1]["candidate_evaluations"])
 
 
+def test_decision_log_captures_travel_window_and_topology_support():
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0]),
+        make_item("e2", "C2", 2.0, face=None, body=[1.0, 0.0]),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology("sequential", min_sec=1.0, max_sec=3.0, avg_sec=2.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    decision_log = debug["decision_logs"][1]
+    candidate = decision_log["candidate_evaluations"][0]
+    assert decision_log["source_camera_id"] == "C1"
+    assert decision_log["target_camera_id"] == "C2"
+    assert candidate["min_travel_time"] == 1.0
+    assert candidate["avg_travel_time"] == 2.0
+    assert candidate["max_travel_time"] == 3.0
+    assert candidate["observed_delta_sec"] == 2.0
+    assert candidate["topology_support_level"] in {"strong", "moderate"}
+
+
+def test_topology_supported_body_accept_can_reuse_without_lowering_global_threshold():
+    policy = default_policy()
+    policy["decision_policy"]["relation_thresholds"]["sequential"]["body_primary"] = 0.72
+    policy["decision_policy"]["topology_supported_accept"]["enabled"] = True
+    policy["decision_policy"]["topology_supported_accept"]["max_primary_shortfall"] = 0.1
+    body_vec = [0.65, 0.7599342]
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0], zone_id="z1", subzone_id="s1"),
+        make_item("e2", "C2", 2.0, face=None, body=body_vec, gt_id="2", zone_id="z2", subzone_id="s2"),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology(
+            "sequential",
+            min_sec=1.0,
+            max_sec=3.0,
+            avg_sec=2.0,
+            allowed_exit_zones=["z1"],
+            allowed_entry_zones=["z2"],
+            allowed_exit_subzones=["s1"],
+            allowed_entry_subzones=["s2"],
+        ),
+        "UNK",
+        1,
+        policy=policy,
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    candidate = debug["decision_logs"][1]["candidate_evaluations"][0]
+    assert candidate["acceptance_reason"] == "topology_supported_body_accept"
+    assert debug["decision_logs"][1]["decision"] == "unknown_reuse"
+
+
 def test_same_appearance_is_still_rejected_when_travel_time_is_impossible():
     items = [
         make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0]),

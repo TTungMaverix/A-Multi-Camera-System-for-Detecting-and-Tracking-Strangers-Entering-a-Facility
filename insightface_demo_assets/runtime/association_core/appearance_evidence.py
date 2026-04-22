@@ -26,14 +26,42 @@ def cosine_similarity(v1, v2):
     return float(np.dot(v1, v2) / denom)
 
 
-def _best_similarity(embedding, refs):
-    if embedding is None or not refs:
+def _embedding_list(tracklet_embeddings=None, representative_embedding=None):
+    values = []
+    for embedding in tracklet_embeddings or []:
+        if embedding is None:
+            continue
+        values.append(_normalize(embedding))
+    if not values and representative_embedding is not None:
+        values.append(_normalize(representative_embedding))
+    return values
+
+
+def _tracklet_similarity(query_embeddings, ref_embeddings):
+    if not query_embeddings or not ref_embeddings:
         return 0.0
-    return max(cosine_similarity(embedding, ref["embedding"]) for ref in refs if ref.get("embedding") is not None)
+    best_per_query = [max(cosine_similarity(query, ref) for ref in ref_embeddings) for query in query_embeddings]
+    if not best_per_query:
+        return 0.0
+    top_scores = sorted(best_per_query, reverse=True)[: min(3, len(best_per_query))]
+    return float(np.mean(top_scores))
 
 
-def _combined_similarity(embedding, refs, representative, reference_weight, representative_weight):
-    ref_score = _best_similarity(embedding, refs)
+def _best_similarity(embedding, refs, embedding_list=None):
+    if (embedding is None and not embedding_list) or not refs:
+        return 0.0
+    query_embeddings = _embedding_list(embedding_list, embedding)
+    best_score = 0.0
+    for ref in refs:
+        ref_embeddings = _embedding_list(ref.get("tracklet_embeddings"), ref.get("embedding"))
+        if not ref_embeddings:
+            continue
+        best_score = max(best_score, _tracklet_similarity(query_embeddings, ref_embeddings))
+    return best_score
+
+
+def _combined_similarity(embedding, refs, representative, reference_weight, representative_weight, embedding_list=None):
+    ref_score = _best_similarity(embedding, refs, embedding_list=embedding_list)
     rep_score = cosine_similarity(embedding, representative) if representative is not None else 0.0
     if representative is None:
         combined = ref_score
@@ -59,6 +87,7 @@ def evaluate_appearance_evidence(item, profile, quality_gate_result):
         profile.get("representative_body_embedding"),
         cfg["body_reference_weight"],
         cfg["body_representative_weight"],
+        embedding_list=item.get("body_tracklet_embeddings"),
     )
     face_available = item.get("face_embedding") is not None and (
         bool(profile.get("face_refs")) or profile.get("representative_face_embedding") is not None

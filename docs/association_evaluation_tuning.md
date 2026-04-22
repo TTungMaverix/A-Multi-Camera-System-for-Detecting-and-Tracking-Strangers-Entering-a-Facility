@@ -6,6 +6,17 @@ The current tuning workflow avoids blind threshold edits.
 
 It uses cached candidate events, cached crops, and repeated policy sweeps over the same event set so different settings can be compared on the same data.
 
+For the current New Dataset phase, threshold tuning is intentionally **not** the first step.
+The workflow is:
+
+1. validate direction logic independently
+2. audit face/body evidence quality and crop quality
+3. fix map / topology / subzone issues
+4. only then consider threshold changes
+
+This is why the current phase adds standalone validation scripts instead of immediately
+changing `body_primary`.
+
 ## Entry Point
 
 ```cmd
@@ -52,6 +63,24 @@ Important note:
 - the current tuned policy was selected before the latest line-aware best-shot refinement
 - if best-shot behavior changes materially, rerun the policy sweep so thresholds are chosen against the new candidate-event distribution
 
+## Current New Dataset Validation Scripts
+
+Independent direction validation:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_direction_validation.py" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --output-root "outputs/evaluations/direction_validation_tracklet_phase"
+```
+
+Tracklet-body comparison on a concrete offline run:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet"
+```
+
+These two scripts are the required evidence before arguing for any further threshold change.
+
 ## Current Comparison Metrics
 
 - `known_accept_count`
@@ -75,3 +104,13 @@ The current implementation ranks variants by:
 4. lowest `split_gt_count`
 
 This keeps the workflow interpretable and paper-grounded without adding a heavy new model.
+
+## Current Phase Note
+
+The current New Dataset policy keeps:
+
+- `relation_thresholds.sequential.body_primary = 0.72`
+
+The repo no longer treats `0.55` as an acceptable default. If a sequential candidate is
+accepted slightly below `0.72`, that acceptance must be explained explicitly by the
+topology-supported sequential rule and appear in the decision logs with a concrete reason code.

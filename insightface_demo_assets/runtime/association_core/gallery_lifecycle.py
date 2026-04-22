@@ -122,6 +122,7 @@ def update_unknown_profile(profile, item, policy=None):
             profile["body_refs"],
             {
                 "embedding": item["body_embedding"],
+                "tracklet_embeddings": [np.asarray(vec, dtype=np.float32) for vec in (item.get("body_tracklet_embeddings") or [])],
                 "event_id": event["event_id"],
                 "camera_id": event["camera_id"],
                 "relative_sec": float(event["relative_sec"]),

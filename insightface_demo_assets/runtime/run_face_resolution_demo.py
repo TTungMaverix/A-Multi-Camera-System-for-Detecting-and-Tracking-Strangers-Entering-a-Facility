@@ -37,7 +37,7 @@ from association_core import (
     update_unknown_profile as core_update_unknown_profile,
     write_jsonl as core_write_jsonl,
 )
-from association_core.body_reid import get_body_reid_extractor
+from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor
 from association_core.quality_gate import evaluate_buffered_face_gate
 from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
@@ -169,6 +169,9 @@ def extract_embedding_from_image(app, image_path: Path):
         "face_count": 0,
         "det_score": 0.0,
         "bbox": "",
+        "bbox_width": 0,
+        "bbox_height": 0,
+        "bbox_area": 0,
         "landmarks": None,
         "message": "",
     }
@@ -188,12 +191,17 @@ def extract_embedding_from_image(app, image_path: Path):
     face = choose_best_face(faces)
     embedding = np.asarray(face.normed_embedding, dtype=np.float32)
     bbox = [int(round(x)) for x in np.asarray(face.bbox).tolist()]
+    bbox_width = max(0, bbox[2] - bbox[0])
+    bbox_height = max(0, bbox[3] - bbox[1])
     result.update(
         {
             "status": "ok",
             "embedding": embedding,
             "det_score": float(face.det_score or 0.0),
             "bbox": json.dumps(bbox),
+            "bbox_width": bbox_width,
+            "bbox_height": bbox_height,
+            "bbox_area": int(bbox_width * bbox_height),
             "landmarks": np.asarray(getattr(face, "kps", None)).tolist() if getattr(face, "kps", None) is not None else None,
             "message": "ok",
         }
@@ -489,11 +497,22 @@ def _buffer_face_quality(face_result, buffer_row):
     return round((float(face_result.get("det_score", 0.0)) * 100.0) + (blur_score / 25.0) + bbox_bonus, 4)
 
 
-def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None, body_reid_runtime=None):
+def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None, body_reid_runtime=None, camera_configs=None):
     analyzed = []
     active_body_reid = body_reid_runtime or get_body_reid_extractor(policy=body_reid_policy)
+    camera_configs = camera_configs or {}
+    face_policy = quality_policy or {}
+    max_face_buffer_candidates = max(1, int(face_policy.get("max_face_buffer_candidates_per_track", 3)))
     for event in events:
+        camera_cfg = camera_configs.get(event.get("camera_id", ""), {})
+        face_capture_mode = str(camera_cfg.get("face_capture_mode", "best_shot_preferred") or "best_shot_preferred")
+        face_capture_allowed = face_capture_mode not in {"disabled", "body_anchor_only", "direction_body_only"}
         buffer_rows = _parse_evidence_buffer_rows(event)
+        body_tracklet = build_tracklet_body_representation(
+            buffer_rows,
+            body_reid_runtime=active_body_reid,
+            body_reid_policy=body_reid_policy,
+        )
         analyzed_buffer = []
         face_detected_in_buffer = 0
         face_embedding_created_in_buffer = 0
@@ -503,20 +522,48 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
         for index, buffer_row in enumerate(buffer_rows, start=1):
             head_path = Path(buffer_row.get("head_crop_path", ""))
             body_path = Path(buffer_row.get("body_crop_path", event.get("best_body_crop", "")))
-            face_result = extract_embedding_from_image(app, head_path)
-            body_result = extract_body_feature(body_path, body_reid_runtime=active_body_reid, body_reid_policy=body_reid_policy)
-            blur_score = _laplacian_variance(head_path) if head_path else 0.0
-            face_gate = evaluate_buffered_face_gate(face_result, blur_score, policy=quality_policy)
-            if face_result.get("face_count", 0) > 0:
-                face_detected_in_buffer += 1
-            if face_gate.get("landmarks_available"):
-                landmarks_available_count += 1
-            if face_gate.get("accepted_into_buffer"):
-                accepted_into_buffer_count += 1
+            if face_capture_allowed:
+                face_result = extract_embedding_from_image(app, head_path)
+                blur_score = _laplacian_variance(head_path) if head_path else 0.0
+                face_gate = evaluate_buffered_face_gate(face_result, blur_score, policy=quality_policy)
+                if face_result.get("face_count", 0) > 0:
+                    face_detected_in_buffer += 1
+                if face_gate.get("landmarks_available"):
+                    landmarks_available_count += 1
+                if face_gate.get("accepted_into_buffer"):
+                    accepted_into_buffer_count += 1
+                else:
+                    reject_counts[face_gate.get("reject_reason") or "other_reject"] += 1
+                if face_result.get("embedding") is not None and face_gate.get("accepted_into_buffer"):
+                    face_embedding_created_in_buffer += 1
             else:
-                reject_counts[face_gate.get("reject_reason") or "other_reject"] += 1
-            if face_result.get("embedding") is not None and face_gate.get("accepted_into_buffer"):
-                face_embedding_created_in_buffer += 1
+                blur_score = 0.0
+                face_result = {
+                    "status": "camera_face_capture_disabled",
+                    "embedding": None,
+                    "face_count": 0,
+                    "det_score": 0.0,
+                    "bbox": "",
+                    "bbox_width": 0,
+                    "bbox_height": 0,
+                    "bbox_area": 0,
+                    "landmarks": None,
+                    "message": "camera_face_capture_disabled",
+                }
+                face_gate = {
+                    "accepted_into_buffer": False,
+                    "reject_reason": "camera_face_capture_disabled",
+                    "landmarks_available": False,
+                    "yaw_deg": 0.0,
+                    "pitch_deg": 0.0,
+                    "roll_deg": 0.0,
+                    "blur_score": 0.0,
+                    "det_score": 0.0,
+                    "bbox_width": 0,
+                    "bbox_height": 0,
+                    "bbox_area": 0,
+                }
+                reject_counts["camera_face_capture_disabled"] += 1
             analyzed_buffer.append(
                 {
                     "buffer_index": index,
@@ -526,7 +573,6 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "head_crop_path": str(head_path),
                     "body_crop_path": str(body_path),
                     "face_result": face_result,
-                    "body_result": body_result,
                     "face_blur_score": round(float(blur_score), 4),
                     "face_gate": face_gate,
                     "face_quality_score": _buffer_face_quality(face_result, buffer_row)
@@ -542,13 +588,9 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                 break
         dominant_reject_reason = reject_counts.most_common(1)[0][0] if reject_counts else ""
 
-        best_body = extract_body_feature(
-            Path(event["best_body_crop"]),
-            body_reid_runtime=active_body_reid,
-            body_reid_policy=body_reid_policy,
-        )
         pending_buffer_items = []
-        for candidate in analyzed_buffer:
+        pending_candidates = sorted(analyzed_buffer, key=lambda item: item["face_quality_score"], reverse=True)[:max_face_buffer_candidates]
+        for candidate in pending_candidates:
             face_gate = candidate["face_gate"]
             candidate_event = dict(event)
             candidate_event["pending_parent_event_id"] = event["event_id"]
@@ -568,6 +610,9 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "face_count": candidate["face_result"].get("face_count", 0),
                     "face_det_score": candidate["face_result"].get("det_score", 0.0),
                     "face_bbox": candidate["face_result"].get("bbox", ""),
+                    "face_bbox_width": candidate["face_result"].get("bbox_width", 0),
+                    "face_bbox_height": candidate["face_result"].get("bbox_height", 0),
+                    "face_bbox_area": candidate["face_result"].get("bbox_area", 0),
                     "face_message": candidate["face_result"].get("message", ""),
                     "face_landmarks_available": face_gate.get("landmarks_available", False),
                     "face_yaw_deg": face_gate.get("yaw_deg", 0.0),
@@ -578,10 +623,12 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "face_gate_reject_reason": face_gate.get("reject_reason", ""),
                     "used_face_crop": "face_buffer_head",
                     "used_face_crop_path": candidate["head_crop_path"],
-                    "body_embedding": candidate["body_result"].get("embedding"),
-                    "body_status": candidate["body_result"].get("status", "missing"),
-                    "body_message": candidate["body_result"].get("message", ""),
-                    "body_shape": candidate["body_result"].get("shape", ""),
+                    "body_embedding": body_tracklet.get("embedding"),
+                    "body_tracklet_embeddings": body_tracklet.get("tracklet_embeddings", []),
+                    "body_status": body_tracklet.get("status", "missing"),
+                    "body_message": body_tracklet.get("message", ""),
+                    "body_shape": body_tracklet.get("shape", ""),
+                    "body_tracklet_quality_score": body_tracklet.get("tracklet_quality_score", 0.0),
                     "buffer_quality_score": candidate["face_quality_score"],
                 }
             )
@@ -594,6 +641,9 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                 "face_count": selected_face["face_result"]["face_count"] if selected_face else 0,
                 "face_det_score": selected_face["face_result"]["det_score"] if selected_face else 0.0,
                 "face_bbox": selected_face["face_result"]["bbox"] if selected_face else "",
+                "face_bbox_width": selected_face["face_result"]["bbox_width"] if selected_face else 0,
+                "face_bbox_height": selected_face["face_result"]["bbox_height"] if selected_face else 0,
+                "face_bbox_area": selected_face["face_result"]["bbox_area"] if selected_face else 0,
                 "face_message": selected_face["face_result"]["message"] if selected_face else (dominant_reject_reason or "missing"),
                 "face_landmarks_available": selected_face["face_gate"]["landmarks_available"] if selected_face else False,
                 "face_yaw_deg": selected_face["face_gate"]["yaw_deg"] if selected_face else 0.0,
@@ -604,20 +654,33 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                 "face_gate_reject_reason": "" if selected_face else (dominant_reject_reason or ("no_face_buffer_candidate" if analyzed_buffer else "missing")),
                 "used_face_crop": "face_buffer_head" if selected_face else "",
                 "used_face_crop_path": selected_face["head_crop_path"] if selected_face else "",
-                "body_embedding": best_body["embedding"],
-                "body_status": best_body["status"],
-                "body_message": best_body["message"],
-                "body_shape": best_body["shape"],
+                "body_embedding": body_tracklet["embedding"],
+                "body_tracklet_embeddings": body_tracklet.get("tracklet_embeddings", []),
+                "body_status": body_tracklet["status"],
+                "body_message": body_tracklet["message"],
+                "body_shape": body_tracklet["shape"],
+                "body_tracklet_candidate_count": body_tracklet.get("tracklet_candidate_count", 0),
+                "body_tracklet_valid_crop_count": body_tracklet.get("tracklet_valid_crop_count", 0),
+                "body_tracklet_selected_crop_count": body_tracklet.get("tracklet_selected_crop_count", 0),
+                "body_tracklet_reject_blur_count": int((body_tracklet.get("tracklet_reject_counts") or {}).get("blur_reject", 0)),
+                "body_tracklet_reject_bbox_small_count": int((body_tracklet.get("tracklet_reject_counts") or {}).get("bbox_too_small", 0)),
+                "body_tracklet_reject_bbox_unstable_count": int((body_tracklet.get("tracklet_reject_counts") or {}).get("bbox_unstable", 0)),
+                "body_tracklet_reject_too_small_count": int((body_tracklet.get("tracklet_reject_counts") or {}).get("too_small", 0)),
+                "body_tracklet_quality_score": body_tracklet.get("tracklet_quality_score", 0.0),
+                "body_tracklet_selected_crop_paths_json": json.dumps(body_tracklet.get("tracklet_selected_crop_paths", []), ensure_ascii=False),
                 "evidence_buffer_count": len(analyzed_buffer),
+                "face_capture_mode": face_capture_mode,
                 "face_buffer_detected_count": face_detected_in_buffer,
                 "face_buffer_landmarks_available_count": landmarks_available_count,
                 "face_buffer_accept_count": accepted_into_buffer_count,
                 "face_buffer_embedding_count": face_embedding_created_in_buffer,
+                "face_buffer_reject_size_count": int(reject_counts.get("size_reject", 0)),
                 "face_buffer_reject_blur_count": int(reject_counts.get("blur_reject", 0)),
                 "face_buffer_reject_yaw_count": int(reject_counts.get("yaw_reject", 0)),
                 "face_buffer_reject_pitch_count": int(reject_counts.get("pitch_reject", 0)),
                 "face_buffer_reject_roll_count": int(reject_counts.get("roll_reject", 0)),
                 "face_buffer_reject_missing_landmarks_count": int(reject_counts.get("missing_landmarks", 0)),
+                "face_buffer_reject_camera_disabled_count": int(reject_counts.get("camera_face_capture_disabled", 0)),
                 "face_best_shot_selected": bool(selected_face and selected_face["face_result"].get("status") == "ok"),
                 "face_best_shot_frame": selected_face["frame_id"] if selected_face else "",
                 "face_best_shot_quality": selected_face["face_quality_score"] if selected_face else "",
@@ -1574,6 +1637,9 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "best_shot_selected_count": sum(1 for item in analyzed_items if item.get("face_best_shot_selected")),
         "face_embedding_available_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
         "face_embedding_created_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
+        "body_tracklet_candidate_crop_count": sum(item.get("body_tracklet_candidate_count", 0) for item in analyzed_items),
+        "body_tracklet_valid_crop_count": sum(item.get("body_tracklet_valid_crop_count", 0) for item in analyzed_items),
+        "body_tracklet_selected_crop_count": sum(item.get("body_tracklet_selected_crop_count", 0) for item in analyzed_items),
         "face_reference_stored_count": sum(
             1
             for item in analyzed_items
@@ -1621,11 +1687,25 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
             if row.get("identity_status") == "known" and row.get("resolution_source") == "model_face_match"
         ),
         "face_reject_blur_count": sum(item.get("face_buffer_reject_blur_count", 0) for item in analyzed_items),
+        "face_reject_size_count": sum(item.get("face_buffer_reject_size_count", 0) for item in analyzed_items),
         "face_reject_yaw_count": sum(item.get("face_buffer_reject_yaw_count", 0) for item in analyzed_items),
         "face_reject_pitch_count": sum(item.get("face_buffer_reject_pitch_count", 0) for item in analyzed_items),
         "face_reject_roll_count": sum(item.get("face_buffer_reject_roll_count", 0) for item in analyzed_items),
         "face_reject_missing_landmarks_count": sum(
             item.get("face_buffer_reject_missing_landmarks_count", 0) for item in analyzed_items
+        ),
+        "face_reject_camera_disabled_count": sum(
+            item.get("face_buffer_reject_camera_disabled_count", 0) for item in analyzed_items
+        ),
+        "body_tracklet_reject_blur_count": sum(item.get("body_tracklet_reject_blur_count", 0) for item in analyzed_items),
+        "body_tracklet_reject_bbox_small_count": sum(
+            item.get("body_tracklet_reject_bbox_small_count", 0) for item in analyzed_items
+        ),
+        "body_tracklet_reject_bbox_unstable_count": sum(
+            item.get("body_tracklet_reject_bbox_unstable_count", 0) for item in analyzed_items
+        ),
+        "body_tracklet_reject_too_small_count": sum(
+            item.get("body_tracklet_reject_too_small_count", 0) for item in analyzed_items
         ),
         "face_status_counts": dict(sorted(face_status_counts.items())),
         "face_unusable_reason_counts": dict(sorted(face_unusable_reason_counts.items())),
@@ -1649,22 +1729,33 @@ def build_face_buffer_audit_rows(analyzed_items):
                 "face_buffer_landmarks_available_count": item.get("face_buffer_landmarks_available_count", 0),
                 "face_buffer_accept_count": item.get("face_buffer_accept_count", 0),
                 "face_buffer_embedding_count": item.get("face_buffer_embedding_count", 0),
+                "face_buffer_reject_size_count": item.get("face_buffer_reject_size_count", 0),
                 "face_buffer_reject_blur_count": item.get("face_buffer_reject_blur_count", 0),
                 "face_buffer_reject_yaw_count": item.get("face_buffer_reject_yaw_count", 0),
                 "face_buffer_reject_pitch_count": item.get("face_buffer_reject_pitch_count", 0),
                 "face_buffer_reject_roll_count": item.get("face_buffer_reject_roll_count", 0),
                 "face_buffer_reject_missing_landmarks_count": item.get("face_buffer_reject_missing_landmarks_count", 0),
+                "face_buffer_reject_camera_disabled_count": item.get("face_buffer_reject_camera_disabled_count", 0),
                 "face_best_shot_selected": item.get("face_best_shot_selected", False),
                 "face_best_shot_frame": item.get("face_best_shot_frame", ""),
                 "face_best_shot_quality": item.get("face_best_shot_quality", ""),
+                "face_capture_mode": item.get("face_capture_mode", ""),
                 "face_status": item.get("face_status", ""),
                 "face_message": item.get("face_message", ""),
+                "face_bbox_width": item.get("face_bbox_width", 0),
+                "face_bbox_height": item.get("face_bbox_height", 0),
+                "face_bbox_area": item.get("face_bbox_area", 0),
                 "face_yaw_deg": item.get("face_yaw_deg", 0.0),
                 "face_pitch_deg": item.get("face_pitch_deg", 0.0),
                 "face_roll_deg": item.get("face_roll_deg", 0.0),
                 "face_blur_score": item.get("face_blur_score", 0.0),
                 "face_gate_reject_reason": item.get("face_gate_reject_reason", ""),
                 "used_face_crop_path": item.get("used_face_crop_path", ""),
+                "body_tracklet_candidate_count": item.get("body_tracklet_candidate_count", 0),
+                "body_tracklet_valid_crop_count": item.get("body_tracklet_valid_crop_count", 0),
+                "body_tracklet_selected_crop_count": item.get("body_tracklet_selected_crop_count", 0),
+                "body_tracklet_quality_score": item.get("body_tracklet_quality_score", 0.0),
+                "body_tracklet_selected_crop_paths_json": item.get("body_tracklet_selected_crop_paths_json", "[]"),
             }
         )
     return rows
@@ -2065,6 +2156,7 @@ def main(config_path: Path):
         quality_policy=association_policy.get("quality_gate"),
         body_reid_policy=association_policy.get("body_reid"),
         body_reid_runtime=body_reid_runtime,
+        camera_configs=wildtrack_config.get("cameras", {}),
     )
     baseline_analysis_elapsed_sec = round(max(time.perf_counter() - baseline_analysis_started, 1e-9), 3)
     baseline_assignments = build_baseline_assignments(
@@ -2088,6 +2180,7 @@ def main(config_path: Path):
         quality_policy=association_policy.get("quality_gate"),
         body_reid_policy=association_policy.get("body_reid"),
         body_reid_runtime=body_reid_runtime,
+        camera_configs=wildtrack_config.get("cameras", {}),
     )
     fixed_analysis_elapsed_sec = round(max(time.perf_counter() - fixed_analysis_started, 1e-9), 3)
     association_started = time.perf_counter()
