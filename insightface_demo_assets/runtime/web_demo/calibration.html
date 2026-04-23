@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scene Calibration</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #151b23;
+      --panel-2: #111720;
+      --panel-3: #0f151d;
+      --ink: #f2f5f7;
+      --muted: #93a2b7;
+      --line: #283444;
+      --accent: #2ec27e;
+      --accent-2: #58a6ff;
+      --danger: #ff7b72;
+      --warning: #f4b266;
+      --chip: #1c2430;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(88, 166, 255, 0.12), transparent 32%),
+        radial-gradient(circle at top right, rgba(46, 194, 126, 0.10), transparent 26%),
+        var(--bg);
+      color: var(--ink);
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: var(--accent);
+      color: #07110d;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    button.alt {
+      background: #2b3645;
+      color: var(--ink);
+    }
+    button.warn {
+      background: var(--warning);
+      color: #111;
+    }
+    button.danger {
+      background: var(--danger);
+      color: #1a0504;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0d141d;
+      color: var(--ink);
+      padding: 9px 10px;
+    }
+    textarea { min-height: 64px; resize: vertical; }
+    code {
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      padding: 1px 6px;
+    }
+    .shell {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .hero,
+    .panel {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      padding: 16px 18px;
+      display: grid;
+      gap: 6px;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      letter-spacing: 0.01em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 1080px;
+      line-height: 1.45;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 360px minmax(680px, 1fr) 320px;
+      gap: 14px;
+      align-items: start;
+    }
+    .panel {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    .panel h2 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .fields {
+      display: grid;
+      gap: 10px;
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .stat {
+      padding: 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      display: grid;
+      gap: 4px;
+    }
+    .stat .label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat .value {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .preview-shell {
+      display: grid;
+      gap: 10px;
+    }
+    .preview-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: var(--chip);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .canvas-wrap {
+      position: relative;
+      min-height: 720px;
+      background: linear-gradient(180deg, #070b11, #111a25);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+      overflow: auto;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      background: #000;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .status {
+      min-height: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .shape-list {
+      display: grid;
+      gap: 8px;
+      max-height: 460px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .shape-row {
+      border: 1px solid var(--line);
+      background: var(--panel-3);
+      border-radius: 14px;
+      padding: 10px;
+      display: grid;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .shape-row.active {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.2) inset;
+    }
+    .shape-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .shape-title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-weight: 700;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: rgba(88, 166, 255, 0.12);
+      border: 1px solid rgba(88, 166, 255, 0.24);
+      color: #9fccff;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .footer-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .file-input {
+      display: none;
+    }
+    @media (max-width: 1400px) {
+      .layout { grid-template-columns: 320px 1fr; }
+      .side-panel { grid-column: 1 / -1; }
+    }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .field-grid, .button-grid, .stats { grid-template-columns: 1fr; }
+      .canvas-wrap { min-height: 420px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <h1>Manual ROI / Zone Calibration</h1>
+      <p>This tool edits the runtime manual calibration used by detection, direction filtering, cross-camera association, and timeline outputs. ROI masking here is not metadata: detections outside the saved polygon are removed before ReID and association.</p>
+    </section>
+
+    <section class="layout">
+      <aside class="panel">
+        <h2>Session</h2>
+        <div class="fields">
+          <label>Camera
+            <select id="cameraSelect"></select>
+          </label>
+          <div class="field-grid">
+            <label>Preview Source
+              <input id="sourceInput" placeholder="Optional override">
+            </label>
+            <label>Source Type
+              <select id="sourceType">
+                <option value="file">file</option>
+                <option value="image">image</option>
+                <option value="rtsp">rtsp</option>
+                <option value="webcam">webcam</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-grid">
+            <label>Preview Frame Index
+              <input id="frameIndex" type="number" min="0" value="0">
+            </label>
+            <label>Overlay Mode
+              <select id="overlayMode">
+                <option value="0">Clean preview</option>
+                <option value="1">Overlay preview</option>
+              </select>
+            </label>
+          </div>
+          <div class="button-grid">
+            <button id="loadPreviewBtn" type="button">Load Preview</button>
+            <button id="loadOverlayBtn" type="button" class="alt">Load With Overlay</button>
+          </div>
+        </div>
+
+        <h2>Draft Shape</h2>
+        <div class="fields">
+          <div class="field-grid">
+            <label>Shape Type
+              <select id="shapeType"></select>
+            </label>
+            <label>Kind / Preset
+              <select id="shapeKindValue"></select>
+            </label>
+          </div>
+          <label>Shape ID
+            <input id="shapeId" placeholder="Auto-empty for ROI and entry line">
+          </label>
+          <label>Parent Zone
+            <select id="parentZoneId"></select>
+          </label>
+          <div class="field-grid">
+            <label>Priority
+              <input id="shapePriority" type="number" value="100">
+            </label>
+            <label>Selected Shape
+              <input id="selectedShapeSummary" value="None" readonly>
+            </label>
+          </div>
+          <label>Description
+            <textarea id="shapeDescription" placeholder="Optional note for reviewers and future edits"></textarea>
+          </label>
+          <div class="button-grid">
+            <button id="undoPointBtn" type="button" class="alt">Undo Last Point</button>
+            <button id="clearDraftBtn" type="button" class="alt">Clear Draft</button>
+            <button id="loadSelectedBtn" type="button" class="alt">Load Selected</button>
+            <button id="commitShapeBtn" type="button">Commit Draft</button>
+            <button id="deleteShapeBtn" type="button" class="danger">Delete Selected</button>
+            <button id="resetCameraBtn" type="button" class="warn">Reset Camera</button>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="label">Draft Points</div>
+            <div class="value" id="draftPointCount">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Shapes</div>
+            <div class="value" id="shapeCount">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Camera Role</div>
+            <div class="value" id="cameraRole">-</div>
+          </div>
+        </div>
+
+        <div class="footer-row">
+          <button id="saveConfigBtn" type="button">Save Config</button>
+          <button id="reloadConfigBtn" type="button" class="alt">Reload Config</button>
+          <button id="exportConfigBtn" type="button" class="alt">Export JSON</button>
+          <button id="importConfigBtn" type="button" class="alt">Import JSON</button>
+          <input id="importConfigFile" class="file-input" type="file" accept="application/json,.json">
+        </div>
+        <div class="hint">
+          Polygon shapes need at least 3 points. <code>entry_line</code> needs exactly 3 clicks: point 1, point 2, then the in-side anchor. Clean preview always reloads from the raw source frame and does not reuse an already painted canvas.
+        </div>
+        <div class="status" id="status"></div>
+      </aside>
+
+      <section class="panel preview-shell">
+        <h2>Camera Preview</h2>
+        <div class="preview-toolbar">
+          <span class="chip" id="previewInfo">No preview loaded</span>
+          <span class="chip" id="overlayInfo">overlay=clean</span>
+          <span class="chip" id="draftInfo">draft=0 points</span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="previewCanvas" width="1280" height="720"></canvas>
+        </div>
+        <div class="hint">
+          Click to add points. Use <strong>Undo Last Point</strong> for the current draft, <strong>Load Selected</strong> to modify an existing shape, and <strong>Commit Draft</strong> only when the current shape is correct.
+        </div>
+      </section>
+
+      <aside class="panel side-panel">
+        <h2>Saved Shapes</h2>
+        <div class="shape-list" id="shapeList"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      calibration: null,
+      currentCameraId: "",
+      previewImage: null,
+      draftPoints: [],
+      selectedShapeType: "",
+      selectedShapeId: "",
+      shapePresets: {},
+      overlayEnabled: false,
+      previewFrameIndex: 0,
+    };
+
+    const canvas = document.getElementById("previewCanvas");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function cameraCfg() {
+      return (state.calibration?.cameras || {})[state.currentCameraId] || null;
+    }
+
+    function shapeTypePreset(shapeType) {
+      return state.shapePresets?.[shapeType] || {};
+    }
+
+    function normalizePoint(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (evt.clientX - rect.left) / rect.width;
+      const y = (evt.clientY - rect.top) / rect.height;
+      return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
+    }
+
+    function drawPolygon(points, color, closed = true, label = "") {
+      if (!points.length) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        const x = point[0] * canvas.width;
+        const y = point[1] * canvas.height;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      if (closed && points.length >= 3) ctx.closePath();
+      ctx.stroke();
+      if (label) {
+        ctx.fillStyle = color;
+        ctx.fillRect(points[0][0] * canvas.width + 2, points[0][1] * canvas.height - 16, Math.max(52, label.length * 7), 18);
+        ctx.fillStyle = "#081019";
+        ctx.fillText(label, points[0][0] * canvas.width + 7, points[0][1] * canvas.height - 3);
+      }
+    }
+
+    function drawPoints(points, color) {
+      points.forEach((point, index) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(point[0] * canvas.width, point[1] * canvas.height, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(String(index + 1), point[0] * canvas.width + 7, point[1] * canvas.height - 6);
+      });
+    }
+
+    function renderCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (state.previewImage) {
+        ctx.drawImage(state.previewImage, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = "#05080d";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      const cfg = cameraCfg();
+      if (!cfg) return;
+      drawPolygon((cfg.processing_roi || {}).polygon || [], "#58a6ff", true, "processing_roi");
+      (cfg.zones || []).forEach((zone) => drawPolygon(zone.polygon || [], "#2ec27e", true, zone.zone_id || "zone"));
+      (cfg.subzones || []).forEach((subzone) => drawPolygon(subzone.polygon || [], "#f4b266", true, subzone.subzone_id || "subzone"));
+      const entryLine = (cfg.entry_line || {}).points || [];
+      if (entryLine.length === 2) {
+        drawPolygon(entryLine, "#ff7b72", false, "entry_line");
+        const inside = (cfg.entry_line || {}).in_side_point || [];
+        if (inside.length === 2) {
+          ctx.fillStyle = "#ff7b72";
+          ctx.beginPath();
+          ctx.arc(inside[0] * canvas.width, inside[1] * canvas.height, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      if (state.draftPoints.length) {
+        const closeDraft = document.getElementById("shapeType").value !== "entry_line";
+        drawPolygon(state.draftPoints, "#ffffff", closeDraft, "draft");
+        drawPoints(state.draftPoints, "#ffffff");
+      }
+    }
+
+    function buildLocalShapeCatalog() {
+      const cfg = cameraCfg();
+      if (!cfg) return [];
+      const rows = [];
+      const processingPolygon = (cfg.processing_roi || {}).polygon || [];
+      if (processingPolygon.length) {
+        rows.push({
+          shape_type: "processing_roi",
+          shape_id: "processing_roi",
+          label: "Processing ROI",
+          kind_value: "",
+          point_count: processingPolygon.length,
+          parent_zone_id: "",
+        });
+      }
+      const entryLine = (cfg.entry_line || {}).points || [];
+      if (entryLine.length === 2) {
+        rows.push({
+          shape_type: "entry_line",
+          shape_id: "entry_line",
+          label: "Entry Line",
+          kind_value: "",
+          point_count: ((cfg.entry_line || {}).in_side_point || []).length === 2 ? 3 : 2,
+          parent_zone_id: "",
+        });
+      }
+      (cfg.zones || []).forEach((zone) => {
+        rows.push({
+          shape_type: "zone",
+          shape_id: zone.zone_id || "",
+          label: zone.zone_id || "zone",
+          kind_value: zone.zone_type || "",
+          point_count: (zone.polygon || []).length,
+          parent_zone_id: "",
+        });
+      });
+      (cfg.subzones || []).forEach((subzone) => {
+        rows.push({
+          shape_type: "subzone",
+          shape_id: subzone.subzone_id || "",
+          label: subzone.subzone_id || "subzone",
+          kind_value: subzone.subzone_type || "",
+          point_count: (subzone.polygon || []).length,
+          parent_zone_id: subzone.parent_zone_id || "",
+        });
+      });
+      return rows;
+    }
+
+    function selectedShapeKey() {
+      return `${state.selectedShapeType}::${state.selectedShapeId}`;
+    }
+
+    function updateCameraSummary() {
+      const cfg = cameraCfg();
+      document.getElementById("cameraRole").textContent = cfg?.role || "-";
+      document.getElementById("draftPointCount").textContent = String(state.draftPoints.length);
+      document.getElementById("draftInfo").textContent = `draft=${state.draftPoints.length} points`;
+    }
+
+    function populateShapeTypeOptions() {
+      const select = document.getElementById("shapeType");
+      const options = Object.entries(state.shapePresets || {}).map(([shapeType, preset]) => (
+        `<option value="${shapeType}">${preset.label || shapeType}</option>`
+      ));
+      select.innerHTML = options.join("");
+      if (!select.value && options.length) {
+        select.value = Object.keys(state.shapePresets)[0];
+      }
+    }
+
+    function populateKindOptions() {
+      const shapeType = document.getElementById("shapeType").value;
+      const preset = shapeTypePreset(shapeType);
+      const options = ["<option value=\"\">none</option>"].concat(
+        (preset.kind_options || []).map((value) => `<option value="${value}">${value}</option>`)
+      );
+      const select = document.getElementById("shapeKindValue");
+      const currentValue = select.value;
+      select.innerHTML = options.join("");
+      if ([...select.options].some((opt) => opt.value === currentValue)) {
+        select.value = currentValue;
+      }
+      const requiresShapeId = !!preset.requires_shape_id;
+      document.getElementById("shapeId").disabled = !requiresShapeId;
+      document.getElementById("shapeKindValue").disabled = !(preset.kind_options || []).length;
+      document.getElementById("parentZoneId").disabled = shapeType !== "subzone";
+      if (!requiresShapeId) {
+        document.getElementById("shapeId").value = "";
+      }
+      if (shapeType !== "subzone") {
+        document.getElementById("parentZoneId").value = "";
+      }
+    }
+
+    function populateParentZoneOptions() {
+      const cfg = cameraCfg();
+      const zones = (cfg?.zones || []).map((zone) => zone.zone_id).filter(Boolean);
+      const select = document.getElementById("parentZoneId");
+      const current = select.value;
+      select.innerHTML = ["<option value=\"\">default zone</option>"].concat(
+        zones.map((zoneId) => `<option value="${zoneId}">${zoneId}</option>`)
+      ).join("");
+      if (zones.includes(current)) {
+        select.value = current;
+      }
+    }
+
+    function populateCameraList() {
+      const select = document.getElementById("cameraSelect");
+      const cameras = state.calibration?.cameras || {};
+      select.innerHTML = Object.keys(cameras).map((cameraId) => `<option value="${cameraId}">${cameraId}</option>`).join("");
+      if (!state.currentCameraId || !cameras[state.currentCameraId]) {
+        state.currentCameraId = Object.keys(cameras)[0] || "";
+      }
+      select.value = state.currentCameraId;
+      populateParentZoneOptions();
+      refreshShapeList();
+      updateCameraSummary();
+    }
+
+    function refreshShapeList() {
+      const rows = buildLocalShapeCatalog();
+      document.getElementById("shapeCount").textContent = String(rows.length);
+      const root = document.getElementById("shapeList");
+      if (!rows.length) {
+        root.innerHTML = `<div class="shape-row"><div class="shape-title">No saved shapes for this camera</div><div class="shape-meta">Draw and commit a polygon or line first.</div></div>`;
+        return;
+      }
+      const activeKey = selectedShapeKey();
+      root.innerHTML = rows.map((item) => {
+        const itemKey = `${item.shape_type}::${item.shape_id}`;
+        const isActive = itemKey === activeKey;
+        const kind = item.kind_value || "-";
+        const parent = item.parent_zone_id || "-";
+        return `
+          <div class="shape-row ${isActive ? "active" : ""}" data-shape-type="${item.shape_type}" data-shape-id="${item.shape_id}">
+            <div class="shape-title">
+              <span class="pill">${item.shape_type}</span>
+              <span>${item.label}</span>
+            </div>
+            <div class="shape-meta"><span>kind=${kind}</span><span>points=${item.point_count}</span></div>
+            <div class="shape-meta"><span>parent=${parent}</span><span>camera=${state.currentCameraId}</span></div>
+          </div>
+        `;
+      }).join("");
+      [...root.querySelectorAll(".shape-row")].forEach((node) => {
+        node.addEventListener("click", () => {
+          state.selectedShapeType = node.dataset.shapeType || "";
+          state.selectedShapeId = node.dataset.shapeId || "";
+          hydrateControlsFromSelection();
+          refreshShapeList();
+        });
+      });
+    }
+
+    function findShapeData(shapeType, shapeId) {
+      const cfg = cameraCfg();
+      if (!cfg) return null;
+      if (shapeType === "processing_roi") {
+        return { polygon: (cfg.processing_roi || {}).polygon || [], shape_id: "processing_roi", kind_value: "", description: "", priority: 100 };
+      }
+      if (shapeType === "entry_line") {
+        return {
+          polygon: [...((cfg.entry_line || {}).points || []), (cfg.entry_line || {}).in_side_point].filter((item) => Array.isArray(item) && item.length === 2),
+          shape_id: "entry_line",
+          kind_value: "",
+          description: "",
+          priority: 100,
+        };
+      }
+      if (shapeType === "zone") {
+        return (cfg.zones || []).find((item) => item.zone_id === shapeId) || null;
+      }
+      if (shapeType === "subzone") {
+        return (cfg.subzones || []).find((item) => item.subzone_id === shapeId) || null;
+      }
+      return null;
+    }
+
+    function hydrateControlsFromSelection() {
+      const shapeType = state.selectedShapeType || document.getElementById("shapeType").value;
+      if (!shapeType) {
+        document.getElementById("selectedShapeSummary").value = "None";
+        return;
+      }
+      document.getElementById("shapeType").value = shapeType;
+      populateKindOptions();
+      const shapeData = findShapeData(state.selectedShapeType, state.selectedShapeId);
+      if (!shapeData) {
+        document.getElementById("selectedShapeSummary").value = "None";
+        return;
+      }
+      document.getElementById("selectedShapeSummary").value = `${state.selectedShapeType}:${state.selectedShapeId || "default"}`;
+      document.getElementById("shapeId").value = state.selectedShapeType === "zone"
+        ? (shapeData.zone_id || "")
+        : state.selectedShapeType === "subzone"
+          ? (shapeData.subzone_id || "")
+          : "";
+      document.getElementById("shapeKindValue").value = shapeData.zone_type || shapeData.subzone_type || "";
+      document.getElementById("parentZoneId").value = shapeData.parent_zone_id || "";
+      document.getElementById("shapePriority").value = String(shapeData.priority || 100);
+      document.getElementById("shapeDescription").value = shapeData.description || "";
+    }
+
+    function ensureCameraStruct() {
+      const cfg = cameraCfg();
+      if (!cfg) return;
+      cfg.processing_roi = cfg.processing_roi || { polygon: [] };
+      cfg.entry_line = cfg.entry_line || { points: [], in_side_point: [] };
+      cfg.zones = cfg.zones || [];
+      cfg.subzones = cfg.subzones || [];
+    }
+
+    function commitDraft() {
+      const cfg = cameraCfg();
+      if (!cfg) return;
+      ensureCameraStruct();
+      const shapeType = document.getElementById("shapeType").value;
+      const shapeId = document.getElementById("shapeId").value.trim();
+      const kindValue = document.getElementById("shapeKindValue").value.trim();
+      const parentZoneId = document.getElementById("parentZoneId").value.trim();
+      const priority = Number(document.getElementById("shapePriority").value || "0");
+      const description = document.getElementById("shapeDescription").value.trim();
+      if (shapeType === "processing_roi") {
+        if (state.draftPoints.length < 3) throw new Error("processing_roi requires at least 3 points");
+        cfg.processing_roi = { polygon: state.draftPoints.slice() };
+        state.selectedShapeType = "processing_roi";
+        state.selectedShapeId = "processing_roi";
+      } else if (shapeType === "entry_line") {
+        if (state.draftPoints.length < 3) throw new Error("entry_line requires 3 points: p1, p2, in-side");
+        cfg.entry_line = { points: state.draftPoints.slice(0, 2), in_side_point: state.draftPoints[2] };
+        state.selectedShapeType = "entry_line";
+        state.selectedShapeId = "entry_line";
+      } else if (shapeType === "zone") {
+        if (!shapeId) throw new Error("zone requires a zone_id");
+        if (state.draftPoints.length < 3) throw new Error("zone requires at least 3 points");
+        cfg.zones = (cfg.zones || []).filter((item) => item.zone_id !== shapeId);
+        cfg.zones.push({
+          zone_id: shapeId,
+          zone_type: kindValue,
+          polygon: state.draftPoints.slice(),
+          priority,
+          description,
+          placeholder: false,
+        });
+        if (!cfg.default_zone_id) cfg.default_zone_id = shapeId;
+        state.selectedShapeType = "zone";
+        state.selectedShapeId = shapeId;
+      } else if (shapeType === "subzone") {
+        if (!shapeId) throw new Error("subzone requires a subzone_id");
+        if (state.draftPoints.length < 3) throw new Error("subzone requires at least 3 points");
+        cfg.subzones = (cfg.subzones || []).filter((item) => item.subzone_id !== shapeId);
+        cfg.subzones.push({
+          subzone_id: shapeId,
+          parent_zone_id: parentZoneId || cfg.default_zone_id || "",
+          subzone_type: kindValue,
+          polygon: state.draftPoints.slice(),
+          priority,
+          description,
+          placeholder: false,
+          allowed_transitions: [],
+        });
+        if (!cfg.default_subzone_id) cfg.default_subzone_id = shapeId;
+        state.selectedShapeType = "subzone";
+        state.selectedShapeId = shapeId;
+      }
+      state.draftPoints = [];
+      populateParentZoneOptions();
+      hydrateControlsFromSelection();
+      refreshShapeList();
+      updateCameraSummary();
+      renderCanvas();
+      setStatus(`Committed ${shapeType} on ${state.currentCameraId}`);
+    }
+
+    function deleteShape() {
+      const cfg = cameraCfg();
+      if (!cfg) return;
+      const shapeType = state.selectedShapeType || document.getElementById("shapeType").value;
+      const shapeId = state.selectedShapeId || document.getElementById("shapeId").value.trim();
+      if (!shapeType) throw new Error("Select a shape before deleting");
+      if (shapeType === "processing_roi") {
+        cfg.processing_roi = { polygon: [] };
+      } else if (shapeType === "entry_line") {
+        cfg.entry_line = { points: [], in_side_point: [] };
+      } else if (shapeType === "zone") {
+        cfg.zones = (cfg.zones || []).filter((item) => item.zone_id !== shapeId);
+        if (cfg.default_zone_id === shapeId) cfg.default_zone_id = (cfg.zones[0] || {}).zone_id || "";
+        cfg.subzones = (cfg.subzones || []).filter((item) => item.parent_zone_id !== shapeId);
+        if (cfg.default_subzone_id && !(cfg.subzones || []).some((item) => item.subzone_id === cfg.default_subzone_id)) {
+          cfg.default_subzone_id = (cfg.subzones[0] || {}).subzone_id || "";
+        }
+      } else if (shapeType === "subzone") {
+        cfg.subzones = (cfg.subzones || []).filter((item) => item.subzone_id !== shapeId);
+        if (cfg.default_subzone_id === shapeId) cfg.default_subzone_id = (cfg.subzones[0] || {}).subzone_id || "";
+      } else {
+        throw new Error(`Unsupported shape type: ${shapeType}`);
+      }
+      state.selectedShapeType = "";
+      state.selectedShapeId = "";
+      state.draftPoints = [];
+      populateParentZoneOptions();
+      hydrateControlsFromSelection();
+      refreshShapeList();
+      updateCameraSummary();
+      renderCanvas();
+      setStatus(`Deleted ${shapeType} ${shapeId}`.trim());
+    }
+
+    function loadSelectedIntoDraft() {
+      if (!state.selectedShapeType) throw new Error("Select a saved shape first");
+      const shapeData = findShapeData(state.selectedShapeType, state.selectedShapeId);
+      if (!shapeData) throw new Error("Selected shape is no longer available");
+      document.getElementById("shapeType").value = state.selectedShapeType;
+      populateKindOptions();
+      hydrateControlsFromSelection();
+      state.draftPoints = (shapeData.polygon || []).map((point) => [point[0], point[1]]);
+      updateCameraSummary();
+      renderCanvas();
+      setStatus(`Loaded ${state.selectedShapeType} into the draft editor`);
+    }
+
+    async function saveConfig() {
+      const payload = { scene_calibration: state.calibration };
+      await fetchJson("/api/calibration/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setStatus("Calibration saved.");
+    }
+
+    async function resetCamera() {
+      await fetchJson("/api/calibration/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: state.currentCameraId }),
+      });
+      state.selectedShapeType = "";
+      state.selectedShapeId = "";
+      state.draftPoints = [];
+      await loadState();
+      setStatus(`Reset ${state.currentCameraId} calibration.`);
+    }
+
+    async function loadPreview(overlayEnabled) {
+      const cfg = cameraCfg();
+      if (!cfg) return;
+      const sourceValue = document.getElementById("sourceInput").value.trim();
+      const sourceType = document.getElementById("sourceType").value;
+      const frameIndex = Number(document.getElementById("frameIndex").value || "0");
+      const params = new URLSearchParams({
+        camera_id: state.currentCameraId,
+        overlay: overlayEnabled ? "1" : "0",
+        frame_idx: String(frameIndex),
+      });
+      if (sourceValue) {
+        params.set("source", sourceValue);
+        params.set("source_type", sourceType);
+      }
+      const image = new Image();
+      image.src = `/api/calibration/preview?${params.toString()}&t=${Date.now()}`;
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+      });
+      state.previewImage = image;
+      state.overlayEnabled = overlayEnabled;
+      state.previewFrameIndex = frameIndex;
+      document.getElementById("overlayMode").value = overlayEnabled ? "1" : "0";
+      document.getElementById("previewInfo").textContent = `${state.currentCameraId} frame=${frameIndex}`;
+      document.getElementById("overlayInfo").textContent = `overlay=${overlayEnabled ? "on" : "clean"}`;
+      renderCanvas();
+      setStatus(`Preview loaded for ${state.currentCameraId} (${overlayEnabled ? "overlay" : "clean"})`);
+    }
+
+    function exportConfig() {
+      const blob = new Blob([JSON.stringify({ scene_calibration: state.calibration }, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `scene_calibration_${state.currentCameraId || "all"}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus("Exported current calibration JSON.");
+    }
+
+    async function importConfigFile(file) {
+      if (!file) return;
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const nextCalibration = payload.scene_calibration || payload;
+      if (!nextCalibration || typeof nextCalibration !== "object") {
+        throw new Error("Invalid calibration JSON");
+      }
+      state.calibration = nextCalibration;
+      state.selectedShapeType = "";
+      state.selectedShapeId = "";
+      state.draftPoints = [];
+      populateCameraList();
+      populateKindOptions();
+      hydrateControlsFromSelection();
+      renderCanvas();
+      setStatus(`Imported calibration from ${file.name}. Save to persist it.`);
+    }
+
+    async function loadState() {
+      const payload = await fetchJson("/api/calibration/state");
+      state.calibration = payload.scene_calibration;
+      state.shapePresets = payload.shape_presets || {};
+      populateShapeTypeOptions();
+      populateCameraList();
+      populateKindOptions();
+      hydrateControlsFromSelection();
+      renderCanvas();
+      setStatus(`Loaded calibration from ${payload.config_path}`);
+    }
+
+    canvas.addEventListener("click", (evt) => {
+      state.draftPoints.push(normalizePoint(evt));
+      updateCameraSummary();
+      renderCanvas();
+    });
+
+    document.getElementById("cameraSelect").addEventListener("change", (evt) => {
+      state.currentCameraId = evt.target.value;
+      state.selectedShapeType = "";
+      state.selectedShapeId = "";
+      state.draftPoints = [];
+      populateParentZoneOptions();
+      hydrateControlsFromSelection();
+      refreshShapeList();
+      updateCameraSummary();
+      renderCanvas();
+    });
+
+    document.getElementById("shapeType").addEventListener("change", () => {
+      populateKindOptions();
+      renderCanvas();
+    });
+
+    document.getElementById("loadPreviewBtn").addEventListener("click", () => loadPreview(false).catch((error) => setStatus(error.message, true)));
+    document.getElementById("loadOverlayBtn").addEventListener("click", () => loadPreview(true).catch((error) => setStatus(error.message, true)));
+    document.getElementById("undoPointBtn").addEventListener("click", () => {
+      state.draftPoints = state.draftPoints.slice(0, -1);
+      updateCameraSummary();
+      renderCanvas();
+    });
+    document.getElementById("clearDraftBtn").addEventListener("click", () => {
+      state.draftPoints = [];
+      updateCameraSummary();
+      renderCanvas();
+    });
+    document.getElementById("loadSelectedBtn").addEventListener("click", () => {
+      try {
+        loadSelectedIntoDraft();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    document.getElementById("commitShapeBtn").addEventListener("click", () => {
+      try {
+        commitDraft();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    document.getElementById("deleteShapeBtn").addEventListener("click", () => {
+      try {
+        deleteShape();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    document.getElementById("saveConfigBtn").addEventListener("click", () => saveConfig().catch((error) => setStatus(error.message, true)));
+    document.getElementById("reloadConfigBtn").addEventListener("click", () => loadState().catch((error) => setStatus(error.message, true)));
+    document.getElementById("resetCameraBtn").addEventListener("click", () => resetCamera().catch((error) => setStatus(error.message, true)));
+    document.getElementById("exportConfigBtn").addEventListener("click", () => exportConfig());
+    document.getElementById("importConfigBtn").addEventListener("click", () => document.getElementById("importConfigFile").click());
+    document.getElementById("importConfigFile").addEventListener("change", (evt) => importConfigFile(evt.target.files[0]).catch((error) => setStatus(error.message, true)));
+    document.getElementById("overlayMode").addEventListener("change", (evt) => {
+      const wantOverlay = evt.target.value === "1";
+      if (state.previewImage) {
+        loadPreview(wantOverlay).catch((error) => setStatus(error.message, true));
+      } else {
+        state.overlayEnabled = wantOverlay;
+        document.getElementById("overlayInfo").textContent = `overlay=${wantOverlay ? "on" : "clean"}`;
+      }
+    });
+
+    loadState().catch((error) => setStatus(error.message, true));
+  </script>
+</body>
+</html>

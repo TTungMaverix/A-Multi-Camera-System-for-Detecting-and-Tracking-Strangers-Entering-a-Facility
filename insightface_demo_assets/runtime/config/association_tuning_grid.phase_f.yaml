@@ -1,0 +1,93 @@
+association_tuning:
+  project_root: D:\ĐỒ ÁN TỐT NGHIỆP
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  wildtrack_demo_config: wildtrack_demo/wildtrack_demo_config.json
+  base_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml
+  output_root: outputs/evaluation/association_policy_sweep_phase_f
+  selected_policy_output: insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml
+  refresh_feature_cache: true
+  input:
+    candidate_events_csv: insightface_demo_assets/runtime/generated_candidate_events_mode_b.csv
+    known_face_gallery_root: insightface_demo_assets/known_faces
+    known_face_manifest_csv:
+  variants:
+    - name: phase_f_current_policy
+      overrides: {}
+    - name: phase_f_overlap_body_relaxed
+      overrides:
+        gallery_lifecycle:
+          ttl_sec: 10.0
+        decision_policy:
+          unknown_reuse_threshold: 0.14
+          margin_by_relation:
+            overlap: 0.008
+            sequential: 0.015
+            weak_link: 0.03
+          relation_thresholds:
+            overlap:
+              face_primary: 0.15
+              face_secondary: 0.22
+              body_primary: 0.50
+              body_secondary: 0.10
+            sequential:
+              face_primary: 0.18
+              face_secondary: 0.26
+              body_primary: 0.53
+              body_secondary: 0.12
+            weak_link:
+              face_primary: 0.22
+              face_secondary: 0.32
+              body_primary: 0.58
+              body_secondary: 0.14
+    - name: phase_f_overlap_body_guarded
+      overrides:
+        gallery_lifecycle:
+          ttl_sec: 9.0
+        decision_policy:
+          unknown_reuse_threshold: 0.15
+          margin_by_relation:
+            overlap: 0.01
+            sequential: 0.015
+          relation_thresholds:
+            overlap:
+              face_primary: 0.15
+              face_secondary: 0.24
+              body_primary: 0.52
+              body_secondary: 0.12
+            sequential:
+              face_primary: 0.18
+              face_secondary: 0.28
+              body_primary: 0.54
+              body_secondary: 0.14
+            weak_link:
+              face_primary: 0.22
+              face_secondary: 0.34
+              body_primary: 0.6
+              body_secondary: 0.16
+    - name: phase_f_overlap_body_aggressive
+      overrides:
+        gallery_lifecycle:
+          ttl_sec: 8.0
+        decision_policy:
+          unknown_reuse_threshold: 0.12
+          margin_by_relation:
+            overlap: 0.005
+            sequential: 0.012
+            weak_link: 0.025
+          relation_thresholds:
+            overlap:
+              face_primary: 0.14
+              face_secondary: 0.2
+              body_primary: 0.47
+              body_secondary: 0.08
+            sequential:
+              face_primary: 0.17
+              face_secondary: 0.24
+              body_primary: 0.5
+              body_secondary: 0.1
+            weak_link:
+              face_primary: 0.2
+              face_secondary: 0.3
+              body_primary: 0.56
+              body_secondary: 0.12

@@ -311,12 +311,19 @@ def _evaluate_time_compatibility(delta_sec, relation, policy):
     if relation_type == "sequential":
         min_sec = float(relation["min_travel_time"])
         max_sec = max(min_sec + float(policy["sequential"]["min_window_span_sec"]), float(relation["max_travel_time"]))
-        if delta_sec < min_sec or delta_sec > max_sec:
+        if delta_sec < min_sec:
             return {
                 "time_valid": False,
                 "time_score": 0.0,
                 "topology_score": priors["sequential"],
-                "time_reason": "sequential_window_reject",
+                "time_reason": "too_early_travel_time",
+            }
+        if delta_sec > max_sec:
+            return {
+                "time_valid": False,
+                "time_score": 0.0,
+                "topology_score": priors["sequential"],
+                "time_reason": "too_late_travel_time",
             }
         span = max(float(policy["sequential"]["min_window_span_sec"]), max_sec - min_sec)
         center = float(relation["avg_travel_time"])
@@ -327,12 +334,19 @@ def _evaluate_time_compatibility(delta_sec, relation, policy):
             "time_reason": "topology_time_ok",
         }
     max_sec = max(float(policy["weak_link"]["fallback_max_travel_time_sec"]), float(relation.get("max_travel_time", 2.0)))
-    if (policy["weak_link"]["require_non_negative_delta"] and delta_sec < 0.0) or delta_sec > max_sec:
+    if policy["weak_link"]["require_non_negative_delta"] and delta_sec < 0.0:
         return {
             "time_valid": False,
             "time_score": 0.0,
             "topology_score": priors["weak_link"],
-            "time_reason": "weak_link_window_reject",
+            "time_reason": "too_early_travel_time",
+        }
+    if delta_sec > max_sec:
+        return {
+            "time_valid": False,
+            "time_score": 0.0,
+            "topology_score": priors["weak_link"],
+            "time_reason": "too_late_travel_time",
         }
     return {
         "time_valid": True,
@@ -353,7 +367,11 @@ def _blocked_candidate(profile, reason_code):
         "target_zone_id": "",
         "source_subzone_id": "",
         "target_subzone_id": "",
-        "relation_type": "camera_already_seen" if reason_code == "camera_already_seen_in_profile" else "no_link",
+        "relation_type": (
+            "camera_already_seen"
+            if reason_code == "camera_already_seen_in_profile"
+            else ("unreachable" if reason_code == "unreachable_camera_pair" else "no_link")
+        ),
         "same_area_overlap": False,
         "transition_rule_used": "",
         "min_travel_time": "",
@@ -371,6 +389,8 @@ def _blocked_candidate(profile, reason_code):
         "topology_score": 0.0,
         "zone_score": 0.0,
         "subzone_score": 0.0,
+        "time_distance_to_expected_sec": "",
+        "topology_support_level": "blocked",
         "zone_reason": reason_code,
         "subzone_reason": reason_code,
         "time_reason": reason_code,
@@ -420,6 +440,12 @@ def evaluate_profile_topology(item, profile, topology, policy=None):
                 else (rejection_reason or time_eval["time_reason"])
             )
         )
+        if allowed and not zone_eval["fallback_without_zone"] and not subzone_eval["fallback_without_subzone"]:
+            support_level = "strong" if float(time_eval["time_score"]) >= 0.75 else "moderate"
+        elif allowed:
+            support_level = "fallback_valid"
+        else:
+            support_level = "rejected"
         candidate = {
             "candidate_unknown_global_id": profile["unknown_global_id"],
             "candidate_latest_camera": profile.get("latest_seen_camera", ""),
@@ -442,6 +468,7 @@ def evaluate_profile_topology(item, profile, topology, policy=None):
                 "max_travel_time": relation["max_travel_time"],
             },
             "delta_sec": round(delta_sec, 3),
+            "time_distance_to_expected_sec": round(abs(delta_sec - float(relation["avg_travel_time"])), 3),
             "topology_valid": True,
             "time_valid": time_valid,
             "zone_valid": zone_valid,
@@ -455,6 +482,7 @@ def evaluate_profile_topology(item, profile, topology, policy=None):
             "zone_reason": zone_eval["zone_reason"],
             "subzone_reason": subzone_eval["subzone_reason"],
             "time_reason": time_eval["time_reason"],
+            "topology_support_level": support_level,
             "fallback_without_zone": zone_eval["fallback_without_zone"],
             "fallback_without_subzone": subzone_eval["fallback_without_subzone"],
             "candidate_reason": candidate_reason,
@@ -485,5 +513,5 @@ def evaluate_profile_topology(item, profile, topology, policy=None):
             best = candidate
 
     if best is None:
-        return _blocked_candidate(profile, "no_topology_path")
+        return _blocked_candidate(profile, "unreachable_camera_pair")
     return best

@@ -1,0 +1,285 @@
+{
+  "scene_calibration": {
+    "version": 1,
+    "coordinate_space": "normalized",
+    "processing": {
+      "require_manual_calibration": true,
+      "roi_mask_enabled": true,
+      "mask_outside_polygon": true,
+      "preview_overlay_enabled": true,
+      "preview_interval_sec": 1
+    },
+    "direction_filter": {
+      "history_window": 5,
+      "minimum_points": 3,
+      "minimum_inward_motion_px": 10,
+      "minimum_inside_ratio": 0.34,
+      "require_zone_transition": false,
+      "allow_line_cross_only_when_history_short": true,
+      "inward_zone_types": ["exit", "interior", "overlap", "transit"],
+      "outward_zone_types": ["entry", "outer", "approach"]
+    },
+    "cameras": {
+      "C1": {
+        "camera_id": "C1",
+        "role": "entry",
+        "description": "Virtual replay pass 1 using source video C6.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {"width": 1920, "height": 1080},
+        "processing_roi": {
+          "polygon": [
+            [0.08438155136268344, 0.30561378989051946],
+            [0.54979035639413, 0.24411833216864665],
+            [0.6032494758909853, 0.1453529000698812],
+            [0.9952830188679245, 0.21616585138597716],
+            [0.9889937106918238, 0.9746098299557419],
+            [0.05293501048218029, 0.9783368273934312]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.08647798742138364, 0.3857442348008386],
+            [0.6619496855345912, 0.28697880270207315]
+          ],
+          "in_side_point": [0.5487421383647799, 0.5310971348707197]
+        },
+        "default_zone_id": "c1_entry_main",
+        "default_subzone_id": "c1_inner_exit",
+        "entry_zones": ["c1_entry_main"],
+        "exit_zones": ["c1_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c1_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Shared virtual entry zone cloned from C6 for replay pass 1.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c1_inner_exit",
+            "parent_zone_id": "c1_entry_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Broad interior/exit subzone for easy sanity replay matching.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C2": {
+        "camera_id": "C2",
+        "role": "entry",
+        "description": "Virtual replay pass 2 using source video C6.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {"width": 1920, "height": 1080},
+        "processing_roi": {
+          "polygon": [
+            [0.08438155136268344, 0.30561378989051946],
+            [0.54979035639413, 0.24411833216864665],
+            [0.6032494758909853, 0.1453529000698812],
+            [0.9952830188679245, 0.21616585138597716],
+            [0.9889937106918238, 0.9746098299557419],
+            [0.05293501048218029, 0.9783368273934312]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.08647798742138364, 0.3857442348008386],
+            [0.6619496855345912, 0.28697880270207315]
+          ],
+          "in_side_point": [0.5487421383647799, 0.5310971348707197]
+        },
+        "default_zone_id": "c2_entry_main",
+        "default_subzone_id": "c2_inner_exit",
+        "entry_zones": ["c2_entry_main"],
+        "exit_zones": ["c2_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c2_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Shared virtual entry zone cloned from C6 for replay pass 2.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c2_inner_exit",
+            "parent_zone_id": "c2_entry_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Broad interior/exit subzone for easy sanity replay matching.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C3": {
+        "camera_id": "C3",
+        "role": "entry",
+        "description": "Virtual replay pass 3 using source video C6.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {"width": 1920, "height": 1080},
+        "processing_roi": {
+          "polygon": [
+            [0.08438155136268344, 0.30561378989051946],
+            [0.54979035639413, 0.24411833216864665],
+            [0.6032494758909853, 0.1453529000698812],
+            [0.9952830188679245, 0.21616585138597716],
+            [0.9889937106918238, 0.9746098299557419],
+            [0.05293501048218029, 0.9783368273934312]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.08647798742138364, 0.3857442348008386],
+            [0.6619496855345912, 0.28697880270207315]
+          ],
+          "in_side_point": [0.5487421383647799, 0.5310971348707197]
+        },
+        "default_zone_id": "c3_entry_main",
+        "default_subzone_id": "c3_inner_exit",
+        "entry_zones": ["c3_entry_main"],
+        "exit_zones": ["c3_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c3_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Shared virtual entry zone cloned from C6 for replay pass 3.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c3_inner_exit",
+            "parent_zone_id": "c3_entry_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Broad interior/exit subzone for easy sanity replay matching.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      },
+      "C4": {
+        "camera_id": "C4",
+        "role": "entry",
+        "description": "Virtual replay pass 4 using source video C6.",
+        "preview_source": "Wildtrack/cam6.mp4",
+        "preview_source_type": "file",
+        "frame_size_ref": {"width": 1920, "height": 1080},
+        "processing_roi": {
+          "polygon": [
+            [0.08438155136268344, 0.30561378989051946],
+            [0.54979035639413, 0.24411833216864665],
+            [0.6032494758909853, 0.1453529000698812],
+            [0.9952830188679245, 0.21616585138597716],
+            [0.9889937106918238, 0.9746098299557419],
+            [0.05293501048218029, 0.9783368273934312]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [0.08647798742138364, 0.3857442348008386],
+            [0.6619496855345912, 0.28697880270207315]
+          ],
+          "in_side_point": [0.5487421383647799, 0.5310971348707197]
+        },
+        "default_zone_id": "c4_entry_main",
+        "default_subzone_id": "c4_inner_exit",
+        "entry_zones": ["c4_entry_main"],
+        "exit_zones": ["c4_entry_main"],
+        "zones": [
+          {
+            "zone_id": "c4_entry_main",
+            "zone_type": "entry",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Shared virtual entry zone cloned from C6 for replay pass 4.",
+            "placeholder": false
+          }
+        ],
+        "subzones": [
+          {
+            "subzone_id": "c4_inner_exit",
+            "parent_zone_id": "c4_entry_main",
+            "subzone_type": "exit",
+            "polygon": [
+              [0.08438155136268344, 0.30561378989051946],
+              [0.54979035639413, 0.24411833216864665],
+              [0.6032494758909853, 0.1453529000698812],
+              [0.9952830188679245, 0.21616585138597716],
+              [0.9889937106918238, 0.9746098299557419],
+              [0.05293501048218029, 0.9783368273934312]
+            ],
+            "priority": 100,
+            "description": "Broad interior/exit subzone for easy sanity replay matching.",
+            "placeholder": false,
+            "allowed_transitions": []
+          }
+        ]
+      }
+    }
+  }
+}

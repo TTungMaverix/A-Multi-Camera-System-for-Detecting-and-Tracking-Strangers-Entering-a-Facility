@@ -18,6 +18,10 @@ lapx==0.5.11
 supervision==0.25.1
 filterpy==1.4.5
 networkx==3.4.2
+torchreid==0.2.5
+gdown==6.0.0
+tensorboard==2.20.0
+motmetrics==1.4.0
 httpx==0.28.1
 orjson==3.10.16
 pytest==8.3.5

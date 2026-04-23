@@ -9,9 +9,9 @@
     "preferred_subzone_types": ["exit", "interior", "overlap", "transit", "entry"],
     "minimum_frames_after_anchor": {
       "entry": 3,
-      "overlap": 0,
-      "sequential": 1,
-      "weak_link": 1
+      "overlap": 8,
+      "sequential": 4,
+      "weak_link": 4
     }
   },
   "head_crop": {

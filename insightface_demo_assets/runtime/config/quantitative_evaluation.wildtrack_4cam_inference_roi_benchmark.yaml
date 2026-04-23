@@ -1,0 +1,13 @@
+quantitative_evaluation:
+  project_root: ../../..
+  evaluation_name: wildtrack_4cam_inference_roi_benchmark
+  offline_pipeline_config: insightface_demo_assets/runtime/config/offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml
+  benchmark_output_root: outputs/offline_runs/wildtrack_4cam_inference_roi_benchmark
+  evaluation_output_root: outputs/offline_runs/wildtrack_4cam_inference_roi_benchmark/evaluation
+  gt_output_root: outputs/offline_runs/wildtrack_4cam_inference_roi_benchmark/evaluation/gt_reference
+  event_match:
+    frame_tolerance: 3
+    max_foot_distance_px: 80
+  mota:
+    iou_threshold: 0.5
+    local_camera_ids: [C3, C5, C6, C7]

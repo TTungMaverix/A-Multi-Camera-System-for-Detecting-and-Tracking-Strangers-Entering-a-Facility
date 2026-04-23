@@ -1,0 +1,43 @@
+live_pipeline:
+  project_root: D:\ĐỒ ÁN TỐT NGHIỆP
+  pipeline_name: live_multicam_file_sanity
+  output_root: outputs/live_runs/file_sanity
+  wildtrack_demo_config: wildtrack_demo/wildtrack_demo_config.json
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  known_gallery:
+    manifest_csv: insightface_demo_assets/known_face_manifest.csv
+    gallery_root: insightface_demo_assets/known_faces
+  association_policy_config: insightface_demo_assets/runtime/config/association_policy.wildtrack_phase_f_tuned.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.example.yaml
+  scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json
+  execution:
+    start_method: spawn
+    queue_max_size: 64
+  live:
+    duration_sec: 8
+    latest_frame_only: true
+    target_fps: 2.0
+    reconnect_sleep_sec: 1.0
+    max_reconnect_attempts: 1
+    followup_emit_min_hits: 3
+    queue_put_timeout_sec: 0.25
+  detector:
+    resize_width: 960
+    scale: 1.03
+    hit_threshold: -0.2
+  tracker:
+    max_distance_px: 160
+    max_missed_frames: 8
+  sources:
+    C3:
+      source_type: file
+      source: Wildtrack/cam3.mp4
+    C5:
+      source_type: file
+      source: Wildtrack/cam5.mp4
+    C6:
+      source_type: file
+      source: Wildtrack/cam6.mp4
+    C7:
+      source_type: file
+      source: Wildtrack/cam7.mp4

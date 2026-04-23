@@ -92,6 +92,7 @@ def make_item(
     gt_id="1",
     zone_id="",
     subzone_id="",
+    face_det_score=None,
 ):
     return {
         "event": {
@@ -113,7 +114,7 @@ def make_item(
         "face_embedding": np.asarray(face, dtype=np.float32) if face is not None else None,
         "face_status": "ok" if face is not None else "missing",
         "face_count": 1 if face is not None else 0,
-        "face_det_score": 0.9 if face is not None else 0.0,
+        "face_det_score": (0.9 if face is not None else 0.0) if face_det_score is None else float(face_det_score),
         "used_face_crop": "head" if face is not None else "",
         "used_face_crop_path": "",
         "face_bbox": "",
@@ -180,7 +181,11 @@ def test_out_of_time_window_does_not_reuse():
         return_debug_bundle=True,
     )
     assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
-    assert debug["decision_logs"][1]["reason_code"] in {"no_candidate", "no_previous_unknown_profiles", "sequential_window_reject"}
+    assert debug["decision_logs"][1]["reason_code"] in {
+        "no_candidate",
+        "no_previous_unknown_profiles",
+        "too_late_travel_time",
+    }
 
 
 def test_camera_without_topology_link_does_not_reuse():
@@ -199,6 +204,10 @@ def test_camera_without_topology_link_does_not_reuse():
     )
     assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
     assert debug["decision_logs"][1]["candidate_set_after_filter"] == []
+    assert any(
+        candidate.get("rejection_reason") == "unreachable_camera_pair"
+        for candidate in debug["decision_logs"][1]["candidate_evaluations"]
+    )
 
 
 def test_quality_gate_fail_defer():
@@ -216,7 +225,7 @@ def test_quality_gate_fail_defer():
     assert debug["decision_logs"][0]["decision"] == "defer"
 
 
-def test_ambiguous_margin_creates_new_unknown_by_policy():
+def test_ambiguous_margin_enters_pending_instead_of_creating_new_immediately():
     items = [
         make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
         make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
@@ -232,9 +241,269 @@ def test_ambiguous_margin_creates_new_unknown_by_policy():
         policy=policy,
         return_debug_bundle=True,
     )
+    assert rows[2]["identity_status"] == "pending"
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "pending_gc" and log["reason_code"] == "pending_timeout_gc" for log in debug["decision_logs"])
+
+
+def test_pending_buffer_can_turn_ambiguous_case_into_reuse():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    items[2]["pending_buffer_items"] = [
+        {
+            "event": {
+                **items[2]["event"],
+                "pending_buffer_frame_id": 4,
+                "pending_buffer_relative_sec": 0.4,
+            },
+            "face_embedding": None,
+            "face_status": "missing",
+            "face_count": 0,
+            "face_det_score": 0.0,
+            "face_bbox": "",
+            "face_message": "missing",
+            "used_face_crop": "",
+            "used_face_crop_path": "",
+            "body_embedding": np.asarray([0.98, 0.02], dtype=np.float32),
+            "body_status": "ok",
+            "body_message": "ok",
+            "body_shape": "64x128",
+        }
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["unknown_global_id"] == rows[0]["unknown_global_id"]
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "unknown_reuse" and log.get("pending_resolution") == "reuse_existing_unknown" for log in debug["decision_logs"])
+
+
+def test_pending_buffer_can_still_end_with_create_new():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    items[2]["pending_buffer_items"] = [
+        {
+            "event": {
+                **items[2]["event"],
+                "pending_buffer_frame_id": 4,
+                "pending_buffer_relative_sec": 0.4,
+            },
+            "face_embedding": None,
+            "face_status": "missing",
+            "face_count": 0,
+            "face_det_score": 0.0,
+            "face_bbox": "",
+            "face_message": "missing",
+            "used_face_crop": "",
+            "used_face_crop_path": "",
+            "body_embedding": np.asarray([0.705, 0.709], dtype=np.float32),
+            "body_status": "ok",
+            "body_message": "ok",
+            "body_shape": "64x128",
+        }
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
     assert rows[2]["resolution_source"] == "model_unknown_new_profile"
-    assert debug["decision_logs"][2]["decision"] == "create_new"
-    assert "ambiguous" in debug["decision_logs"][2]["reason_code"]
+    assert any(log["decision"] == "pending" and log["reason_code"] == "pending_created" for log in debug["decision_logs"])
+    assert any(log["decision"] == "create_new" and log.get("pending_resolution") == "create_new_unknown" for log in debug["decision_logs"])
+
+
+def test_pending_without_future_evidence_is_garbage_collected():
+    items = [
+        make_item("e1", "C1", 0.0, body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.1, body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.3, body=[0.71, 0.71], gt_id="3"),
+    ]
+    rows, profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["identity_status"] == "pending"
+    assert len(profiles) == 2
+    assert debug["pending_runtime"]["stale_pending_count_remaining"] == 0
+    assert any(log["decision"] == "pending_gc" for log in debug["decision_logs"])
+
+
+def test_body_fallback_reuses_when_face_is_low_quality():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),
+        make_item("e2", "C2", 0.2, face=[1.0, 0.0], body=[1.0, 0.0], face_det_score=0.05),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    assert rows[1]["body_fallback_used"] is True
+    assert rows[1]["modality_primary_used"] == "body"
+
+
+def test_face_body_fusion_breaks_appearance_tie():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),
+        make_item("e2", "C3", 0.0, face=[0.0, 1.0], body=[0.0, 1.0], gt_id="2"),
+        make_item("e3", "C2", 0.4, face=[0.71, 0.71], body=[1.0, 0.0], gt_id="3"),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_topology("overlap", min_sec=0.0, max_sec=1.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[2]["unknown_global_id"] == rows[0]["unknown_global_id"]
+    assert debug["decision_logs"][2]["modality_primary"] == "fusion"
+    assert debug["decision_logs"][2]["candidate_evaluations"][0]["fusion_used"] is True
+
+
+def test_topology_too_early_rejects_before_similarity():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),
+        make_item("e2", "C2", 0.5, face=[1.0, 0.0], body=[1.0, 0.0]),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology("sequential", min_sec=1.0, max_sec=3.0, avg_sec=2.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert any(candidate.get("time_reason") == "too_early_travel_time" for candidate in debug["decision_logs"][1]["candidate_evaluations"])
+    assert all(candidate.get("appearance_similarity_skipped") for candidate in debug["decision_logs"][1]["candidate_evaluations"])
+
+
+def test_topology_too_late_rejects_before_similarity():
+    items = [
+        make_item("e1", "C1", 0.0, face=[1.0, 0.0], body=[1.0, 0.0]),
+        make_item("e2", "C2", 4.5, face=[1.0, 0.0], body=[1.0, 0.0]),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology("sequential", min_sec=1.0, max_sec=3.0, avg_sec=2.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert any(candidate.get("time_reason") == "too_late_travel_time" for candidate in debug["decision_logs"][1]["candidate_evaluations"])
+
+
+def test_decision_log_captures_travel_window_and_topology_support():
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0]),
+        make_item("e2", "C2", 2.0, face=None, body=[1.0, 0.0]),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology("sequential", min_sec=1.0, max_sec=3.0, avg_sec=2.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    decision_log = debug["decision_logs"][1]
+    candidate = decision_log["candidate_evaluations"][0]
+    assert decision_log["source_camera_id"] == "C1"
+    assert decision_log["target_camera_id"] == "C2"
+    assert candidate["min_travel_time"] == 1.0
+    assert candidate["avg_travel_time"] == 2.0
+    assert candidate["max_travel_time"] == 3.0
+    assert candidate["observed_delta_sec"] == 2.0
+    assert candidate["topology_support_level"] in {"strong", "moderate"}
+
+
+def test_topology_supported_body_accept_can_reuse_without_lowering_global_threshold():
+    policy = default_policy()
+    policy["decision_policy"]["relation_thresholds"]["sequential"]["body_primary"] = 0.72
+    policy["decision_policy"]["topology_supported_accept"]["enabled"] = True
+    policy["decision_policy"]["topology_supported_accept"]["max_primary_shortfall"] = 0.1
+    body_vec = [0.65, 0.7599342]
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0], zone_id="z1", subzone_id="s1"),
+        make_item("e2", "C2", 2.0, face=None, body=body_vec, gt_id="2", zone_id="z2", subzone_id="s2"),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology(
+            "sequential",
+            min_sec=1.0,
+            max_sec=3.0,
+            avg_sec=2.0,
+            allowed_exit_zones=["z1"],
+            allowed_entry_zones=["z2"],
+            allowed_exit_subzones=["s1"],
+            allowed_entry_subzones=["s2"],
+        ),
+        "UNK",
+        1,
+        policy=policy,
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    candidate = debug["decision_logs"][1]["candidate_evaluations"][0]
+    assert candidate["acceptance_reason"] == "topology_supported_body_accept"
+    assert debug["decision_logs"][1]["decision"] == "unknown_reuse"
+
+
+def test_same_appearance_is_still_rejected_when_travel_time_is_impossible():
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0]),
+        make_item("e2", "C2", 0.2, face=None, body=[1.0, 0.0], gt_id="2"),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology("sequential", min_sec=1.0, max_sec=3.0, avg_sec=2.0),
+        "UNK",
+        1,
+        policy=default_policy(),
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
+    assert debug["decision_logs"][1]["candidate_set_after_filter"] == []
+    assert any(candidate.get("time_reason") == "too_early_travel_time" for candidate in debug["decision_logs"][1]["candidate_evaluations"])
+    assert debug["decision_logs"][1]["body_fallback_used"] is False
+    assert debug["decision_logs"][1]["face_unusable_reason"] == ""
 
 
 def test_weak_link_requires_strong_appearance_but_can_reuse():
@@ -353,7 +622,7 @@ def test_zone_match_but_out_of_time_window_does_not_reuse():
     )
     assert rows[0]["unknown_global_id"] != rows[1]["unknown_global_id"]
     assert debug["decision_logs"][1]["candidate_evaluations"][0]["time_valid"] is False
-    assert debug["decision_logs"][1]["reason_code"] == "sequential_window_reject"
+    assert debug["decision_logs"][1]["reason_code"] == "too_late_travel_time"
 
 
 def test_weak_link_zone_compatible_reuses_when_appearance_is_strong():

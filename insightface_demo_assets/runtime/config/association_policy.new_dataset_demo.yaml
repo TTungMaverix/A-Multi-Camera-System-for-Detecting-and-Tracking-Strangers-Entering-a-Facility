@@ -1,0 +1,119 @@
+association_policy:
+  quality_gate:
+    min_bbox_area: 1800.0
+    min_body_area: 2500.0
+    full_body_area: 26000.0
+    reliable_face_det_score: 0.35
+    strong_face_det_score: 0.5
+    min_face_bbox_width: 36
+    min_face_bbox_height: 36
+    min_face_bbox_area: 1296
+    min_face_blur_score: 55.0
+    max_abs_yaw_deg: 25.0
+    max_abs_pitch_deg: 18.0
+    max_abs_roll_deg: 20.0
+    require_landmarks_for_face_buffer: true
+    max_face_buffer_candidates_per_track: 3
+  topology_filter:
+    relation_priors:
+      overlap: 1.0
+      sequential: 0.9
+      weak_link: 0.6
+    overlap:
+      max_time_floor_sec: 0.5
+    sequential:
+      min_window_span_sec: 2.0
+    weak_link:
+      fallback_max_travel_time_sec: 20.0
+      require_non_negative_delta: true
+    zone:
+      default_allow_when_missing: true
+    subzone:
+      default_allow_when_missing: true
+  appearance_evidence:
+    prefer_primary_face_when_reliable: true
+    allow_body_primary_fallback: true
+    enable_face_body_fusion: true
+    fusion_face_weight: 0.75
+    fusion_body_weight: 0.25
+    secondary_available_min_score: 0.0
+    face_reference_weight: 0.75
+    face_representative_weight: 0.25
+    body_reference_weight: 0.65
+    body_representative_weight: 0.35
+  body_reid:
+    enabled: true
+    extractor_name: osnet_x0_25
+    device: cpu
+    pretrained: true
+    input_width: 128
+    input_height: 256
+    min_crop_width: 20
+    min_crop_height: 40
+    clahe_enabled: true
+    clahe_clip_limit: 2.0
+    clahe_tile_grid_size: 8
+    gray_world_normalization: false
+    tracklet_pooling_max_candidates: 10
+    tracklet_pooling_top_k: 5
+    tracklet_pooling_min_blur_score: 25.0
+    tracklet_pooling_min_bbox_area: 2500.0
+    tracklet_pooling_min_relative_bbox_area: 0.55
+  gallery_lifecycle:
+    top_k_face_refs: 4
+    top_k_body_refs: 5
+    ttl_sec: 20.0
+    face_quality_area_bonus: 0.0015
+    representative_update_policy: mean_top_k_refs
+    expiry_policy: hard_ttl
+  decision_policy:
+    known_accept_threshold: 0.75
+    known_margin_threshold: 0.04
+    unknown_reuse_threshold: 0.18
+    create_rule: create_new_unknown_when_no_safe_match
+    pending_policy:
+      enabled: true
+      window_frames: 20
+      window_sec: 2.0
+      max_buffer_items: 6
+      stale_timeout_sec: 3.0
+    defer_policy:
+      quality_reliability_max: 0.35
+      quality_gate_fail_action: defer
+      ambiguous_low_quality_action: create_unknown
+    margin_by_relation:
+      overlap: 0.01
+      sequential: 0.03
+      weak_link: 0.05
+      camera_already_seen: 1.0
+      unreachable: 1.0
+      no_link: 1.0
+    relation_thresholds:
+      overlap:
+        fusion_primary: 0.3
+        face_primary: 0.28
+        face_secondary: 0.36
+        body_primary: 0.72
+        body_secondary: 0.14
+      sequential:
+        fusion_primary: 0.56
+        face_primary: 0.35
+        face_secondary: 0.45
+        body_primary: 0.72
+        body_secondary: 0.18
+      weak_link:
+        fusion_primary: 0.62
+        face_primary: 0.42
+        face_secondary: 0.52
+        body_primary: 0.8
+        body_secondary: 0.22
+    minimum_evidence:
+      require_secondary_when_available: true
+    topology_supported_accept:
+      enabled: true
+      allowed_relations: [sequential]
+      require_primary_modality: body
+      min_time_score: 0.9
+      max_primary_shortfall: 0.1
+      require_exact_zone: true
+      require_exact_subzone: true

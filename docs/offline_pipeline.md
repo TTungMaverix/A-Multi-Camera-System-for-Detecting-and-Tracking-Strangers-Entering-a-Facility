@@ -1,108 +1,182 @@
 # Offline End-to-End Pipeline
 
-## Current Backend
+## Current Phase
 
-The current offline runnable pipeline is **video-file-first**, but the detect/track stage is still a **GT-backed Wildtrack provider**:
+The current active offline demo path is the **New Dataset logical 4-camera adapter**.
 
-- video sources: `Wildtrack/cam3.mp4`, `cam5.mp4`, `cam6.mp4`, `cam7.mp4`
-- per-camera track extraction: `Wildtrack/annotations_positions/*.json`
-- direction filter: entry-camera line crossing from `wildtrack_demo/wildtrack_demo_config.json`
-- face matching + known/unknown + cross-camera association: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
+It uses:
 
-This keeps the thesis demo honest:
+- 2 physical videos from the self-recorded dataset
+- a logical expansion into `C1 -> C2 -> C3 -> C4`
+- real `YOLOv8n + ByteTrack` inference
+- short-gap tracklet linking after ByteTrack
+- calibrated ROI masking before downstream identity logic
+- inward-direction filtering before event creation
+- face-first matching with OSNet body fallback
+- topology/travel-time hard filtering before similarity
+- tracklet-pooled body evidence instead of one-shot body crops
+- camera-role-aware face capture with strict best-shot gating
+- topology-supported sequential accept for near-threshold body-only cases
 
-- there is now one offline orchestration flow
-- direction filtering and event creation are in that flow
-- the current tracking backend is still annotation-backed, not a heavy detector+tracker inference stack
+The earlier Wildtrack benchmark path still remains in the repo for legacy comparison and regression checks, but it is no longer the active dataset narrative.
 
-## Entry Point
+## Entry Points
 
-Main offline command:
+Current New Dataset demo:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
+```
+
+Direct orchestrator wrapper:
+
+```cmd
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
 ```
 
-Compatibility command:
+Direct Python:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
 ```
 
-Both currently resolve to the same offline orchestrator.
+## Main Configs
 
-## Config
+Primary New Dataset configs:
 
-Main config:
+- `insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml`
 
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
+Important config blocks in the current phase:
 
-Low-load config:
-
-- `insightface_demo_assets/runtime/config/offline_pipeline_demo.low_load.yaml`
-
-Important fields:
-
-- `dataset.video_sources`: 4 input videos
-- `wildtrack_demo_config`: dataset-specific ROI, line crossing, best-shot window
-- `wildtrack_demo_config.best_shot_selection`: line-aware best-shot policy
-- `known_gallery.manifest_csv`
-- `known_gallery.gallery_root`
-- `association_policy_config`
+- `dataset_profile_config`
+- `logical_demo.pair_id`
+- `multi_source_inference.tracklet_linking`
+- `multi_source_inference.roi_filter`
+- `multi_source_inference.cache`
+- `scene_calibration_config`
 - `camera_transition_map_config`
-- `execution.mode`
-- `low_load`
+- `association_policy_config`
 
-## Event Creation Conditions
+Current phase-specific knobs that matter most:
 
-Only `direction=IN` entry events go to face matching.
+- `association_policy.quality_gate.min_face_bbox_width / height / area`
+- `association_policy.body_reid.tracklet_pooling_*`
+- `association_policy.decision_policy.relation_thresholds.sequential.body_primary`
+- `association_policy.decision_policy.topology_supported_accept`
+- `dataset_profile.cameras[].face_capture_mode`
 
-Minimum event packet fields in the offline flow:
+## Backend Flow
 
-- `camera_id`
-- `relative_sec`
-- `local_track_id`
-- `global_gt_id` for audit only
-- `bbox_*`
-- `best_head_crop`
-- `best_body_crop`
-- `direction`
-- `zone_id`
-- `subzone_id`
+For each configured logical camera stream:
 
-Event creation rules in the current backend:
+1. decode video frames
+2. optionally pre-mask the frame with the calibrated ROI
+3. run YOLO person detection and ByteTrack
+4. run short-gap tracklet linking
+5. post-filter detections by ROI coverage and foot-point
+6. build track rows
+7. build direction-filtered entry events
+8. select best body/head crops
+9. run known/unknown resolution
+10. apply topology hard filter before face/body scoring
+11. emit resolved events, mappings, timelines, and handoff summaries
 
-1. keep rows whose foot point stays inside the configured ROI
-2. for entry cameras, detect line crossing into the protected side
-3. only after line crossing, create `ENTRY_IN`
-4. select a best shot inside the configured frame window
-5. when enabled, prefer post-anchor frames in higher-priority subzones such as `exit` or `interior`
-6. create best-shot body/head crops
-7. send that event to face matching and then to cross-camera association
+For the current phase, step 8 and step 10 are more structured than before:
+
+- body evidence is pooled from the best `5-10` valid body crops in the same tracklet
+- face evidence is only attempted on cameras whose `face_capture_mode` allows it
+- sequential reuse can still succeed when body evidence is slightly below the global
+  sequential threshold, but only if topology/time/zone/subzone support is strong and explicit
+
+For the New Dataset profile, the active offline demo path first builds a **logical manifest** from clip stems shared across the 2 physical camera folders, then expands them into 4 logical streams with explicit time offsets.
+
+ROI is not metadata in this phase. Boxes outside the configured processing polygon are killed before ReID and association.
+
+## Current Demo Assumptions
+
+The current New Dataset assumptions are:
+
+- physical camera folders: `Camera 1`, `Camera 2`
+- pairing rule: shared stem (`a1`, `a2`, `b1`, ...)
+- physical travel time `Camera 1 -> Camera 2`: about `10s`
+- logical demo timeline:
+  - `C1 @ 0s`
+  - `C2 @ 10s`
+  - `C3 @ 20s`
+  - `C4 @ 30s`
+
+Anchor-point defaults:
+
+- `C1`, `C3`: `bottom_center`
+- `C2`, `C4`: `center_center`
+
+## Legacy Wildtrack Assets
+
+Legacy Wildtrack configs and benchmark outputs are still present for audit and comparison, including:
+
+- `offline_pipeline_demo.wildtrack_4cam_inference_roi_benchmark.yaml`
+- `offline_pipeline_demo.wildtrack_4cam_inference_no_roi_benchmark.yaml`
+- the earlier sequential replay proof configs
+
+They are no longer the active default dataset path.
 
 ## Output Layout
 
-For each offline run:
+Per run:
 
 - `outputs/offline_runs/<run_name>/tracks/`
 - `outputs/offline_runs/<run_name>/events/`
-- `outputs/offline_runs/<run_name>/crops/`
 - `outputs/offline_runs/<run_name>/timelines/`
 - `outputs/offline_runs/<run_name>/summaries/`
 - `outputs/offline_runs/<run_name>/audit/`
 - `outputs/offline_runs/<run_name>/association_logs/`
-- `outputs/offline_runs/<run_name>/runtime/`
+- `outputs/offline_runs/<run_name>/evaluation/`
 
-Main final files:
+Current phase artifacts that matter most:
 
 - `events/resolved_events.csv`
-- `timelines/stream_identity_timeline.csv`
+- `events/latest_events.json`
+- `timelines/unknown_identity_timeline.json`
+- `summaries/cross_camera_handoff_summary.json`
+- `summaries/stage_input_summary.json`
 - `summaries/face_resolution_summary.json`
-- `association_logs/association_decisions.jsonl`
-- `audit/audit_report.md`
-- `audit/entry_event_assignment_audit.csv`
-- `audit/audit_event_generation_subzones.csv`
+- `summaries/face_body_usage_summary.json`
+- `runtime/association_logs/association_decisions.jsonl`
 
-The audit CSV files now include line-aware best-shot metadata so event creation can be debugged without rerunning the full pipeline.
+## Current Validation Commands
+
+Full offline smoke with the active New Dataset config:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
+```
+
+Independent direction validation:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_direction_validation.py" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --output-root "outputs/evaluations/direction_validation_tracklet_phase"
+```
+
+Body tracklet comparison on an existing run root:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet"
+```
+
+## Current Limitations
+
+- only `a1` exists locally right now, so `a2` and `b1` cannot be validated yet
+- face embeddings are still not created on the active `a1` smoke; the current phase makes
+  those failures explicit instead of silently forcing bad embeddings
+- logical `C3/C4` remain demo expansions from the 2 physical cameras

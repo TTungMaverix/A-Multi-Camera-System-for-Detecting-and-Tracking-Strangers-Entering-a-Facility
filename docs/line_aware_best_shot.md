@@ -10,17 +10,30 @@ The current best-shot logic therefore prefers frames that:
 - land in a more useful subzone such as `exit` or `interior`
 - still keep a reasonably large body box for crop quality
 
+For the current New Dataset phase, line-aware best-shot is now split by modality intent:
+
+- body/event best shots can still come from high-angle anchor cameras
+- face best shots are only attempted on cameras whose `face_capture_mode` allows face capture
+- face candidates must also pass bbox-size and pose gates before an embedding is created
+
 ## Config
 
 The current dataset-facing config lives in:
 
-- [wildtrack_demo_config.json](../wildtrack_demo/wildtrack_demo_config.json)
+- [dataset_profile.new_dataset_demo.yaml](../insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml)
+- [association_policy.new_dataset_demo.yaml](../insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml)
 
 Relevant keys:
 
 - `best_shot_selection.enabled`
 - `best_shot_selection.preferred_subzone_types`
 - `best_shot_selection.minimum_frames_after_anchor`
+- `cameras[].face_capture_mode`
+- `association_policy.quality_gate.min_face_bbox_width`
+- `association_policy.quality_gate.min_face_bbox_height`
+- `association_policy.quality_gate.min_face_bbox_area`
+- `association_policy.quality_gate.max_abs_yaw_deg`
+- `association_policy.quality_gate.max_abs_pitch_deg`
 
 ## Runtime Behavior
 
@@ -48,9 +61,10 @@ This makes it possible to inspect why a given frame was selected as the event cr
 
 ## Current Limitation
 
-The current Wildtrack subzone map is still approximate. Because of that, line-aware selection can expose map-definition problems:
+On the active `a1` New Dataset smoke:
 
-- some events still land in `outer_entry`
-- stricter subzone-aware filtering can reduce reuse if the chosen subzones do not reflect the true movement path well
+- `C1` / `C3` are intentionally body-anchor views, not face sources
+- `C2` / `C4` still reject many face attempts by yaw even after best-shot selection
 
-That limitation is expected at the current stage and is exactly why the new audit fields are exported.
+That behavior is expected in the current phase. The goal is to reject weak face evidence
+cleanly rather than force embeddings from unsuitable frames.

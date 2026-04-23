@@ -19,6 +19,12 @@ Camera transition metadata is loaded in this order:
 3. `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
 4. a fallback map derived from `wildtrack_demo/wildtrack_demo_config.json`
 
+For the active New Dataset phase, the practical source-of-truth files are:
+
+- `insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`
+
 If a config file is missing or only partially filled:
 
 - the loader falls back to defaults
@@ -29,6 +35,8 @@ If a config file is missing or only partially filled:
 
 `quality_gate`
 - bbox and face-quality thresholds before association
+- face bbox-size gate for best-shot buffering
+- pose gate for yaw / pitch / roll
 
 `topology_filter`
 - relation priors
@@ -40,6 +48,11 @@ If a config file is missing or only partially filled:
 - face-vs-body modality preference
 - body fallback behavior
 - secondary evidence availability floor
+
+`body_reid`
+- body crop normalization
+- tracklet pooling candidate limit / top-k
+- minimum blur and bbox-area filters before embedding extraction
 
 `gallery_lifecycle`
 - `ttl_sec`
@@ -55,6 +68,24 @@ If a config file is missing or only partially filled:
 - per-relation margin requirements
 - minimum evidence requirements
 - defer and create rules
+- topology-supported sequential accept for strong map-aware, near-threshold body-only reuse
+
+## New Dataset Camera Role Config
+
+The current New Dataset phase also relies on camera-level role settings inside
+`dataset_profile.new_dataset_demo.yaml`.
+
+Important camera keys:
+
+- `anchor_point_mode`
+- `face_capture_mode`
+
+Typical current usage:
+
+- `C1`, `C3`: `face_capture_mode = body_anchor_only`
+- `C2`, `C4`: `face_capture_mode = best_shot_preferred`
+
+This keeps high-angle cameras as event/body anchors instead of forcing weak face embeddings.
 
 ## Dataset Adaptation
 
@@ -66,6 +97,18 @@ To adapt the same association engine to a new dataset:
 4. tune thresholds and margins there
 
 This keeps the system paper-grounded and avoids re-editing core logic for every dataset.
+
+## Current Phase Note
+
+The current phase explicitly avoids lowering the global sequential body threshold just to make
+reuse pass. The active New Dataset policy keeps:
+
+- `relation_thresholds.sequential.body_primary = 0.72`
+
+When a sequential candidate is slightly below that threshold but topology/time/zone/subzone
+support is extremely strong, the decision policy can still accept it through the dedicated
+`topology_supported_accept` rule path. This path is logged explicitly and is not equivalent to
+lowering the threshold globally.
 
 ## Zone / Transition Metadata
 

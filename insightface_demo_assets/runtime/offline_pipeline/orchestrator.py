@@ -1,13 +1,21 @@
 import argparse
+import csv
 import json
 import shutil
+import time
 from pathlib import Path
 
 import yaml
 
 from association_core import load_camera_transition_map
+from dataset_profiles import load_dataset_profile_from_config
 from offline_pipeline.event_builder import build_offline_stage_inputs, load_json, save_json
 from run_face_resolution_demo import main as run_face_resolution_main
+from scene_calibration import (
+    apply_scene_calibration_to_transition_map,
+    apply_scene_calibration_to_wildtrack_config,
+    load_runtime_scene_calibration,
+)
 
 
 def load_pipeline_config(config_path: Path):
@@ -34,14 +42,19 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     runtime_config.update(
         {
             "project_root": str(project_root),
+            "dataset_root": stage_inputs["dataset_root"],
+            "dataset_profile_path": stage_inputs.get("dataset_profile_path", stage_inputs["wildtrack_config_path"]),
             "wildtrack_config_path": stage_inputs["wildtrack_config_path"],
             "tracks_csv": stage_inputs["tracks_csv"],
+            "identity_queue_csv": stage_inputs["identity_queue_csv"],
             "wildtrack_identity_queue_csv": stage_inputs["identity_queue_csv"],
             "resolved_events_csv": str(runtime_dir / "resolved_events_template.csv"),
             "unknown_profiles_csv": str(runtime_dir / "unknown_profiles_template.csv"),
             "known_face_embeddings_csv": str(runtime_dir / "known_face_embeddings_template.csv"),
         }
     )
+    if offline_config.get("face_demo_overrides"):
+        runtime_config.update(dict(offline_config["face_demo_overrides"]))
     if offline_config.get("association_policy_config"):
         runtime_config["association_policy_config"] = str(
             resolve_path(project_root, offline_config["association_policy_config"])
@@ -49,6 +62,10 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     if offline_config.get("camera_transition_map_config"):
         runtime_config["camera_transition_map_config"] = str(
             resolve_path(project_root, offline_config["camera_transition_map_config"])
+        )
+    if offline_config.get("scene_calibration_config"):
+        runtime_config["scene_calibration_config"] = str(
+            resolve_path(project_root, offline_config["scene_calibration_config"])
         )
     if offline_config.get("known_gallery", {}).get("manifest_csv"):
         runtime_config["known_face_manifest_csv"] = str(
@@ -63,6 +80,16 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     return runtime_config_path, runtime_config
 
 
+def build_source_lookup(project_root: Path, offline_config):
+    lookup = {}
+    for camera_id, video_path in (offline_config.get("dataset", {}).get("video_sources", {}) or {}).items():
+        lookup[camera_id] = {
+            "source_type": "file",
+            "source": str(resolve_path(project_root, video_path)),
+        }
+    return lookup
+
+
 def sync_final_outputs(output_root: Path):
     runtime_dir = output_root / "runtime"
     events_dir = output_root / "events"
@@ -75,9 +102,14 @@ def sync_final_outputs(output_root: Path):
 
     copy_pairs = [
         (runtime_dir / "resolved_events_template.csv", events_dir / "resolved_events.csv"),
+        (runtime_dir / "latest_events.json", events_dir / "latest_events.json"),
         (runtime_dir / "stream_identity_timeline.csv", timelines_dir / "stream_identity_timeline.csv"),
+        (runtime_dir / "unknown_identity_timeline.csv", timelines_dir / "unknown_identity_timeline.csv"),
+        (runtime_dir / "unknown_identity_timeline.json", timelines_dir / "unknown_identity_timeline.json"),
         (runtime_dir / "unknown_profiles_template.csv", timelines_dir / "unknown_profiles.csv"),
         (runtime_dir / "face_resolution_summary.json", summaries_dir / "face_resolution_summary.json"),
+        (runtime_dir / "face_body_usage_summary.json", summaries_dir / "face_body_usage_summary.json"),
+        (runtime_dir / "cross_camera_handoff_summary.json", summaries_dir / "cross_camera_handoff_summary.json"),
     ]
     for src, dst in copy_pairs:
         if src.exists():
@@ -93,7 +125,50 @@ def sync_final_outputs(output_root: Path):
                 shutil.copy2(path, association_logs_dir / path.name)
 
 
+def export_unknown_id_mapping(output_root: Path):
+    resolved_events_path = output_root / "events" / "resolved_events.csv"
+    if not resolved_events_path.exists():
+        return ""
+    with resolved_events_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    mapping_rows = []
+    for row in rows:
+        if row.get("identity_status") != "unknown" or not row.get("unknown_global_id"):
+            continue
+        mapping_rows.append(
+            {
+                "event_id": row.get("event_id", ""),
+                "camera_id": row.get("camera_id", ""),
+                "frame_id": row.get("frame_id", ""),
+                "relative_sec": row.get("relative_sec", ""),
+                "global_gt_id_for_audit": row.get("global_gt_id", ""),
+                "anchor_camera_id": row.get("anchor_camera_id", ""),
+                "anchor_relative_sec": row.get("anchor_relative_sec", ""),
+                "relation_type": row.get("relation_type", ""),
+                "unknown_global_id": row.get("unknown_global_id", ""),
+                "resolved_global_id": row.get("resolved_global_id", ""),
+                "resolution_source": row.get("resolution_source", ""),
+                "decision_reason": row.get("decision_reason", ""),
+                "reason_code": row.get("reason_code", ""),
+                "best_head_crop": row.get("best_head_crop", ""),
+                "best_body_crop": row.get("best_body_crop", ""),
+            }
+        )
+    output_path = output_root / "events" / "unknown_id_mapping.csv"
+    if not mapping_rows:
+        output_path.write_text("event_id,camera_id,relative_sec,unknown_global_id,resolved_global_id\r\n", encoding="utf-8-sig")
+        return str(output_path)
+    fieldnames = list(mapping_rows[0].keys())
+    with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in mapping_rows:
+            writer.writerow(row)
+    return str(output_path)
+
+
 def run_offline_pipeline(config_path: Path, cli_overrides=None):
+    pipeline_started = time.perf_counter()
     cli_overrides = cli_overrides or {}
     offline_config = load_pipeline_config(config_path)
     execution_mode = (offline_config.get("execution", {}) or {}).get("mode", "sequential")
@@ -121,18 +196,40 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     output_root = resolve_path(project_root, offline_config["output_root"])
     output_root.mkdir(parents=True, exist_ok=True)
 
-    wildtrack_config_path = resolve_path(project_root, offline_config["wildtrack_demo_config"])
-    wildtrack_config = load_json(wildtrack_config_path)
-    transition_map, transition_runtime = load_camera_transition_map(
-        wildtrack_config,
-        config_path=offline_config.get("camera_transition_map_config", ""),
+    dataset_profile_path, dataset_profile, dataset_profile_runtime = load_dataset_profile_from_config(
+        offline_config,
+        project_root,
         base_dir=config_path.parent,
     )
+    transition_config_path = offline_config.get("camera_transition_map_config", "")
+    transition_map, transition_runtime = load_camera_transition_map(
+        dataset_profile,
+        config_path=str(resolve_path(project_root, transition_config_path)) if transition_config_path else "",
+        base_dir=config_path.parent,
+    )
+    scene_calibration_config = offline_config.get("scene_calibration_config", "")
+    scene_calibration, _runtime_cameras, scene_runtime = load_runtime_scene_calibration(
+        config_path=resolve_path(project_root, scene_calibration_config) if scene_calibration_config else None,
+        base_dir=config_path.parent,
+        camera_ids=dataset_profile.get("selected_cameras", []),
+        source_lookup=build_source_lookup(project_root, offline_config),
+        required=True,
+    )
+    frame_sizes = scene_runtime.get("frame_sizes", {})
+    transition_map = apply_scene_calibration_to_transition_map(transition_map, scene_calibration, frame_sizes)
+    dataset_profile = apply_scene_calibration_to_wildtrack_config(dataset_profile, scene_calibration, frame_sizes)
 
-    stage_inputs = build_offline_stage_inputs(offline_config, transition_map)
+    stage_started = time.perf_counter()
+    stage_inputs = build_offline_stage_inputs(offline_config, transition_map, dataset_profile_override=dataset_profile)
+    stage_elapsed_sec = round(max(time.perf_counter() - stage_started, 1e-9), 3)
     runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
+    face_resolution_started = time.perf_counter()
     run_face_resolution_main(runtime_config_path)
+    face_resolution_elapsed_sec = round(max(time.perf_counter() - face_resolution_started, 1e-9), 3)
+    sync_started = time.perf_counter()
     sync_final_outputs(output_root)
+    sync_elapsed_sec = round(max(time.perf_counter() - sync_started, 1e-9), 3)
+    unknown_id_mapping_csv = export_unknown_id_mapping(output_root)
 
     pipeline_summary = {
         "pipeline_name": offline_config.get("pipeline_name", "offline_multicam_pipeline"),
@@ -142,19 +239,42 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
         "output_root": str(output_root),
         "stage_inputs": stage_inputs,
         "runtime_config_path": str(runtime_config_path),
+        "dataset_profile_runtime": dataset_profile_runtime,
         "camera_transition_map_runtime": transition_runtime,
+        "scene_calibration_runtime": scene_runtime,
         "face_runtime_config": {
             "association_policy_config": runtime_config.get("association_policy_config", ""),
             "camera_transition_map_config": runtime_config.get("camera_transition_map_config", ""),
+            "scene_calibration_config": runtime_config.get("scene_calibration_config", ""),
             "known_face_manifest_csv": runtime_config.get("known_face_manifest_csv", ""),
             "known_face_gallery_root": runtime_config.get("known_face_gallery_root", ""),
         },
         "final_outputs": {
             "resolved_events_csv": str(output_root / "events" / "resolved_events.csv"),
+            "latest_events_json": str(output_root / "events" / "latest_events.json"),
+            "unknown_id_mapping_csv": unknown_id_mapping_csv,
             "stream_identity_timeline_csv": str(output_root / "timelines" / "stream_identity_timeline.csv"),
+            "unknown_identity_timeline_csv": str(output_root / "timelines" / "unknown_identity_timeline.csv"),
+            "unknown_identity_timeline_json": str(output_root / "timelines" / "unknown_identity_timeline.json"),
             "summary_json": str(output_root / "summaries" / "face_resolution_summary.json"),
+            "face_body_usage_summary_json": str(output_root / "summaries" / "face_body_usage_summary.json"),
+            "cross_camera_handoff_summary_json": str(output_root / "summaries" / "cross_camera_handoff_summary.json"),
             "association_logs_dir": str(output_root / "association_logs"),
             "audit_dir": str(output_root / "audit"),
+        },
+        "timings_sec": {
+            "stage_input_build_sec": stage_elapsed_sec,
+            "face_resolution_sec": face_resolution_elapsed_sec,
+            "final_sync_sec": sync_elapsed_sec,
+            "total_pipeline_sec": round(max(time.perf_counter() - pipeline_started, 1e-9), 3),
+        },
+        "architecture_audit": {
+            "execution_mode": offline_config.get("execution", {}).get("mode", "sequential"),
+            "architecture_mode": "synchronous_replay_pipeline",
+            "notes": [
+                "The current Cam6 replay debug path is sequential: stage inputs are built first, then face/body/association resolution runs, then outputs are synchronized.",
+                "The live pipeline keeps a separate multiprocessing producer-consumer design and reports its own worker/consumer FPS in live_pipeline_summary.json.",
+            ],
         },
     }
     save_json(output_root / "summaries" / "offline_pipeline_summary.json", pipeline_summary)

@@ -1,0 +1,55 @@
+offline_pipeline:
+  project_root: ../../..
+  pipeline_name: new_dataset_logical_4cam_demo
+  source_backend: logical_demo_video_inference
+  output_root: outputs/offline_runs/new_dataset_logical_4cam_demo
+  frame_source_mode: video_files
+  low_load:
+    enabled: true
+    start_frame: 0
+    end_frame: 120
+    frame_stride: 6
+  execution:
+    mode: sequential
+    packet_batch_size: 256
+    queue_max_size: 64
+    start_method: spawn
+  dataset_profile_config: insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml
+  logical_demo:
+    pair_id: ""
+  multi_source_inference:
+    detector_model: yolov8n.pt
+    tracker: insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml
+    device: cpu
+    conf_threshold: 0.4
+    iou_threshold: 0.35
+    imgsz: 768
+    person_class_id: 0
+    target_timeline_fps: 10
+    verbose: false
+    cache:
+      enabled: true
+      use_cache: true
+      refresh_cache: false
+      cache_dir: outputs/offline_runs/cache/new_dataset_detector_tracker
+    tracklet_linking:
+      enabled: true
+      max_gap_frames: 15
+      min_iou: 0.12
+      max_normalized_center_distance: 0.7
+      min_motion_continuity: 0.2
+    roi_filter:
+      enabled: true
+      pre_mask_enabled: true
+      post_filter_enabled: true
+      require_footpoint_inside: true
+      min_bbox_coverage: 0.25
+  face_demo_config: insightface_demo_assets/runtime/face_demo_config.json
+  face_demo_overrides:
+    demo_auto_enroll_count: 0
+  known_gallery:
+    manifest_csv: insightface_demo_assets/known_face_manifest.csv
+    gallery_root: insightface_demo_assets/known_faces
+  association_policy_config: insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml
+  camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml
+  scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml

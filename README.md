@@ -1,244 +1,212 @@
 # A Multi-Camera System for Detecting and Tracking Strangers Entering a Facility
 
-Graduation project repository for a multi-camera security pipeline that:
-
-- processes 4 camera streams
-- keeps only people moving into a protected area
-- detects and tracks people per camera
-- matches faces against a known database using pretrained models
-- creates stranger / unknown identities when no known match exists
-- reuses `Unknown_Global_ID` across cameras using map-aware cross-camera association
-- stores event logs, snapshots, and identity timelines
-
-## Current Status
-
-The current runnable vertical slice is video-file-first:
-
-1. run one offline orchestrator over 4 selected Wildtrack video sources
-2. generate GT-backed per-camera track rows and entry events
-3. run face matching with InsightFace and a known gallery
-4. run paper-grounded cross-camera association through a compatibility entrypoint
-5. create or reuse unknown IDs
-6. export resolved events, timelines, and audit logs into a single run folder
-
-RTSP/live ingestion is planned later. Video files are the current priority.
-
-Important limitation:
-
-- the current offline detect/track stage is still a Wildtrack annotation-backed provider for the thesis demo baseline
-- the repo now has a real offline end-to-end flow, but it is not yet a production detector+tracker inference stack
-
-## Association Source of Truth
-
-Association design must follow:
-
-- [docs/association_paper_grounded_design.md](docs/association_paper_grounded_design.md)
-
-Association must not fall back to a vague weighted sum if the design note already defines the logic. The required structure is:
-
-1. `quality gate`
-2. `candidate filtering` by topology + travel time + zone constraints when available, with subzone constraints when the dataset provides them
-3. `modality-aware appearance evidence` with face and body kept separate
-4. `accept / reject / create / defer`
-5. `gallery lifecycle` with TTL and top-k references
-
-The association layer must support:
-
-- `overlap`
-- `sequential`
-- `weak_link`
-
-and it must emit decision logs with `reason_code`.
-
-Additional docs:
-
-- [docs/association_runtime_config.md](docs/association_runtime_config.md)
-- [docs/association_trace_logging.md](docs/association_trace_logging.md)
-- [docs/camera_transition_map_config.md](docs/camera_transition_map_config.md)
-- [docs/camera_subzone_config.md](docs/camera_subzone_config.md)
-- [docs/line_aware_best_shot.md](docs/line_aware_best_shot.md)
-- [docs/offline_pipeline.md](docs/offline_pipeline.md)
-- [docs/offline_multiprocessing_architecture.md](docs/offline_multiprocessing_architecture.md)
-- [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
-
-## Phase Status
-
-Current code status:
-
-- `insightface_demo_assets/runtime/run_face_resolution_demo.py` remains the face-resolution compatibility entrypoint
-- `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py` is the offline end-to-end orchestrator entrypoint
-- `insightface_demo_assets/runtime/offline_pipeline/` owns offline event-building and orchestration
-- the offline orchestrator now supports both `sequential` and `multiprocessing` execution modes
-- association core logic lives under `insightface_demo_assets/runtime/association_core/`
-- `insightface_demo_assets/runtime/run_association_tuning.py` now provides a cache-first threshold tuning workflow
-- association thresholds and policies are externalized via `insightface_demo_assets/runtime/config/association_policy.example.yaml`
-- the current selected policy for Wildtrack demo runs is `insightface_demo_assets/runtime/config/association_policy.wildtrack_tuned.yaml`
-- camera-pair transitions, zones, and subzones are externalized via `insightface_demo_assets/runtime/config/camera_transition_map.example.yaml`
-- entry-camera best-shot selection is now line-aware and subzone-aware through `wildtrack_demo/wildtrack_demo_config.json`
-- offline run config now lives under `insightface_demo_assets/runtime/config/offline_pipeline_demo.example.yaml`
-- association decision logs are exported under `association_logs/` in each offline run
-- event-generation audit now records best-shot strategy, subzone choice, and frames after anchor
-- offline runs export standardized folders under `outputs/offline_runs/`
-- scenario tests for association core and offline event creation live under `tests/`
-- live ingestion, dashboard, and storage remain later phases
-
-## Project Scope
-
-In scope:
+Graduation project repository for a multi-camera security pipeline that stays within the original scope:
 
 - 4 camera streams
+- person detection and per-camera multi-object tracking on video
 - inward-direction filtering
-- per-camera detection and tracking
-- known face matching using pretrained models
-- unknown identity creation and reuse across cameras
-- shared camera map and expected travel time
-- event log, snapshots, and appearance timeline
+- known-face matching when usable
+- `Unknown_Global_ID` creation and reuse across cameras
+- map-aware travel-time constraints and cross-camera association
+- event logs, snapshots, and identity timelines
 
-Out of scope for now:
+## Current Active Dataset
 
-- training large face recognition models from scratch
-- heavy end-to-end retraining on the current laptop
-- live RTSP-first deployment before a stable video-file vertical slice exists
+The active dataset is now the **self-recorded New Dataset**, not Wildtrack.
 
-## Current Runnable Commands
+Current physical capture status:
 
-From `cmd`:
+- `New Dataset/Camera 1`
+- `New Dataset/Camera 2`
+
+Each physical camera folder stores paired clips with the same stem:
+
+- `Camera 1/a1.mp4`
+- `Camera 2/a1.mp4`
+- later pairs should follow the same rule: `a2`, `b1`, ...
+
+Meaning of a pair:
+
+- `Camera 1/<stem>`: stranger approaching / entering the facility door
+- `Camera 2/<stem>`: the same stranger appearing inside after crossing the door
+
+The thesis scope still stays at 4-camera demonstration level. Because the current self-recorded dataset only has **2 physical cameras**, the repository now uses a **logical 4-camera demo expansion**:
+
+- `C1` -> physical Camera 1
+- `C2` -> physical Camera 2
+- `C3` -> logical delayed replay of physical Camera 1
+- `C4` -> logical delayed replay of physical Camera 2
+
+This is documented explicitly as a demo adapter for scope alignment. It is **not** presented as 4 independent physical cameras.
+
+## What Stays Unchanged
+
+The phase that migrates away from Wildtrack does **not** rewrite the core pipeline.
+
+The runtime order is still:
+
+`Detect -> Track -> Filter IN direction -> Match Face -> Manage Unknown ID -> Cross-camera Association`
+
+The core logic remains configuration-driven and separate from dataset profiles:
+
+- IoU
+- cosine similarity
+- travel-time logic
+- point-in-polygon
+- direction logic
+- association decision logic
+
+## What Changed In The Current Phase
+
+This phase does not add a new product surface. It closes the algorithmic gaps that were
+still masking weak association quality:
+
+- `sequential.body_primary` is restored to `0.72`; the repo no longer relies on the earlier
+  `0.55` shortcut
+- body ReID for cross-camera reuse is now **tracklet-based**, not single-frame-based
+- body crops are filtered and normalized before ReID embedding extraction
+- high-angle cameras (`C1`, `C3`) are now treated as **event/body anchors**, not face sources
+- eye-level cameras (`C2`, `C4`) remain face candidates, but only through a strict
+  best-shot gate with bbox-size and yaw/pitch limits
+- topology / travel-time / zone / subzone are now an explicit decision signal for
+  near-threshold sequential reuse, instead of being only a silent hard filter
+- direction validation and body-tracklet comparison now have standalone scripts and artifacts
+
+## Current Important Configs
+
+Active New Dataset configs:
+
+- `insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
+
+Legacy Wildtrack configs remain in the repo as reference/regression assets, but they are no longer the active default narrative.
+
+The most important policy values in the current phase are:
+
+- `association_policy.new_dataset_demo.yaml`
+  - `decision_policy.relation_thresholds.sequential.body_primary = 0.72`
+  - `decision_policy.topology_supported_accept.enabled = true`
+  - `quality_gate.min_face_bbox_width / height / area`
+  - `body_reid.tracklet_pooling_*`
+- `dataset_profile.new_dataset_demo.yaml`
+  - `face_capture_mode`
+  - `anchor_point_mode`
+
+## Default Commands
+
+Default current offline demo:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
+cd /d "<repo-root>"
 powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
 ```
 
-Direct offline orchestrator:
+Explicit New Dataset logical 4-camera demo:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-powershell -ExecutionPolicy Bypass -File ".\run_offline_multicam_pipeline.ps1"
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
 ```
 
-Low-load sanity run:
+Direct Python invocation:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.low_load.yaml"
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
 ```
 
-Low-load multiprocessing sanity run:
+Independent direction validation:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.multiprocessing.low_load.yaml"
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_direction_validation.py" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --output-root "outputs/evaluations/direction_validation_tracklet_phase"
 ```
 
-Run association tuning from cached candidate events:
+Body tracklet comparison against an offline run:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_association_tuning.py" --config ".\insightface_demo_assets\runtime\config\association_tuning_grid.example.yaml"
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet"
 ```
 
-To run only the face-resolution stage:
+Timeline + calibration server against the current New Dataset output root:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_face_resolution_demo.py"
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
 ```
 
-Main outputs:
-
-- `outputs/offline_runs/<run_name>/events/`
-- `outputs/offline_runs/<run_name>/timelines/`
-- `outputs/offline_runs/<run_name>/summaries/`
-- `outputs/offline_runs/<run_name>/audit/`
-- `outputs/offline_runs/<run_name>/association_logs/`
-- `insightface_demo_assets/runtime/face_resolution_summary.json`
-- `insightface_demo_assets/runtime/stream_identity_timeline.csv`
-- `insightface_demo_assets/runtime/audit_report.md`
-
-Run the lightweight tests:
+Regression tests:
 
 ```cmd
-cd /d "D:\ĐỒ ÁN TỐT NGHIỆP"
-".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests\test_association_core.py tests\test_offline_pipeline.py
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" -m pytest tests -q
 ```
 
-## Current Repository Layout
+## Current Validation Snapshot
 
-```text
-.
-|- README.md
-|- run_multicam_identity_demo.ps1
-|- run_offline_multicam_pipeline.ps1
-|- docs/
-|  |- association_paper_grounded_design.md
-|  `- offline_pipeline.md
-|- wildtrack_demo/
-|  |- wildtrack_demo_config.json
-|  |- export_wildtrack_demo.ps1
-|  `- output/
-|- insightface_demo_assets/
-|  |- known_faces/
-|  |- known_face_manifest.csv
-|  |- runtime/
-|     |- offline_pipeline/
-|     |- association_core/
-|     |- config/
-|     |  |- association_policy.example.yaml
-|     |  |- association_policy.wildtrack_tuned.yaml
-|     |  |- association_tuning_grid.example.yaml
-|     |  |- camera_transition_map.example.yaml
-|     |  |- offline_pipeline_demo.example.yaml
-|     |  |- offline_pipeline_demo.low_load.yaml
-|     |  `- offline_pipeline_demo.multiprocessing.low_load.yaml
-|     |- face_demo_config.json
-|     |- run_association_tuning.py
-|     |- run_face_resolution_demo.py
-|     `- run_offline_multicam_pipeline.py
-|- outputs/
-|  `- offline_runs/
-|- tests/
-|  |- conftest.py
-|  |- test_association_core.py
-|  `- test_offline_pipeline.py
-|- requirements-dev.txt
-|- Wildtrack/
-|- PAPERS/
-|- stranger_demo_bootstrap/
-`- Dataset/
-```
+The current phase has been validated on the available self-recorded pair `a1`:
 
-Notes:
+- direction validation: `5 / 5` cases passed
+- body tracklet evaluation:
+  - average old single-frame body score: `0.6105`
+  - average new tracklet body score: `0.6298`
+- full offline smoke (`new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4`)
+  - `TOTAL_EVENTS = 3`
+  - `UNIQUE_UNKNOWN_IDS = 1`
+  - `UNKNOWN_REUSE_COUNT = 2`
+  - `handoff_edge_count = 2`
+  - identity sequence reused across `C1 -> C2 -> C3`
 
-- `run_multicam_identity_demo.ps1` now routes to the offline orchestrator so the legacy command still works.
-- `run_multicam_identity_demo.ps1` and `run_offline_multicam_pipeline.ps1` now resolve paths relative to the script location instead of relying on hard-coded absolute Windows paths.
-- `run_face_resolution_demo.py` remains the stage-only entrypoint for face resolution and association.
-- `runtime/config/association_policy.example.yaml` is the public policy template for thresholds, TTL, margins, and defer/create rules.
-- `runtime/config/association_policy.wildtrack_tuned.yaml` is the current selected policy from cached offline tuning experiments.
-- `runtime/config/camera_transition_map.example.yaml` is the public map-aware template for camera-pair transitions, entry/exit zones, overlap behavior, and subzones.
-- `wildtrack_demo/wildtrack_demo_config.json` now carries line-aware best-shot preferences such as preferred subzone types and minimum frames after an anchor crossing.
-- `runtime/config/offline_pipeline_demo.example.yaml` is the public offline run template.
-- `runtime/config/offline_pipeline_demo.multiprocessing.low_load.yaml` is the lightweight producer-consumer sample config.
-- `runtime/config/association_tuning_grid.example.yaml` is the public tuning sweep template.
-- `runtime/association_logs/` and `outputs/offline_runs/` are generated at run time and are intentionally not part of source control.
-- `stranger_demo_bootstrap/` remains the scaffold for the later structured repo split.
-- `Dataset/` is legacy/reference material and is not the current runnable thesis path.
+Important interpretation:
 
-## Planned Incremental Phases
+- reuse now succeeds without lowering `body_primary`
+- the deciding path is **strong topology/time/zone/subzone support + tracklet-based body evidence**
+- face still contributes audit and rejection reasons, but it does not yet create usable
+  embeddings on the current `a1` smoke
 
-Near-term implementation should proceed in small runnable phases:
+## Output Artifacts
 
-1. keep the current offline video-file vertical slice runnable
-2. add multiprocessing producer-consumer around the offline flow
-3. add evaluation and threshold tuning from cached offline outputs
-4. improve best-shot selection without adding heavy new models
-5. add RTSP/live only after the file-based pipeline is stable
+Current phase artifacts are written under:
 
-## Dependencies
+- `outputs/evaluations/direction_validation_tracklet_phase/`
+- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/`
+- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet/`
 
-Current demo runtime depends on:
+The most useful files are:
 
-- Python venv at `.venv_insightface_demo`
-- InsightFace model cache at `C:\Users\Admin\.insightface\models\buffalo_l`
-- Wildtrack demo assets already exported in this repo
+- `summaries/face_resolution_summary.json`
+- `summaries/face_body_usage_summary.json`
+- `summaries/cross_camera_handoff_summary.json`
+- `runtime/association_logs/association_decisions.jsonl`
+- `evaluation/body_tracklet/body_tracklet_comparison_summary.json`
 
-If new dependencies or configs are added in future phases, they must be documented and committed together with sample config files.
+## Current Constraints
+
+- the active self-recorded dataset currently has only 2 physical cameras
+- clip coverage is still very small
+- only `a1` is available locally right now; `a2` and `b1` are not present yet, so this phase
+  cannot honestly report quantitative results for those clips
+- logical `C3/C4` are explicit demo replays derived from `C1/C2`
+- Wildtrack evaluation utilities and benchmark assets still remain in the repo for legacy comparison
+- face embeddings are still absent on the current `a1` smoke because the usable face shots are
+  rejected by camera-role policy or yaw limits
+- the current topology-supported accept path is intended for strong sequential cases with
+  near-threshold body evidence; it is not a license to weaken map constraints or lower
+  thresholds globally
+- this repository is a thesis prototype, not a production CCTV system
+
+## Documentation
+
+- [docs/offline_pipeline.md](docs/offline_pipeline.md)
+- [docs/new_dataset_demo.md](docs/new_dataset_demo.md)
+- [docs/new_dataset_algorithmic_audit_phase_tracklet_face_topology.md](docs/new_dataset_algorithmic_audit_phase_tracklet_face_topology.md)
+- [docs/live_demo_ui.md](docs/live_demo_ui.md)
+- [docs/manual_scene_calibration.md](docs/manual_scene_calibration.md)
+- [docs/association_runtime_config.md](docs/association_runtime_config.md)
+- [docs/association_trace_logging.md](docs/association_trace_logging.md)
+- [docs/quantitative_evaluation.md](docs/quantitative_evaluation.md)

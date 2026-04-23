@@ -1,0 +1,159 @@
+camera_transition_map:
+  cameras:
+    C3:
+      role: followup
+      description: Follow-up plaza camera in the real 4-camera benchmark.
+      default_zone_id: c3_followup_main
+      default_subzone_id: c3_overlap_entry
+      entry_zones: [c3_followup_main]
+      exit_zones: [c3_followup_main]
+      zones: []
+      subzones: []
+    C5:
+      role: entry
+      description: Front-facing entry camera in the real 4-camera benchmark.
+      default_zone_id: c5_entry_main
+      default_subzone_id: c5_inner_overlap
+      entry_zones: [c5_entry_main]
+      exit_zones: [c5_entry_main]
+      zones: []
+      subzones: []
+    C6:
+      role: entry
+      description: Diagonal entry camera in the real 4-camera benchmark.
+      default_zone_id: c6_entry_main
+      default_subzone_id: c6_inner_overlap
+      entry_zones: [c6_entry_main]
+      exit_zones: [c6_entry_main]
+      zones: []
+      subzones: []
+    C7:
+      role: followup
+      description: Right-side follow-up camera in the real 4-camera benchmark.
+      default_zone_id: c7_followup_main
+      default_subzone_id: c7_overlap_entry
+      entry_zones: [c7_followup_main]
+      exit_zones: [c7_followup_main]
+      zones: []
+      subzones: []
+  transitions:
+    - transition_id: C5_to_C6_overlap
+      src_camera_id: C5
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 0.8
+      max_travel_time_sec: 2.5
+      allowed_exit_zones: [c5_entry_main]
+      allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c5_inner_overlap]
+      allowed_entry_subzones: [c6_inner_overlap, c6_outer_entry]
+      weak_link_support: false
+      description: Entry-side overlap between the two left cameras.
+    - transition_id: C6_to_C5_overlap
+      src_camera_id: C6
+      dst_camera_id: C5
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.0
+      avg_travel_time_sec: 0.8
+      max_travel_time_sec: 2.5
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c5_entry_main]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
+      allowed_entry_subzones: [c5_inner_overlap]
+      weak_link_support: false
+      description: Reverse overlap from C6 back to C5.
+    - transition_id: C6_to_C3_overlap
+      src_camera_id: C6
+      dst_camera_id: C3
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.5
+      avg_travel_time_sec: 1.8
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c3_followup_main]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
+      allowed_entry_subzones: [c3_overlap_entry]
+      weak_link_support: false
+      description: Main handoff from diagonal entry view into the central follow-up camera.
+    - transition_id: C3_to_C6_overlap
+      src_camera_id: C3
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.5
+      avg_travel_time_sec: 1.8
+      max_travel_time_sec: 4.0
+      allowed_exit_zones: [c3_followup_main]
+      allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c3_overlap_entry]
+      allowed_entry_subzones: [c6_inner_overlap]
+      weak_link_support: false
+      description: Reverse overlap from C3 back to C6.
+    - transition_id: C3_to_C7_overlap
+      src_camera_id: C3
+      dst_camera_id: C7
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 1.0
+      avg_travel_time_sec: 2.8
+      max_travel_time_sec: 6.0
+      allowed_exit_zones: [c3_followup_main]
+      allowed_entry_zones: [c7_followup_main]
+      allowed_exit_subzones: [c3_overlap_entry]
+      allowed_entry_subzones: [c7_overlap_entry]
+      weak_link_support: false
+      description: Follow-up handoff from central plaza view to right-side plaza view.
+    - transition_id: C7_to_C3_overlap
+      src_camera_id: C7
+      dst_camera_id: C3
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 1.0
+      avg_travel_time_sec: 2.8
+      max_travel_time_sec: 6.0
+      allowed_exit_zones: [c7_followup_main]
+      allowed_entry_zones: [c3_followup_main]
+      allowed_exit_subzones: [c7_overlap_entry]
+      allowed_entry_subzones: [c3_overlap_entry]
+      weak_link_support: false
+      description: Reverse overlap from C7 back to C3.
+    - transition_id: C6_to_C7_overlap
+      src_camera_id: C6
+      dst_camera_id: C7
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.5
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.5
+      allowed_exit_zones: [c6_entry_main]
+      allowed_entry_zones: [c7_followup_main]
+      allowed_exit_subzones: [c6_inner_overlap, c6_outer_entry]
+      allowed_entry_subzones: [c7_overlap_entry]
+      weak_link_support: false
+      description: Direct but weaker overlap from diagonal entry to right follow-up camera.
+    - transition_id: C7_to_C6_overlap
+      src_camera_id: C7
+      dst_camera_id: C6
+      relation_type: overlap
+      allowed_relation_types: [overlap]
+      same_area_overlap: true
+      min_travel_time_sec: 0.5
+      avg_travel_time_sec: 2.0
+      max_travel_time_sec: 4.5
+      allowed_exit_zones: [c7_followup_main]
+      allowed_entry_zones: [c6_entry_main]
+      allowed_exit_subzones: [c7_overlap_entry]
+      allowed_entry_subzones: [c6_inner_overlap, c6_outer_entry]
+      weak_link_support: false
+      description: Reverse overlap from C7 back to C6.

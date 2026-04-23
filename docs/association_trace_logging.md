@@ -29,9 +29,14 @@ Each JSONL row corresponds to one observation event and includes:
 - `selected_candidate_id`
 - `relation_type`
 - `transition_rule_used`
+- `source_camera_id`
+- `target_camera_id`
 - `topology_metadata`
 - `time_delta`
+- `observed_delta_sec`
 - `travel_window`
+- `time_distance_to_expected_sec`
+- `topology_support_level`
 - `source_zone_id`
 - `target_zone_id`
 - `zone_valid`
@@ -48,11 +53,20 @@ Each JSONL row corresponds to one observation event and includes:
 - `body_score`
 - `thresholds_used`
 - `margin_used`
+- `acceptance_reason`
 - `decision`
 - `reason_code`
 - `gallery_id_before`
 - `gallery_id_after`
 - `candidate_evaluations`
+
+For the current New Dataset phase, sequential body-only reuse can also log:
+
+- `thresholds_used.topology_supported_accept = true`
+- `thresholds_used.topology_supported_shortfall`
+
+This makes it clear when a candidate was accepted because topology/time/zone/subzone support
+was strong enough to rescue a near-threshold body score without lowering the global threshold.
 
 ## Summary Metrics
 
@@ -70,6 +84,19 @@ Each JSONL row corresponds to one observation event and includes:
 - `subzone_reject_count`
 - `fallback_without_subzone_count`
 
+The current face/body usage summary exported by `run_face_resolution_demo.py` also records:
+
+- `face_embedding_created_count`
+- `face_reject_yaw_count`
+- `face_reject_pitch_count`
+- `face_reject_size_count`
+- `face_reject_camera_disabled_count`
+- `body_tracklet_candidate_crop_count`
+- `body_tracklet_valid_crop_count`
+- `body_tracklet_selected_crop_count`
+- `body_primary_decision_count`
+- `body_only_decision_count`
+
 These metrics are also merged into `face_resolution_summary.json` for the mode-B run.
 
 ## Purpose
@@ -80,3 +107,4 @@ This trace layer is intended for:
 - explaining decisions during thesis demo and defense
 - supporting later dashboard/storage phases without changing the association core again
 - preserving enough zone-aware metadata for a later timeline/dashboard layer
+- explaining whether a failure came from geometry, missing face evidence, or weak body evidence
