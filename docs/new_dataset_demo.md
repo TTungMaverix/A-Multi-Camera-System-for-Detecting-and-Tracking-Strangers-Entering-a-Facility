@@ -11,12 +11,24 @@ Current physical folders:
 - `New Dataset/Camera 1`
 - `New Dataset/Camera 2`
 
-Current pairing convention:
+Current local paired stems:
 
-- `Camera 1/a1.mp4` pairs with `Camera 2/a1.mp4`
-- future clips should keep the same shared-stem rule: `a2`, `b1`, ...
+- `a1`
+- `a2`
+- `a3`
+- `b1`
+
+Current pairing rule:
+
+- `Camera 1/<stem>.mp4` pairs with `Camera 2/<stem>.mp4`
 
 The runtime adapter discovers clip pairs by stem intersection across the two physical camera folders. It does not hardcode the runtime to `a1`.
+
+Current inventory snapshot:
+
+- total paired clips available: `4`
+- paired clips ready for evaluation: `4`
+- missing paired clips to reach target `5`: `1`
 
 ## Logical 4-Camera Demo Expansion
 
@@ -44,6 +56,29 @@ This is a documented demo adapter for scope alignment only.
 
 The point-in-polygon math itself is unchanged. Only the anchor point used before the polygon test is configurable per camera.
 
+## Calibration Reuse
+
+Calibration is tied to the **source camera**, not to individual clips.
+
+That means:
+
+- all clips from `New Dataset/Camera 1` reuse the Camera 1 calibration geometry
+- all clips from `New Dataset/Camera 2` reuse the Camera 2 calibration geometry
+
+This is the correct policy as long as these stay materially unchanged:
+
+- camera position
+- camera angle
+- background geometry
+- resolution / aspect ratio within compatible tolerance
+
+The current calibration reuse audit confirms:
+
+- `a1`, `a2`, `a3`, `b1` all reuse the existing Camera 1 calibration
+- `a1`, `a2`, `a3`, `b1` all reuse the existing Camera 2 calibration
+
+No per-clip redraw is needed right now.
+
 ## Topology
 
 The New Dataset is treated as **non-overlap oriented**.
@@ -51,15 +86,15 @@ The New Dataset is treated as **non-overlap oriented**.
 Association therefore emphasizes:
 
 - reachable camera pairs
-- min/max travel time windows
-- face-first matching
-- unknown profile reuse
+- min/max travel-time windows
+- topology-supported sequential reuse
+- face/body evidence layered on top of map/time constraints
 
 Current default travel-time assumptions:
 
-- `C1 -> C2`: `8s .. 16s`
-- `C2 -> C3`: `8s .. 20s` logical demo continuation
-- `C3 -> C4`: `8s .. 16s`
+- `C1 -> C2`: `5s .. 30s`
+- `C2 -> C3`: `5s .. 30s`
+- `C3 -> C4`: `5s .. 30s`
 
 ## Files
 
@@ -73,13 +108,40 @@ Current default travel-time assumptions:
   - `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`
 - offline demo config:
   - `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
+- inventory runner:
+  - `insightface_demo_assets/runtime/run_new_dataset_inventory.py`
+- per-clip evaluation runner:
+  - `insightface_demo_assets/runtime/run_new_dataset_evaluation.py`
+- body tracklet comparison runner:
+  - `insightface_demo_assets/runtime/run_body_tracklet_evaluation.py`
 
 ## Current Status
 
-This phase prepares the framework so new self-recorded clips can enter the pipeline through configuration.
+This phase does not claim that appearance is already solved. It does claim that the repo now has an honest dataset audit and evaluation harness for the clips that exist locally.
 
-It does not claim:
+Current local behavior:
 
-- that the self-recorded dataset already contains 4 independent physical cameras
-- that the current clip coverage is enough for a full benchmark phase
-- that the Wildtrack benchmark/evaluation assets have been deleted from the repository
+- `a1`:
+  - reuses one unknown across `C1 -> C2 -> C3`
+  - physical `C1 -> C2` still needs topology-supported accept
+- `a2`:
+  - paired and runnable
+  - currently emits `0` entry events
+- `a3`:
+  - current hardest failure case
+  - no cross-camera reuse
+- `b1`:
+  - reuses one unknown across `C1 -> C2 -> C3`
+  - one face embedding was created, but it still did not become a decisive face anchor
+
+Useful commands:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/new_dataset_inventory_phase_current"
+```
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\new_dataset_inventory_phase_current\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\new_dataset_inventory_phase_current\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
+```

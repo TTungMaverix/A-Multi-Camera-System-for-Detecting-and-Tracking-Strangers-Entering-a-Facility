@@ -57,14 +57,23 @@ The event-generation audit now records:
 - `best_shot_subzone_type`
 - `best_shot_frames_after_anchor`
 
-This makes it possible to inspect why a given frame was selected as the event crop.
+The face/body audit now also records:
+
+- `face_candidate_count`
+- `face_best_shot_selected_count`
+- `face_embedding_created_count`
+
+This makes it possible to inspect why a given frame was selected as the event crop and whether a face best shot really produced usable evidence.
 
 ## Current Limitation
 
-On the active `a1` New Dataset smoke:
+On the current local New Dataset evaluation sweep (`a1`, `a2`, `a3`, `b1`):
 
 - `C1` / `C3` are intentionally body-anchor views, not face sources
-- `C2` / `C4` still reject many face attempts by yaw even after best-shot selection
+- most face candidates are still rejected by camera role or yaw before embedding
+- `b1` is the only current local clip that produced:
+  - `face_best_shot_selected_count = 1`
+  - `face_embedding_created_count = 1`
+- even on `b1`, that face evidence did not yet become a decisive cross-camera anchor because there was no strong face gallery reference for the reuse step
 
-That behavior is expected in the current phase. The goal is to reject weak face evidence
-cleanly rather than force embeddings from unsuitable frames.
+That is still an improvement over silent failure: the current phase now makes best-shot selection and rejection explicit, so the remaining blocker is visible as evidence quality and availability, not hidden behavior.
