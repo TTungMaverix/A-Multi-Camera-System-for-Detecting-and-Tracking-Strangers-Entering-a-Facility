@@ -86,6 +86,8 @@ was strong enough to rescue a near-threshold body score without lowering the glo
 
 The current face/body usage summary exported by `run_face_resolution_demo.py` also records:
 
+- `face_candidate_count`
+- `face_best_shot_selected_count`
 - `face_embedding_created_count`
 - `face_reject_yaw_count`
 - `face_reject_pitch_count`
@@ -94,6 +96,8 @@ The current face/body usage summary exported by `run_face_resolution_demo.py` al
 - `body_tracklet_candidate_crop_count`
 - `body_tracklet_valid_crop_count`
 - `body_tracklet_selected_crop_count`
+- `body_tracklet_pooling_mode`
+- `body_tracklet_selected_crop_weights_json`
 - `body_primary_decision_count`
 - `body_only_decision_count`
 

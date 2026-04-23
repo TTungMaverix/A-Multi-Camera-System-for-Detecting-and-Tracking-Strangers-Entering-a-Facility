@@ -1,8 +1,8 @@
 # A Multi-Camera System for Detecting and Tracking Strangers Entering a Facility
 
-Graduation project repository for a multi-camera security pipeline that stays within the original scope:
+Graduation project repository for a multi-camera stranger-tracking pipeline that stays within the thesis scope:
 
-- 4 camera streams
+- 4 camera streams at the system-design level
 - person detection and per-camera multi-object tracking on video
 - inward-direction filtering
 - known-face matching when usable
@@ -12,65 +12,83 @@ Graduation project repository for a multi-camera security pipeline that stays wi
 
 ## Current Active Dataset
 
-The active dataset is now the **self-recorded New Dataset**, not Wildtrack.
+The active dataset is the self-recorded **New Dataset**, not Wildtrack.
 
-Current physical capture status:
+Physical folders:
 
 - `New Dataset/Camera 1`
 - `New Dataset/Camera 2`
 
-Each physical camera folder stores paired clips with the same stem:
+Current local paired clips:
 
-- `Camera 1/a1.mp4`
-- `Camera 2/a1.mp4`
-- later pairs should follow the same rule: `a2`, `b1`, ...
+- `a1`
+- `a2`
+- `a3`
+- `b1`
 
-Meaning of a pair:
+The runtime pairs clips by shared stem across the two physical camera folders, for example:
 
-- `Camera 1/<stem>`: stranger approaching / entering the facility door
-- `Camera 2/<stem>`: the same stranger appearing inside after crossing the door
+- `Camera 1/a1.mp4` <-> `Camera 2/a1.mp4`
+- `Camera 1/a2.mp4` <-> `Camera 2/a2.mp4`
 
-The thesis scope still stays at 4-camera demonstration level. Because the current self-recorded dataset only has **2 physical cameras**, the repository now uses a **logical 4-camera demo expansion**:
+Future clips should keep the same shared-stem rule, for example `a4`, `b2`, and so on.
+
+The thesis scope still stays at 4-camera demonstration level. Because the current active dataset only has **2 physical cameras**, the repo uses an explicit logical 4-camera expansion:
 
 - `C1` -> physical Camera 1
 - `C2` -> physical Camera 2
 - `C3` -> logical delayed replay of physical Camera 1
 - `C4` -> logical delayed replay of physical Camera 2
 
-This is documented explicitly as a demo adapter for scope alignment. It is **not** presented as 4 independent physical cameras.
+This is a documented demo adapter. It is **not** presented as 4 independent physical cameras.
 
-## What Stays Unchanged
+## Calibration Reuse Policy
 
-The phase that migrates away from Wildtrack does **not** rewrite the core pipeline.
+Calibration is treated as **per source camera**, not per clip.
 
-The runtime order is still:
+That means:
+
+- all clips in `New Dataset/Camera 1` reuse the Camera 1 calibration geometry
+- all clips in `New Dataset/Camera 2` reuse the Camera 2 calibration geometry
+
+This is the correct policy when the camera source is unchanged:
+
+- same camera position
+- same camera angle
+- same background geometry
+- same normalized coordinate space
+
+The current inventory audit confirms that all local clips `a1`, `a2`, `a3`, and `b1` can reuse the existing calibration. There is no need to redraw ROI/line/zone/subzone per clip unless the source-camera geometry changes materially.
+
+## Current Pipeline
+
+The runtime order stays unchanged:
 
 `Detect -> Track -> Filter IN direction -> Match Face -> Manage Unknown ID -> Cross-camera Association`
 
-The core logic remains configuration-driven and separate from dataset profiles:
+The repo still keeps the same architectural principles:
 
-- IoU
-- cosine similarity
-- travel-time logic
-- point-in-polygon
-- direction logic
-- association decision logic
+- quality gate before evidence use
+- topology / travel-time / zone / subzone candidate filtering
+- modality-aware face/body evidence
+- gallery lifecycle with TTL and top-k references
+- explicit accept / reject / create / defer logic
+- reason-coded association logs
 
-## What Changed In The Current Phase
+## What This Phase Changed
 
-This phase does not add a new product surface. It closes the algorithmic gaps that were
-still masking weak association quality:
+This phase does not add a new product surface. It focuses on dataset-aware evaluation coverage and stronger appearance evaluation.
 
-- `sequential.body_primary` is restored to `0.72`; the repo no longer relies on the earlier
-  `0.55` shortcut
-- body ReID for cross-camera reuse is now **tracklet-based**, not single-frame-based
-- body crops are filtered and normalized before ReID embedding extraction
-- high-angle cameras (`C1`, `C3`) are now treated as **event/body anchors**, not face sources
-- eye-level cameras (`C2`, `C4`) remain face candidates, but only through a strict
-  best-shot gate with bbox-size and yaw/pitch limits
-- topology / travel-time / zone / subzone are now an explicit decision signal for
-  near-threshold sequential reuse, instead of being only a silent hard filter
-- direction validation and body-tracklet comparison now have standalone scripts and artifacts
+What changed:
+
+- added a dataset inventory harness for the local self-recorded clips
+- added a calibration-reuse audit so new clips can reuse source-camera calibration without manual duplication
+- extended evaluation from a single clip to all currently paired local clips
+- kept `sequential.body_primary = 0.72` with no threshold rollback
+- upgraded body tracklet pooling from mean-only baseline to **quality-aware pooling**
+- benchmarked a stronger body extractor variant side-by-side (`osnet_x1_0`) against the current default (`osnet_x0_25`)
+- kept topology/time as a strong signal, but now reports appearance-only vs topology-supported outcomes explicitly
+- kept face gate strict, while auditing whether face-friendly cameras actually yield usable best shots
 
 ## Current Important Configs
 
@@ -83,40 +101,24 @@ Active New Dataset configs:
 - `insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml`
 - `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
 
-Legacy Wildtrack configs remain in the repo as reference/regression assets, but they are no longer the active default narrative.
+Important current policy keys:
 
-The most important policy values in the current phase are:
-
-- `association_policy.new_dataset_demo.yaml`
-  - `decision_policy.relation_thresholds.sequential.body_primary = 0.72`
-  - `decision_policy.topology_supported_accept.enabled = true`
-  - `quality_gate.min_face_bbox_width / height / area`
-  - `body_reid.tracklet_pooling_*`
-- `dataset_profile.new_dataset_demo.yaml`
-  - `face_capture_mode`
-  - `anchor_point_mode`
+- `body_reid.extractor_name`
+- `body_reid.tracklet_pooling_mode`
+- `body_reid.tracklet_pooling_quality_weights`
+- `decision_policy.relation_thresholds.sequential.body_primary`
+- `decision_policy.topology_supported_accept`
+- `quality_gate.min_face_bbox_width / height / area`
+- `dataset_profile.cameras[].anchor_point_mode`
+- `dataset_profile.cameras[].face_capture_mode`
 
 ## Default Commands
 
-Default current offline demo:
+Dataset inventory + calibration reuse audit:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_multicam_identity_demo.ps1"
-```
-
-Explicit New Dataset logical 4-camera demo:
-
-```cmd
-cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
-```
-
-Direct Python invocation:
-
-```cmd
-cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/new_dataset_inventory_phase_current"
 ```
 
 Independent direction validation:
@@ -126,18 +128,32 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_direction_validation.py" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --output-root "outputs/evaluations/direction_validation_tracklet_phase"
 ```
 
-Body tracklet comparison against an offline run:
+Per-clip evaluation across all currently paired local clips:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\new_dataset_inventory_phase_current\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\new_dataset_inventory_phase_current\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
 ```
 
-Timeline + calibration server against the current New Dataset output root:
+Body tracklet comparison against an existing run root:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet_phase_current"
+```
+
+Current offline smoke demo:
+
+```cmd
+cd /d "<repo-root>"
+powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
+```
+
+Direct offline orchestrator run:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
 ```
 
 Regression tests:
@@ -149,55 +165,82 @@ cd /d "<repo-root>"
 
 ## Current Validation Snapshot
 
-The current phase has been validated on the available self-recorded pair `a1`:
+Current local coverage from `outputs/evaluations/new_dataset_inventory_phase_current/dataset_inventory.json`:
 
-- direction validation: `5 / 5` cases passed
-- body tracklet evaluation:
-  - average old single-frame body score: `0.6105`
-  - average new tracklet body score: `0.6298`
-- full offline smoke (`new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4`)
-  - `TOTAL_EVENTS = 3`
-  - `UNIQUE_UNKNOWN_IDS = 1`
-  - `UNKNOWN_REUSE_COUNT = 2`
-  - `handoff_edge_count = 2`
-  - identity sequence reused across `C1 -> C2 -> C3`
+- total paired clips available: `4`
+- paired clips ready for evaluation: `4`
+- missing paired clips to reach the supervisor target of `5`: `1`
+- clips flagged as multi-subject-likely by the inventory harness: `4`
+- harder scenarios flagged by the inventory harness: `a2`, `a3`, `b1`
+
+Cross-clip summary from `outputs/evaluations/new_dataset_quality_pooling_phase_current/overall_evaluation_summary.json`:
+
+- evaluated clips: `a1`, `a2`, `a3`, `b1`
+- `appearance_only_pass_count = 2`
+- `topology_supported_pass_count = 2`
+- `topology_rescued_count = 2`
+- `unknown_reuse_count = 4`
+- `create_new_unknown_count = 5`
+- `face_candidate_count = 12`
+- `face_best_shot_selected_count = 1`
+- `face_embedding_created_count = 1`
+
+Body appearance comparison on clips that actually produced cross-camera comparisons:
+
+- average `osnet_mean` body score: `0.5942`
+- average `osnet_quality_aware` body score: `0.5939`
+- average `osnet_x1_0_quality_aware` body score: `0.5719`
 
 Important interpretation:
 
-- reuse now succeeds without lowering `body_primary`
-- the deciding path is **strong topology/time/zone/subzone support + tracklet-based body evidence**
-- face still contributes audit and rejection reasons, but it does not yet create usable
-  embeddings on the current `a1` smoke
+- the true physical `C1 -> C2` same-identity cases are still below the global sequential body threshold of `0.72`
+  - `a1`: `0.6265`
+  - `b1`: `0.6467`
+- those cases are currently accepted by **topology-supported sequential reuse**, not by appearance alone
+- appearance-only success currently happens on the easier logical copy transitions, not yet on the physical cross-view pair
+- quality-aware pooling is more principled and better instrumented than mean-only pooling, but on the current local clips it is **not yet a large gain**
+- the stronger OSNet x1.0 benchmark is not currently better on average than the default extractor
+- `b1` created one face embedding on a face-friendly camera, but it still did not become a decisive identity anchor
+- `a2` is a real blocker clip: it is paired and runnable, but it currently produces `0` entry events under the present geometry/direction/event logic
 
 ## Output Artifacts
 
 Current phase artifacts are written under:
 
+- `outputs/evaluations/new_dataset_inventory_phase_current/`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/`
 - `outputs/evaluations/direction_validation_tracklet_phase/`
 - `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/`
-- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet/`
+- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet_phase_current/`
 
 The most useful files are:
 
-- `summaries/face_resolution_summary.json`
-- `summaries/face_body_usage_summary.json`
-- `summaries/cross_camera_handoff_summary.json`
-- `runtime/association_logs/association_decisions.jsonl`
-- `evaluation/body_tracklet/body_tracklet_comparison_summary.json`
+- `outputs/evaluations/new_dataset_inventory_phase_current/dataset_inventory.json`
+- `outputs/evaluations/new_dataset_inventory_phase_current/dataset_inventory.md`
+- `outputs/evaluations/new_dataset_inventory_phase_current/calibration_reuse_summary.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/overall_evaluation_summary.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/appearance_vs_topology_summary.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/face_branch_summary.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/qualitative_case_notes.md`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/per_clip_evaluation/a1.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/per_clip_evaluation/a2.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/per_clip_evaluation/a3.json`
+- `outputs/evaluations/new_dataset_quality_pooling_phase_current/per_clip_evaluation/b1.json`
+- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet_phase_current/body_tracklet_comparison_summary.json`
+- `outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/runtime/association_logs/association_decisions.jsonl`
 
 ## Current Constraints
 
-- the active self-recorded dataset currently has only 2 physical cameras
-- clip coverage is still very small
-- only `a1` is available locally right now; `a2` and `b1` are not present yet, so this phase
-  cannot honestly report quantitative results for those clips
-- logical `C3/C4` are explicit demo replays derived from `C1/C2`
-- Wildtrack evaluation utilities and benchmark assets still remain in the repo for legacy comparison
-- face embeddings are still absent on the current `a1` smoke because the usable face shots are
-  rejected by camera-role policy or yaw limits
-- the current topology-supported accept path is intended for strong sequential cases with
-  near-threshold body evidence; it is not a license to weaken map constraints or lower
-  thresholds globally
+- the active self-recorded dataset still has only `2` physical cameras
+- local paired coverage is `4` clips, not the target `5`
+- the multi-subject and hard-scenario labels currently come from automated inventory sampling, not hand-labeled GT
+- body appearance on the true physical `C1 -> C2` pair is still weaker than required for appearance-only acceptance at `0.72`
+- topology rescue is therefore still necessary on `a1` and `b1`
+- `a3` remains the strongest current failure case for cross-camera appearance robustness
+- `a2` currently produces no entry events, so it blocks meaningful association evaluation for that pair
+- usable face evidence is still rare on the current clips even though the branch is now audited correctly
+- logical `C3/C4` remain explicit demo expansions from the 2 physical cameras
+- Wildtrack benchmark assets still remain in the repo for legacy comparison and regression checks
 - this repository is a thesis prototype, not a production CCTV system
 
 ## Documentation
@@ -209,4 +252,5 @@ The most useful files are:
 - [docs/manual_scene_calibration.md](docs/manual_scene_calibration.md)
 - [docs/association_runtime_config.md](docs/association_runtime_config.md)
 - [docs/association_trace_logging.md](docs/association_trace_logging.md)
+- [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 - [docs/quantitative_evaluation.md](docs/quantitative_evaluation.md)

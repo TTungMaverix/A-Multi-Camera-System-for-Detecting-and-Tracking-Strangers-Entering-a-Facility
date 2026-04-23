@@ -71,9 +71,18 @@ DEFAULT_ASSOCIATION_POLICY = {
         "gray_world_normalization": False,
         "tracklet_pooling_max_candidates": 10,
         "tracklet_pooling_top_k": 5,
+        "tracklet_pooling_mode": "mean",
         "tracklet_pooling_min_blur_score": 25.0,
         "tracklet_pooling_min_bbox_area": 1800.0,
         "tracklet_pooling_min_relative_bbox_area": 0.55,
+        "tracklet_pooling_quality_weights": {
+            "blur": 0.45,
+            "bbox_area": 0.25,
+            "stability": 0.2,
+            "contrast": 0.1,
+        },
+        "tracklet_pooling_quality_weight_exponent": 2.0,
+        "tracklet_pooling_weight_floor": 0.05,
     },
     "gallery_lifecycle": {
         "top_k_face_refs": 3,

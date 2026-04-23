@@ -27,6 +27,12 @@ def _laplacian_variance(image):
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+def _contrast_score(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    stddev = float(gray.std())
+    return min(stddev, 64.0) / 64.0
+
+
 def _apply_color_normalization(image, cfg):
     normalized = image.copy()
     if bool(cfg.get("clahe_enabled", True)):
@@ -180,13 +186,51 @@ def get_body_reid_extractor(policy=None):
     return extractor
 
 
-def _crop_quality_score(blur_score, bbox_area, reference_area):
+def _stability_score(bbox_area, median_bbox_area):
+    if median_bbox_area <= 1e-6:
+        return 0.0
+    deviation_ratio = abs(float(bbox_area) - float(median_bbox_area)) / float(median_bbox_area)
+    return max(0.0, 1.0 - min(deviation_ratio, 1.0))
+
+
+def _crop_quality_components(blur_score, bbox_area, reference_area, median_bbox_area, contrast_score):
     blur_component = min(float(blur_score), 300.0) / 300.0
-    if reference_area <= 1e-6:
-        area_component = 0.0
-    else:
-        area_component = min(float(bbox_area) / float(reference_area), 1.0)
-    return round((0.65 * blur_component) + (0.35 * area_component), 4)
+    area_component = min(float(bbox_area) / float(reference_area), 1.0) if reference_area > 1e-6 else 0.0
+    stability_component = _stability_score(bbox_area, median_bbox_area)
+    contrast_component = min(max(float(contrast_score), 0.0), 1.0)
+    return {
+        "blur_component": round(blur_component, 4),
+        "area_component": round(area_component, 4),
+        "stability_component": round(stability_component, 4),
+        "contrast_component": round(contrast_component, 4),
+    }
+
+
+def _crop_quality_score(components, cfg):
+    weights = cfg.get("tracklet_pooling_quality_weights", {}) or {}
+    blur_weight = float(weights.get("blur", 0.45))
+    area_weight = float(weights.get("bbox_area", 0.25))
+    stability_weight = float(weights.get("stability", 0.2))
+    contrast_weight = float(weights.get("contrast", 0.1))
+    total_weight = max(blur_weight + area_weight + stability_weight + contrast_weight, 1e-9)
+    score = (
+        (blur_weight * float(components.get("blur_component", 0.0)))
+        + (area_weight * float(components.get("area_component", 0.0)))
+        + (stability_weight * float(components.get("stability_component", 0.0)))
+        + (contrast_weight * float(components.get("contrast_component", 0.0)))
+    ) / total_weight
+    return round(score, 4)
+
+
+def _quality_aware_weights(candidates, cfg):
+    floor = max(0.0, min(1.0, float(cfg.get("tracklet_pooling_weight_floor", 0.05))))
+    exponent = max(0.1, float(cfg.get("tracklet_pooling_quality_weight_exponent", 2.0)))
+    raw_weights = []
+    for candidate in candidates:
+        quality_score = max(float(candidate.get("quality_score", 0.0)), 0.0)
+        raw_weights.append(max(floor, quality_score ** exponent))
+    total = max(sum(raw_weights), 1e-9)
+    return [round(weight / total, 6) for weight in raw_weights]
 
 
 def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_reid_policy=None):
@@ -207,6 +251,8 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
         "tracklet_selected_frames": [],
         "tracklet_selected_relative_secs": [],
         "tracklet_embeddings": [],
+        "tracklet_selected_crop_weights": [],
+        "tracklet_pooling_mode": str(cfg.get("tracklet_pooling_mode", "mean") or "mean"),
         "tracklet_pooling_strategy": "top_k_mean_pooling",
         "tracklet_quality_score": 0.0,
         "tracklet_crop_diagnostics": [],
@@ -222,6 +268,8 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
     min_bbox_area = float(cfg.get("tracklet_pooling_min_bbox_area", 1800.0))
     min_relative_bbox_area = float(cfg.get("tracklet_pooling_min_relative_bbox_area", 0.55))
     min_blur_score = float(cfg.get("tracklet_pooling_min_blur_score", 25.0))
+    bbox_areas = [float(row.get("bbox_area") or 0.0) for row in rows if float(row.get("bbox_area") or 0.0) > 0.0]
+    median_bbox_area = float(np.median(bbox_areas)) if bbox_areas else reference_bbox_area
 
     for row in rows[:max_candidates]:
         crop_path = Path(row.get("body_crop_path", ""))
@@ -268,21 +316,31 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
             diagnostics.append(diagnostic)
             continue
         blur_score = _laplacian_variance(image)
+        contrast_score = _contrast_score(image)
         diagnostic["blur_score"] = round(blur_score, 4)
         if blur_score < min_blur_score:
             diagnostic["reject_reason"] = "blur_reject"
             reject_counts["blur_reject"] += 1
             diagnostics.append(diagnostic)
             continue
-        quality_score = _crop_quality_score(blur_score, bbox_area or float(width * height), reference_bbox_area or float(width * height))
+        components = _crop_quality_components(
+            blur_score,
+            bbox_area or float(width * height),
+            reference_bbox_area or float(width * height),
+            median_bbox_area or float(width * height),
+            contrast_score,
+        )
+        quality_score = _crop_quality_score(components, cfg)
         diagnostic["accepted"] = True
         diagnostic["quality_score"] = quality_score
+        diagnostic["quality_components"] = components
         diagnostics.append(diagnostic)
         valid_candidates.append(
             {
                 "row": row,
                 "image": image,
                 "quality_score": quality_score,
+                "quality_components": components,
                 "crop_path": crop_path,
             }
         )
@@ -305,21 +363,23 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
     top_k = max(1, int(cfg.get("tracklet_pooling_top_k", 5)))
     selected_candidates = valid_candidates[:top_k]
     embeddings = []
+    selected_embedding_candidates = []
     for candidate in selected_candidates:
         extract_result = extractor.extract_array(candidate["image"], source_path=str(candidate["crop_path"]))
         if extract_result.get("embedding") is None:
             reject_counts[extract_result.get("status") or "extract_fail"] += 1
             continue
         embeddings.append(extract_result["embedding"])
+        selected_embedding_candidates.append(candidate)
     result["tracklet_reject_counts"] = dict(sorted(reject_counts.items()))
     result["tracklet_valid_crop_count"] = len(valid_candidates)
     result["tracklet_selected_crop_count"] = len(embeddings)
-    result["tracklet_selected_crop_paths"] = [str(candidate["crop_path"]) for candidate in selected_candidates]
-    result["tracklet_selected_frames"] = [int(candidate["row"].get("frame_id") or 0) for candidate in selected_candidates]
-    result["tracklet_selected_relative_secs"] = [float(candidate["row"].get("relative_sec") or 0.0) for candidate in selected_candidates]
+    result["tracklet_selected_crop_paths"] = [str(candidate["crop_path"]) for candidate in selected_embedding_candidates]
+    result["tracklet_selected_frames"] = [int(candidate["row"].get("frame_id") or 0) for candidate in selected_embedding_candidates]
+    result["tracklet_selected_relative_secs"] = [float(candidate["row"].get("relative_sec") or 0.0) for candidate in selected_embedding_candidates]
     result["tracklet_embeddings"] = [np.asarray(item, dtype=np.float32) for item in embeddings]
     result["tracklet_quality_score"] = round(
-        float(np.mean([candidate["quality_score"] for candidate in selected_candidates])),
+        float(np.mean([candidate["quality_score"] for candidate in selected_embedding_candidates])) if selected_embedding_candidates else 0.0,
         4,
     )
     if not embeddings:
@@ -327,7 +387,24 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
         result["message"] = "tracklet_embedding_failed"
         return result
 
-    pooled = _normalize(np.mean(np.stack(embeddings, axis=0), axis=0))
+    pooling_mode = str(cfg.get("tracklet_pooling_mode", "mean") or "mean").strip().lower()
+    if pooling_mode == "quality_aware":
+        weights = _quality_aware_weights(selected_embedding_candidates, cfg)
+        pooled = np.sum(
+            [
+                float(weight) * np.asarray(embedding, dtype=np.float32)
+                for weight, embedding in zip(weights, embeddings)
+            ],
+            axis=0,
+        )
+        result["tracklet_selected_crop_weights"] = weights
+        result["tracklet_pooling_strategy"] = "quality_aware_weighted_pooling"
+    else:
+        pooled = np.mean(np.stack(embeddings, axis=0), axis=0)
+        uniform_weight = round(1.0 / float(len(embeddings)), 6)
+        result["tracklet_selected_crop_weights"] = [uniform_weight for _ in embeddings]
+        result["tracklet_pooling_strategy"] = "top_k_mean_pooling"
+    pooled = _normalize(pooled)
     result["status"] = "ok"
     result["embedding"] = pooled.astype(np.float32)
     result["message"] = "ok_tracklet_body_reid"

@@ -97,3 +97,44 @@ def test_tracklet_body_representation_rejects_small_and_unstable_crops(tmp_path)
     assert result["tracklet_selected_crop_count"] == 1
     assert result["tracklet_reject_counts"]["too_small"] >= 1
     assert result["tracklet_reject_counts"]["bbox_unstable"] >= 1
+
+
+def test_quality_aware_pooling_assigns_non_uniform_weights(tmp_path):
+    extractor = FakeBodyExtractor()
+    sharp_large = tmp_path / "sharp_large.png"
+    sharp_medium = tmp_path / "sharp_medium.png"
+    blurred_small = tmp_path / "blurred_small.png"
+
+    _write_image(sharp_large, _pattern_image(width=72, height=160, brightness=170))
+    _write_image(sharp_medium, _pattern_image(width=72, height=160, brightness=150))
+    blurred = cv2.GaussianBlur(_pattern_image(width=72, height=160, brightness=130), (15, 15), 0)
+    _write_image(blurred_small, blurred)
+
+    rows = [
+        {"body_crop_path": str(sharp_large), "bbox_area": 9000, "frame_id": 1, "relative_sec": 0.1},
+        {"body_crop_path": str(sharp_medium), "bbox_area": 7800, "frame_id": 2, "relative_sec": 0.2},
+        {"body_crop_path": str(blurred_small), "bbox_area": 6200, "frame_id": 3, "relative_sec": 0.3},
+    ]
+    result = build_tracklet_body_representation(
+        rows,
+        body_reid_runtime=extractor,
+        body_reid_policy={
+            "tracklet_pooling_mode": "quality_aware",
+            "tracklet_pooling_top_k": 3,
+            "tracklet_pooling_min_blur_score": 0.0,
+            "tracklet_pooling_quality_weights": {
+                "blur": 0.45,
+                "bbox_area": 0.25,
+                "stability": 0.2,
+                "contrast": 0.1,
+            },
+            "tracklet_pooling_quality_weight_exponent": 2.0,
+            "tracklet_pooling_weight_floor": 0.05,
+        },
+    )
+
+    assert result["status"] == "ok"
+    assert result["tracklet_pooling_strategy"] == "quality_aware_weighted_pooling"
+    assert len(result["tracklet_selected_crop_weights"]) == 3
+    assert abs(sum(result["tracklet_selected_crop_weights"]) - 1.0) < 1e-5
+    assert len(set(result["tracklet_selected_crop_weights"])) > 1

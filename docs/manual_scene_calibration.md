@@ -1,6 +1,6 @@
 # Manual Scene Calibration
 
-Manual ROI and scene calibration is now the required runtime path for this repository.
+Manual ROI and scene calibration is the required runtime path for this repository.
 
 The old auto/inferred ROI flow is deprecated for runtime use and is no longer allowed to silently drive event creation.
 
@@ -10,48 +10,69 @@ The previous defaulted ROI/zone behavior was too loose for:
 
 - stable `IN` event creation
 - correct zone/subzone assignment
-- overlap-aware cross-camera association
+- map-aware cross-camera association
 - compute reduction in the live path
 
-This phase replaces that with an explicit scene calibration file that the runtime must load before offline or live event generation.
+The current runtime therefore requires an explicit scene calibration file before offline or live event generation.
 
-## Config File
+## Active Config File
 
-Current demo calibration:
+Current active New Dataset calibration:
 
-- `insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack.json`
+- `insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml`
 
-It stores normalized coordinates for:
+Legacy Wildtrack calibration files still exist for regression/reference, but they are not the active default dataset path.
+
+The active calibration stores normalized coordinates for:
 
 - `processing_roi`
 - `entry_line`
 - `zones`
 - `subzones`
 - direction filter history settings
+- per-camera anchor point mode
 
-Coordinates are normalized to frame width and height so the same file can be reloaded on preview frames and runtime feeds.
+Coordinates are normalized to frame width and height so the same file can be reused across clips from the same source camera.
+
+## Calibration Reuse By Source Camera
+
+For the active self-recorded dataset, calibration should be reused by **source camera**, not redrawn per clip.
+
+Current rule:
+
+- all clips in `New Dataset/Camera 1` reuse the Camera 1 calibration geometry
+- all clips in `New Dataset/Camera 2` reuse the Camera 2 calibration geometry
+
+This is the correct behavior when these remain materially unchanged:
+
+- camera position
+- camera angle
+- background geometry
+- normalized coordinate space / compatible aspect ratio
+
+Current inventory audit confirms that local clips `a1`, `a2`, `a3`, and `b1` all reuse the existing calibration successfully.
 
 ## Runtime Behavior
 
-Offline and live entrypoints now require manual calibration:
+Offline and live entrypoints require manual calibration:
 
 - offline: `insightface_demo_assets/runtime/run_offline_multicam_pipeline.py`
-- live: `insightface_demo_assets/runtime/run_live_multicam_demo.py`
-- face-resolution compatibility path: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
+- live compatibility path: `insightface_demo_assets/runtime/run_face_resolution_demo.py`
+- demo server / preview path: `insightface_demo_assets/runtime/run_live_event_demo_server.py`
 
 If the manual calibration config is missing or invalid:
 
 - runtime stops with a clear error
 - the old bad ROI fallback is not used
 
-The web calibration tool is the only preview-oriented exception:
+The calibration UI is the only preview-oriented exception:
 
 - it may open in preview mode and let you draw/save calibration
-- but runtime ingestion still requires a valid saved config
+- runtime ingestion still requires a valid saved config
 
 ## Calibration UI
 
-The existing live demo server now also serves:
+The existing live demo server also serves:
 
 - `/calibration.html`
 
@@ -88,9 +109,9 @@ Direction metadata is written into event audit rows, for example:
 
 ## ROI Masking
 
-The live pipeline now uses the calibrated `processing_roi` as a practical mask/filter:
+The pipeline uses the calibrated `processing_roi` as a practical mask/filter:
 
-- mask outside the polygon before lightweight detection
+- optionally mask outside the polygon before detection
 - keep point-in-polygon filtering on emitted detections/tracks
 
 This reduces wasted compute outside the protected region without changing the association core.
