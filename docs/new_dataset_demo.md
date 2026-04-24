@@ -122,26 +122,40 @@ This phase does not claim that appearance is already solved. It does claim that 
 Current local behavior:
 
 - `a1`:
-  - reuses one unknown across `C1 -> C2 -> C3`
-  - physical `C1 -> C2` still needs topology-supported accept
+  - keeps a single unknown chain across `C1 -> C2 -> C3 -> C4`
+  - physical `C1 -> C2` still needs topology-supported accept at `0.6422`
 - `a2`:
   - paired and runnable
-  - currently emits `0` entry events
+  - no longer dies at `TOTAL_EVENTS = 0`
+  - now emits `4` entry events recovered by the late-start inside-entry fallback
+  - still fails cross-camera reuse because the recovered sequential body scores remain around `0.6001 .. 0.6007`
 - `a3`:
   - current hardest failure case
   - no cross-camera reuse
+  - traditional CV preprocessing helps, but best score still only reaches `0.58`
 - `b1`:
-  - reuses one unknown across `C1 -> C2 -> C3`
-  - one face embedding was created, but it still did not become a decisive face anchor
+  - keeps a single unknown chain across `C1 -> C2 -> C3 -> C4`
+  - creates `2` face embeddings on the face-friendlier path
+  - physical `C1 -> C2` still needs topology-supported accept at `0.6245`
 
 Useful commands:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/new_dataset_inventory_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/a2_a3_cv_phase_inventory"
 ```
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\new_dataset_inventory_phase_current\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\new_dataset_inventory_phase_current\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current" --baseline-output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
+```
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_pair_debug.py" --pipeline-config ".\outputs\evaluations\a2_a3_cv_phase_current\tmp_phase_pipeline.yaml" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a2" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a2_debug" --pair-id a2
+```
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_a3_hard_case_analysis.py" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a3" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a3_hard_case" --pair-id a3 --association-policy-config ".\insightface_demo_assets\runtime\config\association_policy.new_dataset_demo.yaml"
 ```

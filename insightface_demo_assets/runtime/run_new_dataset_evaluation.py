@@ -256,6 +256,51 @@ def aggregate_overall(per_clip_rows):
     return overall
 
 
+def _clip_regression_metrics(clip_row):
+    appearance = clip_row.get("appearance_vs_topology", {}) or {}
+    records = list(appearance.get("records", []) or [])
+    max_body_score = max((float(record.get("appearance_only_body_score", 0.0) or 0.0) for record in records), default=0.0)
+    return {
+        "total_event_count": int((clip_row.get("identity_summary", {}) or {}).get("total_event_count", 0)),
+        "unknown_reuse_count": int((clip_row.get("identity_summary", {}) or {}).get("unknown_reuse_count", 0)),
+        "topology_rescued_count": int(appearance.get("topology_rescued_count", 0)),
+        "appearance_only_max_body_score": round(float(max_body_score), 4),
+    }
+
+
+def build_regression_summary(per_clip_rows, baseline_output_dir: Path | None = None):
+    baseline_output_dir = Path(baseline_output_dir).resolve() if baseline_output_dir else None
+    baseline_rows = {}
+    if baseline_output_dir and baseline_output_dir.exists():
+        baseline_per_clip_dir = baseline_output_dir / "per_clip_evaluation"
+        if baseline_per_clip_dir.exists():
+            for path in baseline_per_clip_dir.glob("*.json"):
+                try:
+                    payload = load_json(path)
+                except Exception:
+                    continue
+                baseline_rows[str(payload.get("pair_id", path.stem))] = payload
+    per_clip_summary = {}
+    for clip_row in per_clip_rows:
+        pair_id = clip_row["pair_id"]
+        current_metrics = _clip_regression_metrics(clip_row)
+        baseline_metrics = _clip_regression_metrics(baseline_rows[pair_id]) if pair_id in baseline_rows else {}
+        per_clip_summary[pair_id] = {
+            "before": baseline_metrics,
+            "after": current_metrics,
+            "delta": {
+                key: round(float(current_metrics.get(key, 0.0)) - float(baseline_metrics.get(key, 0.0)), 4)
+                for key in current_metrics.keys()
+            }
+            if baseline_metrics
+            else {},
+        }
+    return {
+        "baseline_output_dir": str(baseline_output_dir) if baseline_output_dir else "",
+        "per_clip": per_clip_summary,
+    }
+
+
 def write_case_notes(output_path: Path, per_clip_rows, inventory_payload=None):
     lines = []
     lines.append("# Qualitative Case Notes")
@@ -306,6 +351,7 @@ def main():
         "--output-dir",
         default="outputs/evaluations/new_dataset_quality_pooling_phase_current",
     )
+    parser.add_argument("--baseline-output-dir", default="")
     parser.add_argument("--pair-id", action="append", default=[])
     args = parser.parse_args()
 
@@ -413,6 +459,10 @@ def main():
     )
     save_json(output_dir / "appearance_vs_topology_summary.json", appearance_vs_topology_summary)
     save_json(output_dir / "face_branch_summary.json", face_branch_summary)
+    save_json(
+        output_dir / "regression_summary.json",
+        build_regression_summary(per_clip_rows, baseline_output_dir=args.baseline_output_dir or None),
+    )
     write_case_notes(output_dir / "qualitative_case_notes.md", per_clip_rows, inventory_payload=inventory_payload)
 
     print(f"EVALUATED_CLIPS={len(per_clip_rows)}")

@@ -3,7 +3,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from association_core.body_reid import build_tracklet_body_representation
+from association_core.body_reid import (
+    build_tracklet_body_representation,
+    match_histogram_to_reference,
+    preprocess_body_crop,
+    shrink_body_crop,
+)
 
 
 def _write_image(path: Path, image):
@@ -138,3 +143,43 @@ def test_quality_aware_pooling_assigns_non_uniform_weights(tmp_path):
     assert len(result["tracklet_selected_crop_weights"]) == 3
     assert abs(sum(result["tracklet_selected_crop_weights"]) - 1.0) < 1e-5
     assert len(set(result["tracklet_selected_crop_weights"])) > 1
+
+
+def test_shrink_body_crop_reduces_background_margins():
+    image = np.zeros((100, 50, 3), dtype=np.uint8)
+    image[:, :] = (10, 20, 30)
+    shrunk = shrink_body_crop(image, 0.1)
+
+    assert shrunk.shape[0] == 80
+    assert shrunk.shape[1] == 40
+
+
+def test_gray_world_preprocessing_rebalances_channels():
+    image = np.zeros((40, 20, 3), dtype=np.uint8)
+    image[:, :] = (40, 120, 200)
+    processed = preprocess_body_crop(
+        image,
+        {
+            "preprocessing_mode": "gray_world",
+            "bbox_shrink_ratio": 0.0,
+            "clahe_enabled": False,
+            "gray_world_normalization": True,
+        },
+    )
+    means = processed.mean(axis=(0, 1))
+
+    assert max(means) - min(means) < 10.0
+
+
+def test_histogram_match_moves_source_toward_reference_distribution():
+    source = np.zeros((40, 20, 3), dtype=np.uint8)
+    source[:, :] = (30, 60, 90)
+    reference = np.zeros((40, 20, 3), dtype=np.uint8)
+    reference[:, :] = (180, 150, 120)
+
+    matched = match_histogram_to_reference(source, reference)
+
+    source_mean_gap = np.abs(source.mean(axis=(0, 1)) - reference.mean(axis=(0, 1))).mean()
+    matched_mean_gap = np.abs(matched.mean(axis=(0, 1)) - reference.mean(axis=(0, 1))).mean()
+
+    assert matched_mean_gap < source_mean_gap

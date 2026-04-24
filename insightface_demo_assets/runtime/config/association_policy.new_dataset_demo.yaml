@@ -50,10 +50,12 @@ association_policy:
     input_height: 256
     min_crop_width: 20
     min_crop_height: 40
-    clahe_enabled: true
+    clahe_enabled: false
     clahe_clip_limit: 2.0
     clahe_tile_grid_size: 8
-    gray_world_normalization: false
+    gray_world_normalization: true
+    preprocessing_mode: gray_world
+    bbox_shrink_ratio: 0.1
     tracklet_pooling_max_candidates: 10
     tracklet_pooling_top_k: 5
     tracklet_pooling_mode: quality_aware

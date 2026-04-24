@@ -133,25 +133,129 @@ def find_direction_anchor(records, camera_id, camera_cfg, transition_map, direct
     in_side_point = camera_cfg.get("in_side_point") or []
     if not line or not in_side_point:
         return None, "missing_manual_entry_line"
+    direction_windows = build_direction_windows(records, camera_id, camera_cfg, transition_map, direction_cfg)
+    for window in direction_windows:
+        result = window["direction_result"]
+        if result["decision"] == "IN":
+            return {
+                "anchor_index": window["anchor_index"],
+                "anchor_row": window["anchor_row"],
+                "window_start_index": window["window_start_index"],
+                "window_rows": window["window_rows"],
+                "direction_result": result,
+            }, window["anchor_reason"]
+    return None, "filtered_by_direction"
+
+
+def _line_length(line):
+    if not line or len(line) < 2:
+        return 0.0
+    dx = float(line[1][0]) - float(line[0][0])
+    dy = float(line[1][1]) - float(line[0][1])
+    return max((dx * dx + dy * dy) ** 0.5, 1e-6)
+
+
+def _late_start_inside_direction_result(window_rows, line, in_side_point, direction_result, direction_cfg):
+    cfg = direction_cfg or {}
+    if not bool(cfg.get("allow_late_start_inside_entry", True)):
+        return None
+    if len(window_rows) < max(2, as_int(cfg.get("minimum_points", 4), 4)):
+        return None
+    if direction_result.get("decision") == "IN" or direction_result.get("cross_in") or direction_result.get("cross_out"):
+        return None
+    first_row = window_rows[0]
+    last_row = window_rows[-1]
+    first_point = {"x": float(first_row.get("foot_x", 0.0)), "y": float(first_row.get("foot_y", 0.0))}
+    last_point = {"x": float(last_row.get("foot_x", 0.0)), "y": float(last_row.get("foot_y", 0.0))}
+    if not test_is_in_side(first_point, line, in_side_point):
+        return None
+    if not test_is_in_side(last_point, line, in_side_point):
+        return None
+    source_start_frame = as_int(first_row.get("source_frame_id_actual", first_row.get("frame_id", 0)), 0)
+    if source_start_frame > max(0, as_int(cfg.get("late_start_max_source_frame", 60), 60)):
+        return None
+    min_inside_ratio = float(cfg.get("late_start_min_inside_ratio", 0.9) or 0.9)
+    if float(direction_result.get("inside_ratio", 0.0) or 0.0) < min_inside_ratio:
+        return None
+    min_inward_motion = float(
+        cfg.get(
+            "late_start_min_inward_motion_px",
+            cfg.get("minimum_inward_motion_px", 18.0),
+        )
+        or cfg.get("minimum_inward_motion_px", 18.0)
+    )
+    momentum_px = float(direction_result.get("momentum_px", 0.0) or 0.0)
+    if momentum_px < min_inward_motion:
+        return None
+    line_length = _line_length(line)
+    max_distance = max(
+        float(cfg.get("late_start_max_line_distance_px", 240.0) or 240.0),
+        line_length * float(cfg.get("late_start_max_line_distance_ratio", 0.6) or 0.6),
+    )
+    start_distance = point_to_segment_distance(first_point, line)
+    if start_distance > max_distance:
+        return None
+    result = copy.deepcopy(direction_result)
+    result["decision"] = "IN"
+    result["cross_in"] = False
+    result["late_start_inside_entry"] = True
+    result["source_start_frame"] = int(source_start_frame)
+    result["start_distance_to_line_px"] = round(float(start_distance), 3)
+    result["late_start_max_distance_px"] = round(float(max_distance), 3)
+    result["reason"] = (
+        "late_start_inside_entry;"
+        f"source_start_frame={source_start_frame};"
+        f"start_distance_to_line_px={round(float(start_distance), 3)};"
+        f"momentum={round(momentum_px, 3)};"
+        f"inside_ratio={round(float(direction_result.get('inside_ratio', 0.0) or 0.0), 3)}"
+    )
+    return result
+
+
+def build_direction_windows(records, camera_id, camera_cfg, transition_map, direction_cfg):
+    if len(records) < 2:
+        return []
+    line = camera_cfg.get("entry_line") or []
+    in_side_point = camera_cfg.get("in_side_point") or []
+    if not line or not in_side_point:
+        return []
     history_window = max(2, as_int((direction_cfg or {}).get("history_window", 6), 6))
+    windows = []
     for index in range(1, len(records)):
         start_index = max(0, index - history_window + 1)
         window_rows = records[start_index : index + 1]
-        points = [{"x": row["foot_x"], "y": row["foot_y"]} for row in window_rows]
+        points = [{"x": float(row["foot_x"]), "y": float(row["foot_y"])} for row in window_rows]
         spatial_history = [
-            resolve_spatial_context(camera_id, row.get("foot_x"), row.get("foot_y"), transition_map)
+            resolve_spatial_context(camera_id, float(row.get("foot_x", 0.0) or 0.0), float(row.get("foot_y", 0.0) or 0.0), transition_map)
             for row in window_rows
         ]
-        result = evaluate_direction(points, line, in_side_point, spatial_history=spatial_history, config=direction_cfg)
-        if result["decision"] == "IN":
-            return {
+        direction_result = evaluate_direction(points, line, in_side_point, spatial_history=spatial_history, config=direction_cfg)
+        anchor_reason = "filtered_by_direction"
+        if direction_result["decision"] != "IN":
+            late_start_result = _late_start_inside_direction_result(
+                window_rows,
+                line,
+                in_side_point,
+                direction_result,
+                direction_cfg,
+            )
+            if late_start_result is not None:
+                direction_result = late_start_result
+                anchor_reason = "late_start_inside_entry"
+        else:
+            anchor_reason = "cross_in"
+        windows.append(
+            {
                 "anchor_index": index,
                 "anchor_row": records[index],
                 "window_start_index": start_index,
                 "window_rows": window_rows,
-                "direction_result": result,
-            }, "ok"
-    return None, "filtered_by_direction"
+                "spatial_history": spatial_history,
+                "direction_result": direction_result,
+                "anchor_reason": anchor_reason,
+            }
+        )
+    return windows
 
 
 def clamp_rect(rect, img_width, img_height):
@@ -1348,11 +1452,16 @@ def build_entry_events(
                 "best_body_crop": str(body_path),
                 "direction": "IN",
                 "direction_reason": direction_result.get("reason", ""),
+                "direction_accept_mode": "late_start_inside_entry"
+                if direction_result.get("late_start_inside_entry")
+                else "cross_in",
                 "direction_history_points": direction_result.get("history_points", 0),
                 "direction_momentum_px": direction_result.get("momentum_px", 0.0),
                 "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
                 "direction_cross_in": direction_result.get("cross_in", False),
                 "direction_zone_transition_ok": direction_result.get("zone_transition_ok", False),
+                "direction_source_start_frame": direction_result.get("source_start_frame", ""),
+                "direction_start_distance_to_line_px": direction_result.get("start_distance_to_line_px", ""),
                 "source_video": best_record.get("video_path", ""),
                 "source_frame_idx": int(best_record["frame_id"]),
                 "bbox_xmin": int(best_record["xmin"]),
@@ -1401,11 +1510,16 @@ def build_entry_events(
                     "best_body_crop": str(body_path),
                     "direction": "IN",
                     "direction_reason": direction_result.get("reason", ""),
+                    "direction_accept_mode": "late_start_inside_entry"
+                    if direction_result.get("late_start_inside_entry")
+                    else "cross_in",
                     "direction_history_points": direction_result.get("history_points", 0),
                     "direction_momentum_px": direction_result.get("momentum_px", 0.0),
                     "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
                     "direction_cross_in": direction_result.get("cross_in", False),
                     "direction_zone_transition_ok": direction_result.get("zone_transition_ok", False),
+                    "direction_source_start_frame": direction_result.get("source_start_frame", ""),
+                    "direction_start_distance_to_line_px": direction_result.get("start_distance_to_line_px", ""),
                     "zone_id": spatial["zone_id"],
                     "zone_type": spatial["zone_type"],
                     "subzone_id": spatial["subzone_id"],
@@ -1446,9 +1560,14 @@ def build_entry_events(
                     "zone_fallback_used": spatial["zone_fallback_used"],
                     "subzone_fallback_used": spatial["subzone_fallback_used"],
                     "direction_reason": direction_result.get("reason", ""),
+                    "direction_accept_mode": "late_start_inside_entry"
+                    if direction_result.get("late_start_inside_entry")
+                    else "cross_in",
                     "direction_history_points": direction_result.get("history_points", 0),
                     "direction_momentum_px": direction_result.get("momentum_px", 0.0),
                     "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
+                    "direction_source_start_frame": direction_result.get("source_start_frame", ""),
+                    "direction_start_distance_to_line_px": direction_result.get("start_distance_to_line_px", ""),
                     "best_shot_strategy": best_shot_meta.get("best_shot_strategy", ""),
                     "best_shot_reason": best_shot_meta.get("best_shot_reason", ""),
                     "best_shot_subzone_id": best_shot_meta.get("best_shot_subzone_id", ""),
@@ -1630,9 +1749,14 @@ def build_entry_anchor_packets(camera_id, camera_cfg, camera_rows, line_threshol
                 "global_gt_id": int(curr_row["global_gt_id"]),
                 "direction": "IN",
                 "direction_reason": direction_result.get("reason", ""),
+                "direction_accept_mode": "late_start_inside_entry"
+                if direction_result.get("late_start_inside_entry")
+                else "cross_in",
                 "direction_history_points": direction_result.get("history_points", 0),
                 "direction_momentum_px": direction_result.get("momentum_px", 0.0),
                 "direction_inside_ratio": direction_result.get("inside_ratio", 0.0),
+                "direction_source_start_frame": direction_result.get("source_start_frame", ""),
+                "direction_start_distance_to_line_px": direction_result.get("start_distance_to_line_px", ""),
                 "bbox_xmin": int(curr_row["xmin"]),
                 "bbox_ymin": int(curr_row["ymin"]),
                 "bbox_xmax": int(curr_row["xmax"]),

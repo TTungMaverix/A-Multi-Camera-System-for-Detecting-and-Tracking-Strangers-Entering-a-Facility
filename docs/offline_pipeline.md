@@ -19,6 +19,8 @@ It uses:
 - camera-role-aware face capture with strict best-shot gating
 - topology-supported sequential accept for near-threshold body-only cases
 - per-clip evaluation that now separates appearance-only passes from topology-supported passes
+- a2 pair-level overlay debugging for direction/event failures
+- a3 traditional-CV preprocessing and bbox-shrink benchmarking
 
 The earlier Wildtrack benchmark path still remains in the repo for legacy comparison and regression checks, but it is no longer the active dataset narrative.
 
@@ -151,14 +153,14 @@ Dataset inventory + calibration reuse audit:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/new_dataset_inventory_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/a2_a3_cv_phase_inventory"
 ```
 
 Full per-clip evaluation across all currently paired local clips:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\new_dataset_inventory_phase_current\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\new_dataset_inventory_phase_current\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current" --baseline-output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
 ```
 
 Independent direction validation:
@@ -175,12 +177,27 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet_phase_current"
 ```
 
+a2 overlay debug:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_pair_debug.py" --pipeline-config ".\outputs\evaluations\a2_a3_cv_phase_current\tmp_phase_pipeline.yaml" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a2" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a2_debug" --pair-id a2
+```
+
+a3 hard-case crop/preprocessing benchmark:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_a3_hard_case_analysis.py" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a3" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a3_hard_case" --pair-id a3 --association-policy-config ".\insightface_demo_assets\runtime\config\association_policy.new_dataset_demo.yaml"
+```
+
 ## Current Limitations
 
 - local paired coverage is now `a1`, `a2`, `a3`, and `b1`, but the target of at least `5` paired clips is still unmet
 - all current clips can reuse the existing source-camera calibration; no per-clip redraw is needed right now
-- `a2` runs technically but emits `0` entry events, so it is still a blocker for association evaluation
+- `a2` no longer fails at event creation; it now emits `4` entry events after the late-start inside-entry fallback, but still does not reuse cross-camera IDs
 - `a3` remains the hardest current case and still fails cross-camera reuse
+- the best traditional-CV combo on `a3` is currently `gray_world + bbox_shrink_ratio=0.1`, which raises the hard-case body score but still leaves it below `0.72`
 - face embeddings are still rare; only `b1` produced a created face embedding in the current evaluation sweep, and even that did not become a decisive identity anchor
 - quality-aware pooling is more principled than mean-only pooling, but it does not yet push the physical `C1 -> C2` same-identity body scores above `0.72`
 - logical `C3/C4` remain demo expansions from the 2 physical cameras

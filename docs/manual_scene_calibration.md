@@ -52,6 +52,11 @@ This is the correct behavior when these remain materially unchanged:
 
 Current inventory audit confirms that local clips `a1`, `a2`, `a3`, and `b1` all reuse the existing calibration successfully.
 
+This phase kept that rule unchanged:
+
+- `a2` was fixed at the direction/event layer without redrawing calibration
+- `a3` was analyzed through crop preprocessing and bbox shrink without creating clip-specific calibration duplicates
+
 ## Runtime Behavior
 
 Offline and live entrypoints require manual calibration:
@@ -69,6 +74,12 @@ The calibration UI is the only preview-oriented exception:
 
 - it may open in preview mode and let you draw/save calibration
 - runtime ingestion still requires a valid saved config
+
+For the current local clips, the correct workflow is:
+
+1. reuse the same source-camera calibration for `a1`, `a2`, `a3`, `b1`
+2. only redraw if the source camera geometry changes materially
+3. debug failures first through overlay, track dumps, zone/subzone audit, or crop analysis before touching calibration
 
 ## Calibration UI
 
@@ -115,3 +126,9 @@ The pipeline uses the calibrated `processing_roi` as a practical mask/filter:
 - keep point-in-polygon filtering on emitted detections/tracks
 
 This reduces wasted compute outside the protected region without changing the association core.
+
+Current phase artifacts that validate calibration reuse in practice:
+
+- `outputs/evaluations/a2_a3_cv_phase_inventory/calibration_reuse_summary.json`
+- `outputs/evaluations/a2_a3_cv_phase_current/a2_debug/a2_overlay_debug.mp4`
+- `outputs/evaluations/a2_a3_cv_phase_current/a2_debug/a2_stage_debug_summary.json`

@@ -69,6 +69,8 @@ DEFAULT_ASSOCIATION_POLICY = {
         "clahe_clip_limit": 2.0,
         "clahe_tile_grid_size": 8,
         "gray_world_normalization": False,
+        "preprocessing_mode": "",
+        "bbox_shrink_ratio": 0.0,
         "tracklet_pooling_max_candidates": 10,
         "tracklet_pooling_top_k": 5,
         "tracklet_pooling_mode": "mean",

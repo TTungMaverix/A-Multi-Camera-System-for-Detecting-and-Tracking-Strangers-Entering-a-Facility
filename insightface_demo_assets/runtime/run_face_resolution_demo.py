@@ -42,11 +42,11 @@ from association_core.quality_gate import evaluate_buffered_face_gate
 from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
     FrameSourceCache,
+    build_direction_windows,
     crop_event_buffer_records,
     merged_face_buffer_cfg,
     select_evidence_buffer_records,
 )
-from offline_pipeline.direction_logic import evaluate_direction
 from scene_calibration import (
     apply_scene_calibration_to_transition_map,
     apply_scene_calibration_to_wildtrack_config,
@@ -938,28 +938,18 @@ def find_entry_anchor(records, camera_cfg, line_threshold):
     direction_cfg = camera_cfg.get("direction_filter", {}) or {}
     if not line or not in_side:
         return None, "missing_manual_entry_line"
-    history_window = max(2, as_int(direction_cfg.get("history_window", 6), 6))
     transition_map = camera_cfg.get("_transition_map")
     camera_id = camera_cfg.get("_camera_id", "")
-    for index in range(1, len(records)):
-        start_index = max(0, index - history_window + 1)
-        window_rows = records[start_index : index + 1]
-        points = [{"x": row["foot_x"], "y": row["foot_y"]} for row in window_rows]
-        spatial_history = []
-        if transition_map and camera_id:
-            spatial_history = [
-                core_resolve_spatial_context(camera_id, row.get("foot_x"), row.get("foot_y"), transition_map)
-                for row in window_rows
-            ]
-        result = evaluate_direction(points, line, in_side, spatial_history=spatial_history, config=direction_cfg)
+    for window in build_direction_windows(records, camera_id, camera_cfg, transition_map, direction_cfg):
+        result = window.get("direction_result", {}) or {}
         if result["decision"] == "IN":
-            curr_row = records[index]
+            curr_row = window["anchor_row"]
             return {
-                "crossing_index": index,
+                "crossing_index": window["anchor_index"],
                 "crossing_row": curr_row,
-                "prev_row": records[index - 1],
+                "prev_row": records[max(0, window["anchor_index"] - 1)],
                 "direction_result": result,
-            }, "ok"
+            }, window.get("anchor_reason", "ok")
     return None, "filtered_by_direction"
 
 

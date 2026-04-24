@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from association_core.appearance_evidence import evaluate_appearance_evidence
-from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor
+from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor, load_image_unicode
 from association_core.config_loader import deep_merge, load_association_policy
 
 
@@ -55,15 +55,6 @@ def read_jsonl(path: Path):
             if line:
                 rows.append(json.loads(line))
     return rows
-
-
-def load_image_unicode(path: Path):
-    if not path.exists():
-        return None
-    data = np.fromfile(str(path), dtype=np.uint8)
-    if data.size == 0:
-        return None
-    return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
 def write_image_unicode(path: Path, image):
@@ -216,6 +207,11 @@ def _source_event_for_candidate(candidate_unknown_id, source_camera_id, target_r
 
 def build_variant_tracklet(source_event, target_event, variant_policy):
     extractor = get_body_reid_extractor(policy=variant_policy.get("body_reid"))
+    body_reid_cfg = variant_policy.get("body_reid", {}) or {}
+    preprocessing_mode = str(body_reid_cfg.get("preprocessing_mode", "") or "").strip().lower()
+    histogram_reference = None
+    if preprocessing_mode.startswith("histogram_match"):
+        histogram_reference = load_image_unicode(Path(source_event.get("best_body_crop", "")))
     source_tracklet = build_tracklet_body_representation(
         parse_event_buffer(source_event),
         body_reid_runtime=extractor,
@@ -225,6 +221,7 @@ def build_variant_tracklet(source_event, target_event, variant_policy):
         parse_event_buffer(target_event),
         body_reid_runtime=extractor,
         body_reid_policy=variant_policy.get("body_reid"),
+        preprocess_reference_image=histogram_reference,
     )
     score = synthetic_body_score(source_tracklet, target_tracklet, variant_policy)
     return {

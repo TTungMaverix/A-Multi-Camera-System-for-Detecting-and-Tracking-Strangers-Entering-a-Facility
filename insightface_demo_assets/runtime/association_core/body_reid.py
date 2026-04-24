@@ -33,9 +33,80 @@ def _contrast_score(image):
     return min(stddev, 64.0) / 64.0
 
 
-def _apply_color_normalization(image, cfg):
-    normalized = image.copy()
-    if bool(cfg.get("clahe_enabled", True)):
+def shrink_body_crop(image, shrink_ratio=0.0):
+    if image is None:
+        return image
+    ratio = max(0.0, min(float(shrink_ratio or 0.0), 0.45))
+    if ratio <= 1e-6:
+        return image
+    height, width = image.shape[:2]
+    margin_x = int(round(width * ratio))
+    margin_y = int(round(height * ratio))
+    if (width - (2 * margin_x)) < 8 or (height - (2 * margin_y)) < 16:
+        return image
+    return image[margin_y : height - margin_y, margin_x : width - margin_x].copy()
+
+
+def _gray_world_normalize(image):
+    channel_means = image.reshape(-1, 3).mean(axis=0)
+    mean_gray = float(np.mean(channel_means))
+    scales = np.divide(mean_gray, np.maximum(channel_means, 1e-6))
+    return np.clip(image.astype(np.float32) * scales.reshape(1, 1, 3), 0, 255).astype(np.uint8)
+
+
+def match_histogram_to_reference(image, reference_image):
+    if image is None or reference_image is None:
+        return image
+
+    def _match_channel(source_channel, reference_channel):
+        source_values, source_indices, source_counts = np.unique(
+            source_channel.reshape(-1),
+            return_inverse=True,
+            return_counts=True,
+        )
+        reference_values, reference_counts = np.unique(reference_channel.reshape(-1), return_counts=True)
+        source_quantiles = np.cumsum(source_counts).astype(np.float64)
+        source_quantiles /= max(source_quantiles[-1], 1.0)
+        reference_quantiles = np.cumsum(reference_counts).astype(np.float64)
+        reference_quantiles /= max(reference_quantiles[-1], 1.0)
+        mapped = np.interp(source_quantiles, reference_quantiles, reference_values)
+        return mapped[source_indices].reshape(source_channel.shape).astype(np.uint8)
+
+    matched_channels = [
+        _match_channel(image[:, :, channel_idx], reference_image[:, :, channel_idx])
+        for channel_idx in range(min(image.shape[2], reference_image.shape[2], 3))
+    ]
+    return cv2.merge(matched_channels)
+
+
+def _resolve_preprocessing_mode(cfg):
+    mode = str(cfg.get("preprocessing_mode", "") or "").strip().lower()
+    if mode:
+        return mode
+    clahe_enabled = bool(cfg.get("clahe_enabled", True))
+    gray_world_enabled = bool(cfg.get("gray_world_normalization", False))
+    if clahe_enabled and gray_world_enabled:
+        return "gray_world_clahe"
+    if gray_world_enabled:
+        return "gray_world"
+    if clahe_enabled:
+        return "clahe"
+    return "none"
+
+
+def preprocess_body_crop(image, cfg, reference_image=None):
+    if image is None:
+        return None
+    processed = shrink_body_crop(image, cfg.get("bbox_shrink_ratio", 0.0))
+    mode = _resolve_preprocessing_mode(cfg)
+    if mode in {"none", ""}:
+        return processed
+    normalized = processed.copy()
+    if mode in {"histogram_match", "histogram_match_gray_world"} and reference_image is not None:
+        normalized = match_histogram_to_reference(normalized, reference_image)
+    if mode in {"gray_world", "gray_world_clahe", "histogram_match_gray_world"}:
+        normalized = _gray_world_normalize(normalized)
+    if mode in {"clahe", "gray_world_clahe"}:
         lab = cv2.cvtColor(normalized, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
         grid_size = int(cfg.get("clahe_tile_grid_size", 8))
@@ -46,11 +117,6 @@ def _apply_color_normalization(image, cfg):
         )
         l_channel = clahe.apply(l_channel)
         normalized = cv2.cvtColor(cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
-    if bool(cfg.get("gray_world_normalization", False)):
-        channel_means = normalized.reshape(-1, 3).mean(axis=0)
-        mean_gray = float(np.mean(channel_means))
-        scales = np.divide(mean_gray, np.maximum(channel_means, 1e-6))
-        normalized = np.clip(normalized.astype(np.float32) * scales.reshape(1, 1, 3), 0, 255).astype(np.uint8)
     return normalized
 
 
@@ -62,6 +128,10 @@ def _load_image_unicode(image_path: Path):
     if data.size == 0:
         return None
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def load_image_unicode(image_path: Path):
+    return _load_image_unicode(image_path)
 
 
 class OSNetBodyReIDExtractor:
@@ -113,7 +183,7 @@ class OSNetBodyReIDExtractor:
             "clahe_enabled": bool(self.cfg.get("clahe_enabled", True)),
         }
 
-    def extract_array(self, image, source_path=""):
+    def extract_array(self, image, source_path="", reference_image=None):
         result = {
             "status": "missing",
             "embedding": None,
@@ -132,7 +202,7 @@ class OSNetBodyReIDExtractor:
             result["message"] = f"too_small:{width}x{height}"
             return result
 
-        normalized_image = _apply_color_normalization(image, self.cfg)
+        normalized_image = preprocess_body_crop(image, self.cfg, reference_image=reference_image)
         resized = cv2.resize(
             cv2.cvtColor(normalized_image, cv2.COLOR_BGR2RGB),
             (int(self.cfg.get("input_width", 128)), int(self.cfg.get("input_height", 256))),
@@ -176,6 +246,12 @@ def get_body_reid_extractor(policy=None):
             "pretrained": bool(cfg.get("pretrained", True)),
             "input_width": int(cfg.get("input_width", 128)),
             "input_height": int(cfg.get("input_height", 256)),
+            "clahe_enabled": bool(cfg.get("clahe_enabled", True)),
+            "clahe_clip_limit": float(cfg.get("clahe_clip_limit", 2.0)),
+            "clahe_tile_grid_size": int(cfg.get("clahe_tile_grid_size", 8)),
+            "gray_world_normalization": bool(cfg.get("gray_world_normalization", False)),
+            "preprocessing_mode": str(cfg.get("preprocessing_mode", "") or ""),
+            "bbox_shrink_ratio": round(float(cfg.get("bbox_shrink_ratio", 0.0) or 0.0), 4),
         },
         sort_keys=True,
     )
@@ -233,7 +309,12 @@ def _quality_aware_weights(candidates, cfg):
     return [round(weight / total, 6) for weight in raw_weights]
 
 
-def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_reid_policy=None):
+def build_tracklet_body_representation(
+    crop_rows,
+    body_reid_runtime=None,
+    body_reid_policy=None,
+    preprocess_reference_image=None,
+):
     extractor = body_reid_runtime or get_body_reid_extractor(policy=body_reid_policy)
     cfg = _merge_policy(body_reid_policy or getattr(extractor, "cfg", {}))
     rows = list(crop_rows or [])
@@ -365,7 +446,17 @@ def build_tracklet_body_representation(crop_rows, body_reid_runtime=None, body_r
     embeddings = []
     selected_embedding_candidates = []
     for candidate in selected_candidates:
-        extract_result = extractor.extract_array(candidate["image"], source_path=str(candidate["crop_path"]))
+        try:
+            extract_result = extractor.extract_array(
+                candidate["image"],
+                source_path=str(candidate["crop_path"]),
+                reference_image=preprocess_reference_image,
+            )
+        except TypeError:
+            extract_result = extractor.extract_array(
+                candidate["image"],
+                source_path=str(candidate["crop_path"]),
+            )
         if extract_result.get("embedding") is None:
             reject_counts[extract_result.get("status") or "extract_fail"] += 1
             continue

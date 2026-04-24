@@ -60,30 +60,38 @@ Dataset inventory + calibration reuse audit:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/new_dataset_inventory_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_inventory.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --output-dir "outputs/evaluations/a2_a3_cv_phase_inventory"
 ```
 
 Per-clip evaluation across all currently paired local clips:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\new_dataset_inventory_phase_current\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\new_dataset_inventory_phase_current\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_evaluation.py" --pipeline-config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml" --inventory-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\dataset_inventory.json" --calibration-reuse-json ".\outputs\evaluations\a2_a3_cv_phase_inventory\calibration_reuse_summary.json" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current" --baseline-output-dir ".\outputs\evaluations\new_dataset_quality_pooling_phase_current"
 ```
 
-Tracklet-body comparison on a concrete offline run:
+a2 overlay debug:
 
 ```cmd
 cd /d "<repo-root>"
-".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_body_tracklet_evaluation.py" --run-output-root "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4" --output-dir "outputs/offline_runs/new_dataset_logical_4cam_demo_tracklet_phase_smoke_v4/evaluation/body_tracklet_phase_current"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_pair_debug.py" --pipeline-config ".\outputs\evaluations\a2_a3_cv_phase_current\tmp_phase_pipeline.yaml" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a2" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a2_debug" --pair-id a2
 ```
 
-The per-clip evaluation writes:
+a3 traditional-CV benchmark:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_a3_hard_case_analysis.py" --run-output-root ".\outputs\evaluations\a2_a3_cv_phase_current\offline_runs\a3" --output-dir ".\outputs\evaluations\a2_a3_cv_phase_current\a3_hard_case" --pair-id a3 --association-policy-config ".\insightface_demo_assets\runtime\config\association_policy.new_dataset_demo.yaml"
+```
+
+The current per-clip evaluation writes:
 
 - `per_clip_evaluation/<pair>.json`
 - `overall_evaluation_summary.json`
 - `appearance_vs_topology_summary.json`
 - `face_branch_summary.json`
 - `qualitative_case_notes.md`
+- `regression_summary.json`
 
 These scripts are the required evidence before arguing for any further threshold change.
 
@@ -111,18 +119,21 @@ The current New Dataset policy keeps:
 
 The repo no longer treats `0.55` as an acceptable default. If a sequential candidate is accepted slightly below `0.72`, that acceptance must be explained explicitly by the topology-supported sequential rule and appear in the decision logs with a concrete reason code.
 
-Current local evaluation snapshot:
+Current local evaluation snapshot for `outputs/evaluations/a2_a3_cv_phase_current`:
 
 - paired clips actually present locally: `a1`, `a2`, `a3`, `b1`
-- appearance-only pass count: `2`
+- appearance-only pass count: `4`
 - topology-supported pass count: `2`
 - topology rescue count: `2`
-- average `osnet_mean` body score on compared clips: `0.5942`
-- average `osnet_quality_aware` body score on compared clips: `0.5939`
-- average `osnet_x1_0_quality_aware` body score on compared clips: `0.5719`
+- average `osnet_mean` body score on compared clips: `0.586`
+- average `osnet_quality_aware` body score on compared clips: `0.5856`
+- average `osnet_x1_0_quality_aware` body score on compared clips: `0.6084`
+- `a2` improved from `TOTAL_EVENTS = 0` to `TOTAL_EVENTS = 4`
+- `a3` best appearance-only score improved from `0.5071` to `0.58` with traditional CV preprocessing and bbox shrink
 
 Interpretation:
 
-- topology rescue is still needed on the true physical `C1 -> C2` cross-view pair
-- quality-aware pooling alone is not yet enough to push those body scores over `0.72`
-- the stronger OSNet x1.0 benchmark does not currently beat the lighter extractor on average
+- topology rescue is still needed on the true physical `C1 -> C2` cross-view pair for `a1` and `b1`
+- `a2` no longer fails at event creation; it now fails because appearance-only scores remain near `0.60`
+- `a3` remains a real cross-view appearance failure even after shrink/preprocessing
+- this phase therefore focuses on input quality and diagnostic evidence, not threshold rollback

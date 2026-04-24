@@ -1,7 +1,10 @@
 from pathlib import Path
 
-from run_new_dataset_evaluation import build_temp_pipeline_config, summarize_appearance_vs_topology
+import json
+
+from run_new_dataset_evaluation import build_regression_summary, build_temp_pipeline_config, summarize_appearance_vs_topology
 from run_new_dataset_inventory import calibration_reuse_assessment
+from run_new_dataset_pair_debug import build_root_cause_summary
 
 
 def test_build_temp_pipeline_config_sets_pair_and_disables_cache(tmp_path):
@@ -114,3 +117,59 @@ def test_calibration_reuse_assessment_accepts_same_height_small_aspect_delta():
     assert result["reusable"] is True
     assert result["calibration_camera_id"] == "C1"
     assert result["anchor_point_mode"] == "bottom_center"
+
+
+def test_build_regression_summary_compares_before_after(tmp_path):
+    baseline_dir = tmp_path / "baseline"
+    per_clip_dir = baseline_dir / "per_clip_evaluation"
+    per_clip_dir.mkdir(parents=True)
+    baseline_payload = {
+        "pair_id": "a3",
+        "identity_summary": {"total_event_count": 3, "unknown_reuse_count": 0},
+        "appearance_vs_topology": {
+            "topology_rescued_count": 0,
+            "records": [{"appearance_only_body_score": 0.5071}],
+        },
+    }
+    (per_clip_dir / "a3.json").write_text(json.dumps(baseline_payload), encoding="utf-8")
+    current_rows = [
+        {
+            "pair_id": "a3",
+            "identity_summary": {"total_event_count": 4, "unknown_reuse_count": 1},
+            "appearance_vs_topology": {
+                "topology_rescued_count": 1,
+                "records": [{"appearance_only_body_score": 0.58}],
+            },
+        }
+    ]
+
+    summary = build_regression_summary(current_rows, baseline_output_dir=baseline_dir)
+
+    assert summary["per_clip"]["a3"]["before"]["total_event_count"] == 3
+    assert summary["per_clip"]["a3"]["after"]["total_event_count"] == 4
+    assert summary["per_clip"]["a3"]["delta"]["unknown_reuse_count"] == 1.0
+    assert summary["per_clip"]["a3"]["delta"]["appearance_only_max_body_score"] == 0.0729
+
+
+def test_build_root_cause_summary_reads_detector_runtime_from_physical_camera_payload():
+    stage_input_summary = {
+        "multi_source_inference": {
+            "per_physical_camera_runtime": {
+                "CAM1": {"raw_detection_count": 6},
+                "CAM2": {"raw_detection_count": 0},
+            }
+        }
+    }
+    track_debug = {
+        "C1": {"track_count": 1, "tracks": []},
+        "C2": {"track_count": 0, "tracks": []},
+    }
+    missing_event_rows = []
+    entry_events = [{"event_id": "IN_C1_001", "direction_accept_mode": "late_start_inside_entry"}]
+
+    summary = build_root_cause_summary(stage_input_summary, track_debug, missing_event_rows, entry_events)
+
+    assert summary["stage_counts"]["detector_alive"] is True
+    assert summary["stage_counts"]["tracker_alive"] is True
+    assert summary["stage_counts"]["entry_event_count"] == 1
+    assert any("late-start inside-entry fallback" in line for line in summary["root_cause_lines"])
