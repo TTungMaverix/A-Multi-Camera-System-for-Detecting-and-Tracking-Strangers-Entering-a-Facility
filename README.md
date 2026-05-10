@@ -25,6 +25,7 @@ Current local paired clips:
 - `a2`
 - `a3`
 - `b1`
+- `b2`
 
 The runtime pairs clips by shared stem across the two physical camera folders, for example:
 
@@ -74,6 +75,33 @@ The repo still keeps the same architectural principles:
 - gallery lifecycle with TTL and top-k references
 - explicit accept / reject / create / defer logic
 - reason-coded association logs
+
+## P0 Repair Status
+
+The current P0 branch addresses supervisor-blocking issues that must be solved before merging into `main`:
+
+- C4 `ENTRY_IN` must be produced by direction analysis, not by API/UI event cloning.
+- Video decode and overlay must run in background workers; HTTP endpoints must read buffered frames.
+- The active Known DB is the facility folder under `New Dataset/Known ID`.
+- Face matching keeps embedding cosine as the primary signal and adds aligned grayscale face similarity as auxiliary evidence.
+- Re-ID decisions expose `FaceScore`, `BodyScore`, `TimeScore`, `TopologyScore`, `FinalScore`, and threshold.
+- API/OpenAPI docs now include camera state, MJPEG streaming, association decisions, and artifact-backed endpoints.
+
+P0 validation artifacts from the current branch:
+
+- `outputs/evaluations/p0_c4_direction_debug/c4_direction_debug.json`
+- `outputs/evaluations/p0_c4_direction_debug/c4_direction_overlay_frame.png`
+- `outputs/evaluations/p0_c4_direction_debug/c4_track_coordinates.csv`
+- `outputs/evaluations/known_facility_db/known_db_build_summary.json`
+- `outputs/evaluations/server_fps_benchmark/server_runtime_summary.json`
+- `outputs/evaluations/server_fps_benchmark/endpoint_smoke_results.json`
+
+Observed P0 validation snapshot:
+
+- C4 event exists naturally in `entry_in_events.csv`: `IN_C4_C4_1_00000331`
+- C4 direction accept mode: `entry_inferred_from_inside_roi_track_start`
+- known DB build loaded `3` identities and created `12` embeddings / aligned grayscale crops
+- worker-buffer benchmark reached average `14.885 FPS` across 4 streams against a `15 FPS` target
 
 ## What This Phase Changed
 
@@ -166,6 +194,34 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_offline_multicam_pipeline.py" --config ".\insightface_demo_assets\runtime\config\offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml"
 ```
 
+Build active facility Known DB:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_build_known_facility_db.py" --project-root "." --known-root "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID" --manifest-csv ".\insightface_demo_assets\known_face_facility_manifest.csv" --embeddings-csv ".\insightface_demo_assets\runtime\known_face_facility_embeddings.csv" --summary-json ".\outputs\evaluations\known_facility_db\known_db_build_summary.json"
+```
+
+Debug C4 direction:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_pair_debug.py" --run-output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --output-dir ".\outputs\evaluations\p0_c4_direction_debug" --pair-id a1 --camera-id C4
+```
+
+Run live demo server with buffered MJPEG streams:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --host 127.0.0.1 --port 8765 --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --stream-target-fps 15
+```
+
+Benchmark server frame workers:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_server_fps_benchmark.py" --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --duration-sec 6 --target-fps 15 --summary-json ".\outputs\evaluations\server_fps_benchmark\server_runtime_summary.json"
+```
+
 Regression tests:
 
 ```cmd
@@ -175,22 +231,21 @@ cd /d "<repo-root>"
 
 ## Current Validation Snapshot
 
-Current local coverage from `outputs/evaluations/a2_a3_cv_phase_inventory/dataset_inventory.json`:
+Current local coverage from `outputs/evaluations/p0_repair_eval_all/overall_evaluation_summary.json`:
 
-- total paired clips available: `4`
-- paired clips ready for evaluation: `4`
-- missing paired clips to reach the supervisor target of `5`: `1`
-- clips flagged as multi-subject-likely by the inventory harness: `4`
-- harder scenarios flagged by the inventory harness: `a2`, `a3`, `b1`
+- evaluated paired clips: `5`
+- paired clips: `a1`, `a2`, `a3`, `b1`, `b2`
+- missing paired clips to reach the supervisor target of `5`: `0`
+- multi-subject ground truth still needs manual verification
 
-Cross-clip summary from `outputs/evaluations/a2_a3_cv_phase_current/overall_evaluation_summary.json`:
+Cross-clip summary from `outputs/evaluations/p0_repair_eval_all/overall_evaluation_summary.json`:
 
-- evaluated clips: `a1`, `a2`, `a3`, `b1`
+- evaluated clips: `a1`, `a2`, `a3`, `b1`, `b2`
 - `appearance_only_pass_count = 4`
 - `topology_supported_pass_count = 2`
 - `topology_rescued_count = 2`
 - `unknown_reuse_count = 6`
-- `create_new_unknown_count = 14`
+- `create_new_unknown_count = 16`
 - `face_candidate_count = 34`
 - `face_best_shot_selected_count = 2`
 - `face_embedding_created_count = 2`
@@ -201,6 +256,7 @@ Current clip-level status:
 - `a2`: no longer dies at `TOTAL_EVENTS = 0`; it now emits `4` entry events, but all sequential body scores stay around `0.6001 .. 0.6007` and reuse still fails
 - `a3`: still fails cross-camera reuse, but the best traditional CV combo raises the hard-case body score from `0.5071` to `0.58`
 - `b1`: still keeps a multi-camera unknown chain and now produces `2` face embeddings, but the decisive physical `C1 -> C2` reuse is still topology-supported at `0.6245`
+- `b2`: now appears in the paired local dataset and evaluates to `2` events, `0` reuse, and `0.4508` average quality-aware body score
 
 Traditional CV benchmark on `a3`:
 
@@ -223,6 +279,10 @@ Current phase artifacts are written under:
 
 - `outputs/evaluations/a2_a3_cv_phase_inventory/`
 - `outputs/evaluations/a2_a3_cv_phase_current/`
+- `outputs/evaluations/p0_repair_eval_all/`
+- `outputs/evaluations/p0_c4_direction_debug/`
+- `outputs/evaluations/known_facility_db/`
+- `outputs/evaluations/server_fps_benchmark/`
 
 The most useful files are:
 
@@ -242,12 +302,18 @@ The most useful files are:
 - `outputs/evaluations/a2_a3_cv_phase_current/a3_hard_case/a3_preprocessing_benchmark.json`
 - `outputs/evaluations/a2_a3_cv_phase_current/a3_hard_case/a3_bbox_shrink_benchmark.json`
 - `outputs/evaluations/a2_a3_cv_phase_current/a3_hard_case/a3_hard_case_report.md`
+- `outputs/evaluations/p0_repair_eval_all/per_clip_table.json`
+- `outputs/evaluations/p0_repair_eval_all/overall_evaluation_summary.json`
+- `outputs/evaluations/p0_c4_direction_debug/c4_direction_debug.json`
+- `outputs/evaluations/p0_c4_direction_debug/c4_direction_overlay_frame.png`
+- `outputs/evaluations/known_facility_db/known_db_build_summary.json`
+- `outputs/evaluations/server_fps_benchmark/server_runtime_summary.json`
 
 ## Current Constraints
 
 - the active self-recorded dataset still has only `2` physical cameras
-- local paired coverage is `4` clips, not the target `5`
-- the multi-subject and hard-scenario labels currently come from automated inventory sampling, not hand-labeled GT
+- local paired coverage is now `5` clips, but multi-subject ground truth still needs manual verification
+- the hard-scenario labels currently come from automated inventory sampling, not hand-labeled GT
 - body appearance on the true physical `C1 -> C2` pair is still weaker than required for appearance-only acceptance at `0.72`
 - topology rescue is therefore still necessary on `a1` and `b1`
 - `a3` remains the strongest current failure case for cross-camera appearance robustness
@@ -269,3 +335,7 @@ The most useful files are:
 - [docs/association_trace_logging.md](docs/association_trace_logging.md)
 - [docs/association_evaluation_tuning.md](docs/association_evaluation_tuning.md)
 - [docs/quantitative_evaluation.md](docs/quantitative_evaluation.md)
+- [docs/project_constraints.md](docs/project_constraints.md)
+- [docs/direction_detector_debug.md](docs/direction_detector_debug.md)
+- [docs/known_face_db.md](docs/known_face_db.md)
+- [docs/api/openapi.yaml](docs/api/openapi.yaml)

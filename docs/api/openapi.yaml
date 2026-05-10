@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: Multi-Camera Stranger Tracking Demo API
+  version: "0.3.0-p0"
+  description: >
+    Artifact-backed and live-buffer-backed endpoints for the thesis demo.
+    The live camera image endpoints read from background frame workers; they
+    must not decode video or run AI inference in the HTTP request path.
+servers:
+  - url: http://127.0.0.1:8765
+paths:
+  /:
+    get:
+      summary: Serve the demo UI.
+      responses:
+        "200":
+          description: HTML UI.
+  /api/latest-events:
+    get:
+      summary: Return latest ENTRY_IN events from pipeline artifacts.
+      description: Does not fabricate logical C3/C4 events; C4 must come from event artifacts.
+      responses:
+        "200":
+          description: Event list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Event"
+  /api/summary:
+    get:
+      summary: Return offline/live summary statistics.
+      responses:
+        "200":
+          description: Summary payload.
+  /api/timeline:
+    get:
+      summary: Return unknown identity timeline.
+      responses:
+        "200":
+          description: Timeline payload with camera appearances and thumbnails.
+  /api/reid-handoffs:
+    get:
+      summary: Return cross-camera handoff summary.
+      responses:
+        "200":
+          description: Handoff edges and score breakdowns when available.
+  /api/association-decisions:
+    get:
+      summary: Return recent association decision logs.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Recent JSONL decisions.
+  /api/camera-config:
+    get:
+      summary: Return camera calibration/config state.
+      responses:
+        "200":
+          description: Camera config and validation state.
+  /api/camera-state:
+    get:
+      summary: Return latest camera frame-buffer metadata.
+      parameters:
+        - in: query
+          name: camera_id
+          schema:
+            type: string
+            example: C4
+          description: Optional camera filter.
+      responses:
+        "200":
+          description: Latest frame index, FPS, active tracks, latest events, and errors.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/camera-frame:
+    get:
+      summary: Return latest JPEG snapshot from the frame buffer.
+      description: This endpoint is live-buffer-backed and must not decode video per request.
+      parameters:
+        - in: query
+          name: camera_id
+          required: true
+          schema:
+            type: string
+            example: C4
+      responses:
+        "200":
+          description: Latest annotated JPEG.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "503":
+          description: Frame not ready.
+  /api/camera-stream:
+    get:
+      summary: Stream latest JPEGs as MJPEG.
+      description: Browser disconnects are treated as expected client aborts and are not fatal server errors.
+      parameters:
+        - in: query
+          name: camera_id
+          required: true
+          schema:
+            type: string
+            example: C4
+      responses:
+        "200":
+          description: Multipart MJPEG stream.
+          content:
+            multipart/x-mixed-replace:
+              schema:
+                type: string
+                format: binary
+  /stream/camera/{camera_id}.mjpg:
+    get:
+      summary: Path-style MJPEG stream alias.
+      parameters:
+        - in: path
+          name: camera_id
+          required: true
+          schema:
+            type: string
+            example: C4
+      responses:
+        "200":
+          description: Multipart MJPEG stream.
+  /artifact:
+    get:
+      summary: Serve an artifact under the project root.
+      parameters:
+        - in: query
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Artifact file.
+        "403":
+          description: Artifact path outside project root.
+        "404":
+          description: Artifact not found.
+components:
+  schemas:
+    Event:
+      type: object
+      properties:
+        event_id:
+          type: string
+        camera_id:
+          type: string
+        direction:
+          type: string
+        identity_type:
+          type: string
+          enum: [known, unknown, pending, no_usable_face]
+        identity_id:
+          type: string
+        reason_code:
+          type: string
+        snapshot_url:
+          type: string
+        head_snapshot_url:
+          type: string

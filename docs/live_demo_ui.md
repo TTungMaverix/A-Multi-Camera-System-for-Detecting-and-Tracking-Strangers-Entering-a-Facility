@@ -10,6 +10,7 @@ The UI in this repository is not meant to be a separate product. It serves two p
 Server:
 
 - `insightface_demo_assets/runtime/run_live_event_demo_server.py`
+- `insightface_demo_assets/runtime/run_server_fps_benchmark.py`
 
 Wrapper:
 
@@ -20,9 +21,9 @@ Static pages:
 - `insightface_demo_assets/runtime/web_demo/index.html`
 - `insightface_demo_assets/runtime/web_demo/calibration.html`
 
-## Current Data Sources
+## Current Data Sources and Streaming Model
 
-The server can read both live-run and offline-run artifacts.
+The server can read both live-run and offline-run artifacts. In the P0 runtime it also starts background replay workers that decode and annotate frames independently of the HTTP request path.
 
 Live/simulated real-time artifacts:
 
@@ -37,6 +38,16 @@ Offline 4-camera ROI benchmark artifacts:
 - `outputs/offline_runs/<run_name>/summaries/cross_camera_handoff_summary.json`
 
 The current PowerShell wrapper is configured to point at the official 4-camera ROI benchmark output root.
+
+Frame serving:
+
+- background workers decode video and draw overlays
+- each worker writes the latest JPEG and metadata into an in-memory `FrameBufferHub`
+- `/api/camera-frame` returns the latest buffered JPEG
+- `/api/camera-stream` and `/stream/camera/{camera_id}.mjpg` stream MJPEG from the same buffer
+- the browser uses MJPEG `<img>` streams for camera tiles and polls `/api/camera-state` only for metadata
+
+This avoids the old bottleneck where `/api/camera-frame` performed video seeking and preview rendering per HTTP request.
 
 ## Timeline View
 
@@ -91,11 +102,20 @@ Supported geometry types:
 - `/api/latest-events`
 - `/api/summary`
 - `/api/timeline`
+- `/api/reid-handoffs`
+- `/api/association-decisions`
+- `/api/camera-config`
+- `/api/camera-state`
+- `/api/camera-frame?camera_id=...`
+- `/api/camera-stream?camera_id=...`
+- `/stream/camera/{camera_id}.mjpg`
 - `/api/calibration/state`
 - `/api/calibration/preview?camera_id=...`
 - `/api/calibration/save`
 - `/api/calibration/reset`
 - `/artifact?path=...`
+
+OpenAPI docs are in `docs/api/openapi.yaml`.
 
 ## Command
 
@@ -107,6 +127,22 @@ powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
 Default URL:
 
 - `http://127.0.0.1:8765`
+
+Direct server command:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --host 127.0.0.1 --port 8765 --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --stream-target-fps 15
+```
+
+FPS benchmark command:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_server_fps_benchmark.py" --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --duration-sec 6 --target-fps 15 --summary-json ".\outputs\evaluations\server_fps_benchmark\server_runtime_summary.json"
+```
+
+The P0 validation run measured average worker FPS `14.885` across four streams.
 
 ## Current Limitation
 

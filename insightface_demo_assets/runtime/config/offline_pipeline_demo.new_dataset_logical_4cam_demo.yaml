@@ -48,8 +48,13 @@ offline_pipeline:
   face_demo_overrides:
     demo_auto_enroll_count: 0
   known_gallery:
-    manifest_csv: insightface_demo_assets/known_face_manifest.csv
-    gallery_root: insightface_demo_assets/known_faces
+    manifest_csv: insightface_demo_assets/known_face_facility_manifest.csv
+    gallery_root: D:/ĐỒ ÁN TỐT NGHIỆP/New Dataset/Known ID
   association_policy_config: insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml
   camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml
   scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml
+  live_demo_server:
+    target_fps: 15
+    stream_endpoint: /api/camera-stream
+    snapshot_endpoint: /api/camera-frame
+    buffer_mode: in_memory_latest_jpeg

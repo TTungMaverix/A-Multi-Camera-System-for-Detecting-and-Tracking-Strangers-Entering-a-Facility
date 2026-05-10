@@ -99,6 +99,40 @@ def _topology_supported_accept(candidate, decision_cfg, primary_threshold):
     return True
 
 
+def _decision_score_components(candidate, policy):
+    weights = policy.get("decision_score_weights", {}) or {}
+    face_score = float(candidate.get("face_score", 0.0) or 0.0)
+    body_score = float(candidate.get("body_score", 0.0) or 0.0)
+    time_score = float(candidate.get("time_score", 0.0) or 0.0)
+    topology_score = float(candidate.get("topology_score", 0.0) or 0.0)
+    face_weight = float(weights.get("face", 0.45))
+    body_weight = float(weights.get("body", 0.25))
+    time_weight = float(weights.get("time", 0.20))
+    topology_weight = float(weights.get("topology", 0.10))
+    weight_sum = max(face_weight + body_weight + time_weight + topology_weight, 1e-9)
+    final_score = (
+        (face_weight * face_score)
+        + (body_weight * body_score)
+        + (time_weight * time_score)
+        + (topology_weight * topology_score)
+    ) / weight_sum
+    return {
+        "FaceScore": round(face_score, 4),
+        "BodyScore": round(body_score, 4),
+        "TimeScore": round(time_score, 4),
+        "TopologyScore": round(topology_score, 4),
+        "final_score": round(float(final_score), 4),
+        "score_formula": "Score = a*FaceScore + b*BodyScore + c*TimeScore + d*TopologyScore",
+        "score_weights": {
+            "a_face": face_weight,
+            "b_body": body_weight,
+            "c_time": time_weight,
+            "d_topology": topology_weight,
+        },
+        "score_threshold": float(policy.get("decision_score_threshold", 0.65)),
+    }
+
+
 def _candidate_acceptance(candidate, policy):
     if not candidate["quality_gate_pass"]:
         return False, "poor_quality", {}
@@ -133,6 +167,7 @@ def _candidate_acceptance(candidate, policy):
         "primary_threshold": primary_threshold,
         "secondary_threshold": secondary_threshold,
         "minimum_evidence": minimum_evidence,
+        "decision_score_threshold": float(policy.get("decision_score_threshold", 0.65)),
     }
 
     if candidate["appearance_primary"] < primary_threshold:
@@ -231,7 +266,6 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "appearance_similarity_skipped": bool(appearance.get("appearance_similarity_skipped")),
         "hard_filter_pass": hard_filter_pass,
         "face_unusable_reason": appearance.get("face_unusable_reason", ""),
-        "final_total_score": appearance["appearance_primary"],
         "reason_code": (
             topology_eval.get("rejection_reason")
             or topology_eval["candidate_reason"]
@@ -239,6 +273,9 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
             else appearance["evidence_reason"]
         ),
     }
+    score_components = _decision_score_components(candidate, merged_policy["decision_policy"])
+    candidate.update(score_components)
+    candidate["final_total_score"] = score_components["final_score"]
     return candidate
 
 
@@ -316,6 +353,8 @@ def _build_resolved_row(
         "face_det_score": round(item["face_det_score"], 4) if item["face_det_score"] else "",
         "used_face_crop": item["used_face_crop"],
         "used_face_crop_path": item["used_face_crop_path"],
+        "used_face_gray_path": item.get("used_face_gray_path", ""),
+        "face_gray_status": item.get("face_gray_status", ""),
         "face_bbox": item["face_bbox"],
         "body_feature_status": item["body_status"],
         "body_feature_shape": item["body_shape"],
@@ -405,6 +444,14 @@ def _build_decision_log(
                 "body_available": candidate.get("body_available", False),
                 "face_score": candidate["face_score"],
                 "body_score": candidate["body_score"],
+                "FaceScore": candidate.get("FaceScore", candidate["face_score"]),
+                "BodyScore": candidate.get("BodyScore", candidate["body_score"]),
+                "TimeScore": candidate.get("TimeScore", candidate["time_score"]),
+                "TopologyScore": candidate.get("TopologyScore", candidate["topology_score"]),
+                "final_score": candidate.get("final_score", candidate.get("final_total_score", "")),
+                "score_formula": candidate.get("score_formula", ""),
+                "score_weights": candidate.get("score_weights", {}),
+                "score_threshold": candidate.get("score_threshold", ""),
                 "face_ref_score": candidate.get("face_ref_score", ""),
                 "face_representative_score": candidate.get("face_representative_score", ""),
                 "body_ref_score": candidate.get("body_ref_score", ""),
@@ -491,6 +538,13 @@ def _build_decision_log(
         ),
         "face_score": top_candidate["face_score"] if top_candidate else "",
         "body_score": top_candidate["body_score"] if top_candidate else "",
+        "FaceScore": top_candidate.get("FaceScore", "") if top_candidate else "",
+        "BodyScore": top_candidate.get("BodyScore", "") if top_candidate else "",
+        "TimeScore": top_candidate.get("TimeScore", "") if top_candidate else "",
+        "TopologyScore": top_candidate.get("TopologyScore", "") if top_candidate else "",
+        "final_score": top_candidate.get("final_score", "") if top_candidate else "",
+        "score_formula": top_candidate.get("score_formula", "") if top_candidate else "",
+        "score_weights": top_candidate.get("score_weights", {}) if top_candidate else {},
         "thresholds_used": thresholds_used,
         "margin_used": margin_used,
         "decision": decision,

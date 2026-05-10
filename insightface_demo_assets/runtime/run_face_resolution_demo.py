@@ -38,6 +38,7 @@ from association_core import (
     write_jsonl as core_write_jsonl,
 )
 from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor
+from association_core.face_pixel import save_aligned_grayscale_face
 from association_core.quality_gate import evaluate_buffered_face_gate
 from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
@@ -422,9 +423,12 @@ def enroll_demo_authorized_identities(app, queue_rows, known_root: Path, count=2
 def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Path):
     per_image_rows = []
     per_identity_vectors = defaultdict(list)
+    gray_root = output_csv.parent / "known_facility_grayscale_faces"
     for row in manifest_rows:
         image_path = base_dir / row["gallery_rel_path"]
         emb = extract_embedding_from_image(app, image_path)
+        gray_path = gray_root / row["identity_id"] / f"{image_path.stem}_gray.png"
+        gray_result = save_aligned_grayscale_face(image_path, gray_path, bbox=emb.get("bbox")) if emb["status"] == "ok" else {"status": emb["status"], "path": "", "shape": ""}
         per_image_rows.append(
             {
                 "identity_id": row["identity_id"],
@@ -434,6 +438,9 @@ def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Pat
                 "embedding_dim": len(emb["embedding"]) if emb["embedding"] is not None else "",
                 "model_name": "buffalo_l",
                 "embedding_json": json.dumps(emb["embedding"].tolist()) if emb["embedding"] is not None else "",
+                "grayscale_preprocessing_status": gray_result["status"],
+                "aligned_grayscale_face_path": gray_result["path"],
+                "aligned_grayscale_face_shape": gray_result["shape"],
                 "notes": emb["message"],
             }
         )
@@ -450,6 +457,9 @@ def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Pat
             "embedding_dim",
             "model_name",
             "embedding_json",
+            "grayscale_preprocessing_status",
+            "aligned_grayscale_face_path",
+            "aligned_grayscale_face_shape",
             "notes",
         ],
     )
@@ -526,6 +536,12 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                 face_result = extract_embedding_from_image(app, head_path)
                 blur_score = _laplacian_variance(head_path) if head_path else 0.0
                 face_gate = evaluate_buffered_face_gate(face_result, blur_score, policy=quality_policy)
+                gray_output_path = head_path.with_name(f"{head_path.stem}_aligned_gray.png") if head_path else Path("")
+                gray_result = (
+                    save_aligned_grayscale_face(head_path, gray_output_path, bbox=face_result.get("bbox"))
+                    if face_result.get("status") == "ok"
+                    else {"status": face_result.get("status", "missing"), "path": "", "shape": ""}
+                )
                 if face_result.get("face_count", 0) > 0:
                     face_detected_in_buffer += 1
                 if face_gate.get("landmarks_available"):
@@ -563,6 +579,7 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "bbox_height": 0,
                     "bbox_area": 0,
                 }
+                gray_result = {"status": "camera_face_capture_disabled", "path": "", "shape": ""}
                 reject_counts["camera_face_capture_disabled"] += 1
             analyzed_buffer.append(
                 {
@@ -575,6 +592,9 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "face_result": face_result,
                     "face_blur_score": round(float(blur_score), 4),
                     "face_gate": face_gate,
+                    "face_gray_status": gray_result.get("status", ""),
+                    "face_gray_path": gray_result.get("path", ""),
+                    "face_gray_shape": gray_result.get("shape", ""),
                     "face_quality_score": _buffer_face_quality(face_result, buffer_row)
                     if face_gate.get("accepted_into_buffer")
                     else -1.0,
@@ -623,6 +643,8 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                     "face_gate_reject_reason": face_gate.get("reject_reason", ""),
                     "used_face_crop": "face_buffer_head",
                     "used_face_crop_path": candidate["head_crop_path"],
+                    "used_face_gray_path": candidate.get("face_gray_path", ""),
+                    "face_gray_status": candidate.get("face_gray_status", ""),
                     "body_embedding": body_tracklet.get("embedding"),
                     "body_tracklet_embeddings": body_tracklet.get("tracklet_embeddings", []),
                     "body_status": body_tracklet.get("status", "missing"),
@@ -654,6 +676,8 @@ def analyze_event_crops(app, events, quality_policy=None, body_reid_policy=None,
                 "face_gate_reject_reason": "" if selected_face else (dominant_reject_reason or ("no_face_buffer_candidate" if analyzed_buffer else "missing")),
                 "used_face_crop": "face_buffer_head" if selected_face else "",
                 "used_face_crop_path": selected_face["head_crop_path"] if selected_face else "",
+                "used_face_gray_path": selected_face.get("face_gray_path", "") if selected_face else "",
+                "face_gray_status": selected_face.get("face_gray_status", "") if selected_face else "",
                 "body_embedding": body_tracklet["embedding"],
                 "body_tracklet_embeddings": body_tracklet.get("tracklet_embeddings", []),
                 "body_status": body_tracklet["status"],
@@ -1632,6 +1656,7 @@ def summarize_face_body_usage(analyzed_items, resolved_rows, decision_logs, prof
         "face_best_shot_selected_count": sum(1 for item in analyzed_items if item.get("face_best_shot_selected")),
         "face_embedding_available_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
         "face_embedding_created_count": sum(1 for item in analyzed_items if item.get("face_embedding") is not None),
+        "face_grayscale_created_count": sum(1 for item in analyzed_items if item.get("face_gray_status") == "ok"),
         "body_tracklet_candidate_crop_count": sum(item.get("body_tracklet_candidate_count", 0) for item in analyzed_items),
         "body_tracklet_valid_crop_count": sum(item.get("body_tracklet_valid_crop_count", 0) for item in analyzed_items),
         "body_tracklet_selected_crop_count": sum(item.get("body_tracklet_selected_crop_count", 0) for item in analyzed_items),
@@ -1746,6 +1771,8 @@ def build_face_buffer_audit_rows(analyzed_items):
                 "face_blur_score": item.get("face_blur_score", 0.0),
                 "face_gate_reject_reason": item.get("face_gate_reject_reason", ""),
                 "used_face_crop_path": item.get("used_face_crop_path", ""),
+                "used_face_gray_path": item.get("used_face_gray_path", ""),
+                "face_gray_status": item.get("face_gray_status", ""),
                 "body_tracklet_candidate_count": item.get("body_tracklet_candidate_count", 0),
                 "body_tracklet_valid_crop_count": item.get("body_tracklet_valid_crop_count", 0),
                 "body_tracklet_selected_crop_count": item.get("body_tracklet_selected_crop_count", 0),

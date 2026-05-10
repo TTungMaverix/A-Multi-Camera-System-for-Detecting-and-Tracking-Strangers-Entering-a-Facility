@@ -1,7 +1,12 @@
 import argparse
+import csv
 import json
 import mimetypes
 import sys
+import threading
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -20,7 +25,7 @@ from scene_calibration import (
 )
 
 
-DEFAULT_SCENE_CALIBRATION_PATH = "insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack_4cam_phase.yaml"
+DEFAULT_SCENE_CALIBRATION_PATH = "insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml"
 
 
 def resolve_path(project_root: Path, value: str) -> Path:
@@ -201,14 +206,268 @@ def _json_success(payload):
     return {"ok": True, **payload}
 
 
+def read_csv_rows(path: Path):
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+@dataclass
+class CameraFrameState:
+    camera_id: str
+    latest_jpeg: bytes = b""
+    latest_metadata: dict = field(default_factory=dict)
+    frame_index: int = 0
+    demo_time_sec: float = 0.0
+    updated_at: float = 0.0
+    fps_estimate: float = 0.0
+    dropped_frame_count: int = 0
+    error: str = ""
+
+
+class FrameBufferHub:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._states = {}
+
+    def update(self, camera_id, jpeg_bytes, metadata):
+        now = time.time()
+        with self._lock:
+            state = self._states.setdefault(camera_id, CameraFrameState(camera_id=camera_id))
+            previous_update = state.updated_at
+            state.latest_jpeg = jpeg_bytes
+            state.latest_metadata = dict(metadata or {})
+            state.frame_index = int(state.latest_metadata.get("frame_index", state.frame_index + 1))
+            state.demo_time_sec = float(state.latest_metadata.get("demo_time_sec", 0.0) or 0.0)
+            state.updated_at = now
+            if previous_update > 0 and now > previous_update:
+                instant_fps = 1.0 / max(now - previous_update, 1e-6)
+                state.fps_estimate = round((state.fps_estimate * 0.85) + (instant_fps * 0.15), 2) if state.fps_estimate else round(instant_fps, 2)
+            state.error = ""
+
+    def set_error(self, camera_id, error):
+        with self._lock:
+            state = self._states.setdefault(camera_id, CameraFrameState(camera_id=camera_id))
+            state.error = str(error)
+            state.updated_at = time.time()
+
+    def get(self, camera_id):
+        with self._lock:
+            state = self._states.get(camera_id)
+            if not state:
+                return None
+            return CameraFrameState(
+                camera_id=state.camera_id,
+                latest_jpeg=state.latest_jpeg,
+                latest_metadata=dict(state.latest_metadata),
+                frame_index=state.frame_index,
+                demo_time_sec=state.demo_time_sec,
+                updated_at=state.updated_at,
+                fps_estimate=state.fps_estimate,
+                dropped_frame_count=state.dropped_frame_count,
+                error=state.error,
+            )
+
+    def snapshot(self):
+        with self._lock:
+            return {
+                camera_id: {
+                    "camera_id": state.camera_id,
+                    "frame_index": state.frame_index,
+                    "demo_time_sec": round(state.demo_time_sec, 3),
+                    "updated_at": state.updated_at,
+                    "latest_frame_age_ms": round((time.time() - state.updated_at) * 1000.0, 1) if state.updated_at else None,
+                    "fps_estimate": state.fps_estimate,
+                    "dropped_frame_count": state.dropped_frame_count,
+                    "error": state.error,
+                    **state.latest_metadata,
+                }
+                for camera_id, state in sorted(self._states.items())
+            }
+
+
+def _draw_text_panel(frame, lines, origin=(14, 26)):
+    for index, line in enumerate(lines):
+        y = origin[1] + (index * 25)
+        cv2.putText(frame, str(line), (origin[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (10, 10, 10), 4, cv2.LINE_AA)
+        cv2.putText(frame, str(line), (origin[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (245, 245, 245), 2, cv2.LINE_AA)
+
+
+def _row_bbox(row):
+    return (
+        int(float(row.get("xmin", row.get("bbox_xmin", 0)) or 0)),
+        int(float(row.get("ymin", row.get("bbox_ymin", 0)) or 0)),
+        int(float(row.get("xmax", row.get("bbox_xmax", 0)) or 0)),
+        int(float(row.get("ymax", row.get("bbox_ymax", 0)) or 0)),
+    )
+
+
+class OfflineReplayFrameWorker(threading.Thread):
+    def __init__(self, camera_id, camera_cfg, runtime_camera, project_root: Path, output_root: Path, hub: FrameBufferHub, target_fps=15.0):
+        super().__init__(name=f"frame-worker-{camera_id}", daemon=True)
+        self.camera_id = camera_id
+        self.camera_cfg = camera_cfg
+        self.runtime_camera = runtime_camera
+        self.project_root = project_root
+        self.output_root = output_root
+        self.hub = hub
+        self.target_fps = max(1.0, float(target_fps or 15.0))
+        self.stop_event = threading.Event()
+        self.track_rows_by_source_frame = defaultdict(list)
+        self.event_rows_by_source_frame = defaultdict(list)
+        self._load_artifact_rows()
+
+    def _load_artifact_rows(self):
+        for row in read_csv_rows(self.output_root / "tracks" / f"{self.camera_id}_tracks.csv"):
+            frame_id = int(float(row.get("source_frame_id_actual", row.get("frame_id", 0)) or 0))
+            self.track_rows_by_source_frame[frame_id].append(row)
+        for row in read_csv_rows(self.output_root / "events" / "entry_in_events.csv"):
+            if row.get("camera_id") != self.camera_id:
+                continue
+            frame_id = int(float(row.get("source_frame_idx", row.get("frame_id", 0)) or 0))
+            self.event_rows_by_source_frame[frame_id].append(row)
+
+    def stop(self):
+        self.stop_event.set()
+
+    def _annotate(self, frame, source_frame_idx, fps):
+        frame = draw_scene_overlay(frame, self.runtime_camera)
+        active_tracks = []
+        for row in self.track_rows_by_source_frame.get(source_frame_idx, []):
+            x1, y1, x2, y2 = _row_bbox(row)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 220, 80), 2)
+            local_track_id = str(row.get("local_track_id", row.get("global_gt_id", "")) or "")
+            label = f"{self.camera_id} T{local_track_id}"
+            cv2.putText(frame, label, (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (40, 220, 80), 2, cv2.LINE_AA)
+            active_tracks.append({"local_track_id": local_track_id, "bbox": [x1, y1, x2, y2]})
+        event_rows = self.event_rows_by_source_frame.get(source_frame_idx, [])
+        for row in event_rows:
+            _draw_text_panel(
+                frame,
+                [
+                    f"ENTRY_IN {row.get('event_id', '')}",
+                    f"mode={row.get('direction_accept_mode', '')} reason={row.get('direction_reason', '')[:64]}",
+                ],
+                origin=(16, 86),
+            )
+        demo_time_sec = source_frame_idx / max(fps, 1e-6)
+        _draw_text_panel(
+            frame,
+            [
+                f"{self.camera_id} OFFLINE_REPLAY_STREAM",
+                f"source_frame={source_frame_idx} demo_time={demo_time_sec:.2f}s",
+                f"tracks={len(active_tracks)} entry_events={len(event_rows)}",
+            ],
+        )
+        return frame, {
+            "camera_id": self.camera_id,
+            "mode": "OFFLINE_REPLAY_STREAM",
+            "frame_index": source_frame_idx,
+            "demo_time_sec": round(demo_time_sec, 3),
+            "active_tracks": active_tracks,
+            "entry_events": event_rows,
+            "event_count": len(event_rows),
+            "track_count": len(active_tracks),
+        }
+
+    def run(self):
+        try:
+            source_type, source_value = resolve_preview_source(self.project_root, self.camera_cfg)
+            if source_type != "file":
+                raise RuntimeError(f"unsupported_stream_source_type:{source_type}")
+            capture = cv2.VideoCapture(source_value)
+            if not capture.isOpened():
+                raise RuntimeError(f"failed_to_open_video:{source_value}")
+            fps = capture.get(cv2.CAP_PROP_FPS) or self.target_fps
+            frame_interval = 1.0 / self.target_fps
+            source_frame_idx = 0
+            try:
+                while not self.stop_event.is_set():
+                    loop_started = time.time()
+                    ok, frame = capture.read()
+                    if not ok:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        source_frame_idx = 0
+                        continue
+                    annotated, metadata = self._annotate(frame, source_frame_idx, fps)
+                    ok, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+                    if ok:
+                        self.hub.update(self.camera_id, encoded.tobytes(), metadata)
+                    source_frame_idx += 1
+                    elapsed = time.time() - loop_started
+                    if elapsed < frame_interval:
+                        time.sleep(frame_interval - elapsed)
+            finally:
+                capture.release()
+        except Exception as exc:
+            self.hub.set_error(self.camera_id, exc)
+
+
+def load_reid_handoffs(output_root: Path):
+    summary_path = output_root / "summaries" / "cross_camera_handoff_summary.json"
+    payload = load_json_file(summary_path, {})
+    decisions = load_recent_association_decisions(output_root, limit=200)
+    decision_handoffs = []
+    for row in decisions:
+        if row.get("decision") != "unknown_reuse" and row.get("reason_code") != "unknown_reuse":
+            continue
+        source_camera = row.get("source_camera_id") or row.get("from_camera") or ""
+        target_camera = row.get("target_camera_id") or row.get("to_camera") or row.get("camera_id") or ""
+        if not source_camera or not target_camera or source_camera == target_camera:
+            continue
+        thresholds = row.get("thresholds_used", {}) or {}
+        decision_handoffs.append(
+            {
+                "unknown_global_id": row.get("gallery_id_after") or row.get("selected_candidate_id") or "",
+                "source_camera_id": source_camera,
+                "target_camera_id": target_camera,
+                "transition_edge": f"{source_camera} -> {target_camera}",
+                "reason_code": row.get("reason_code", ""),
+                "acceptance_reason": (row.get("candidate_evaluations") or [{}])[0].get("acceptance_reason", ""),
+                "observed_delta_sec": row.get("time_delta", ""),
+                "FaceScore": row.get("FaceScore", row.get("face_score", "N/A")),
+                "BodyScore": row.get("BodyScore", row.get("body_score", "N/A")),
+                "TimeScore": row.get("TimeScore", row.get("time_score", "N/A")),
+                "TopologyScore": row.get("TopologyScore", row.get("topology_score", "N/A")),
+                "final_score": row.get("final_score", row.get("final_total_score", "N/A")),
+                "score_threshold": thresholds.get("decision_score_threshold", row.get("score_threshold", "N/A")),
+                "score_formula": row.get("score_formula", "Score = a*FaceScore + b*BodyScore + c*TimeScore + d*TopologyScore"),
+            }
+        )
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["decision_handoffs"] = decision_handoffs
+        return payload
+    return {"handoffs": payload, "decision_handoffs": decision_handoffs}
+
+
+def load_recent_association_decisions(output_root: Path, limit=50):
+    path = output_root / "association_logs" / "association_decisions.jsonl"
+    rows = deque(maxlen=max(1, int(limit or 50)))
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return list(rows)
+
+
 class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
     server_version = "LiveDemoHTTP/0.2"
 
-    def __init__(self, *args, web_root=None, project_root=None, output_root=None, scene_calibration_path=None, **kwargs):
+    def __init__(self, *args, web_root=None, project_root=None, output_root=None, scene_calibration_path=None, frame_hub=None, **kwargs):
         self.web_root = web_root
         self.project_root = project_root
         self.output_root = output_root
         self.scene_calibration_path = scene_calibration_path
+        self.frame_hub = frame_hub or FrameBufferHub()
         super().__init__(*args, directory=str(web_root), **kwargs)
 
     def _send_json(self, payload, status=200):
@@ -224,6 +483,14 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         data = file_path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mime_type or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_jpeg(self, data: bytes):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -290,6 +557,69 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def _camera_config_payload(self):
+        calibration, runtime = self._load_calibration(required=False)
+        cameras = {}
+        for camera_id, cfg in ((calibration.get("cameras", {}) or {}).items()):
+            cameras[camera_id] = {
+                "camera_id": camera_id,
+                "role": cfg.get("role", ""),
+                "description": cfg.get("description", ""),
+                "preview_source": cfg.get("preview_source", ""),
+                "preview_source_type": cfg.get("preview_source_type", ""),
+                "anchor_point_mode": cfg.get("anchor_point_mode", ""),
+                "logical_replay_note": "C3/C4 are logical replay streams; API must not fabricate ENTRY_IN events.",
+            }
+        return {
+            "project_root": str(self.project_root),
+            "output_root": str(self.output_root),
+            "scene_calibration_path": str(self.scene_calibration_path),
+            "runtime": runtime,
+            "cameras": cameras,
+        }
+
+    def _camera_state_payload(self, camera_id=""):
+        state = self.frame_hub.snapshot()
+        latest_events = load_latest_events(self.output_root)
+        latest_by_camera = defaultdict(list)
+        for event in latest_events:
+            latest_by_camera[event.get("camera_id", "")].append(event)
+        if camera_id:
+            payload = state.get(camera_id, {"camera_id": camera_id, "error": "camera_state_not_ready"})
+            payload["latest_events"] = latest_by_camera.get(camera_id, [])
+            return {"camera": payload}
+        for item_camera_id, payload in state.items():
+            payload["latest_events"] = latest_by_camera.get(item_camera_id, [])
+        return {"mode": "OFFLINE_REPLAY_STREAM", "cameras": state}
+
+    def _stream_camera(self, camera_id, interval_sec=0.066):
+        self.send_response(200)
+        self.send_header("Age", "0")
+        self.send_header("Cache-Control", "no-cache, private")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+        last_frame_index = None
+        while True:
+            state = self.frame_hub.get(camera_id)
+            if state is None or not state.latest_jpeg:
+                time.sleep(interval_sec)
+                continue
+            if last_frame_index == state.frame_index:
+                time.sleep(interval_sec)
+                continue
+            last_frame_index = state.frame_index
+            try:
+                self.wfile.write(b"--frame\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(f"Content-Length: {len(state.latest_jpeg)}\r\n\r\n".encode("ascii"))
+                self.wfile.write(state.latest_jpeg)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                break
+            time.sleep(interval_sec)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/latest-events":
@@ -298,6 +628,32 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             return self._send_json(load_live_summary(self.output_root))
         if parsed.path == "/api/timeline":
             return self._send_json({"identities": load_identity_timeline(self.output_root)})
+        if parsed.path == "/api/reid-handoffs":
+            return self._send_json(load_reid_handoffs(self.output_root))
+        if parsed.path == "/api/association-decisions":
+            limit = int(parse_qs(parsed.query).get("limit", ["50"])[0] or 50)
+            return self._send_json({"decisions": load_recent_association_decisions(self.output_root, limit=limit)})
+        if parsed.path == "/api/camera-config":
+            return self._send_json(self._camera_config_payload())
+        if parsed.path == "/api/camera-state":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            return self._send_json(self._camera_state_payload(camera_id=camera_id))
+        if parsed.path == "/api/camera-frame":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            if not camera_id:
+                return self._send_json({"error": "missing camera_id"}, status=400)
+            state = self.frame_hub.get(camera_id)
+            if state is None or not state.latest_jpeg:
+                return self._send_json({"error": "camera_frame_not_ready", "camera_id": camera_id}, status=503)
+            return self._send_jpeg(state.latest_jpeg)
+        if parsed.path == "/api/camera-stream":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            if not camera_id:
+                return self._send_json({"error": "missing camera_id"}, status=400)
+            return self._stream_camera(camera_id)
+        if parsed.path.startswith("/stream/camera/") and parsed.path.endswith(".mjpg"):
+            camera_id = Path(parsed.path).stem
+            return self._stream_camera(camera_id)
         if parsed.path == "/api/calibration/state":
             return self._send_json(self._calibration_state_payload())
         if parsed.path == "/api/calibration/preview":
@@ -366,6 +722,7 @@ def parse_args():
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--output-root", default="outputs/live_runs/file_sanity")
     parser.add_argument("--scene-calibration-config", default=DEFAULT_SCENE_CALIBRATION_PATH)
+    parser.add_argument("--stream-target-fps", type=float, default=15.0)
     return parser.parse_args()
 
 
@@ -375,6 +732,37 @@ def main():
     output_root = resolve_path(project_root, args.output_root)
     web_root = Path(__file__).resolve().parent / "web_demo"
     scene_calibration_path = resolve_path(project_root, args.scene_calibration_config)
+    calibration, _runtime = load_scene_calibration(
+        config_path=str(scene_calibration_path),
+        base_dir=project_root,
+        required=False,
+    )
+    runtime_cameras = {}
+    frame_hub = FrameBufferHub()
+    workers = []
+    for camera_id, camera_cfg in sorted(((calibration.get("cameras", {}) or {}).items())):
+        try:
+            frame_size_ref = camera_cfg.get("frame_size_ref", {}) or {}
+            width = int(frame_size_ref.get("width", 0) or 0)
+            height = int(frame_size_ref.get("height", 0) or 0)
+            if width <= 0 or height <= 0:
+                source_type, source_value = resolve_preview_source(project_root, camera_cfg)
+                probe = probe_frame_from_source(source_type, source_value, frame_idx=0)
+                height, width = probe.shape[:2]
+            runtime_cameras[camera_id] = build_runtime_camera_calibration(camera_cfg, width, height)
+            worker = OfflineReplayFrameWorker(
+                camera_id,
+                camera_cfg,
+                runtime_cameras[camera_id],
+                project_root,
+                output_root,
+                frame_hub,
+                target_fps=args.stream_target_fps,
+            )
+            workers.append(worker)
+            worker.start()
+        except Exception as exc:
+            frame_hub.set_error(camera_id, exc)
 
     def handler(*handler_args, **handler_kwargs):
         return LiveDemoRequestHandler(
@@ -383,6 +771,7 @@ def main():
             project_root=project_root,
             output_root=output_root,
             scene_calibration_path=scene_calibration_path,
+            frame_hub=frame_hub,
             **handler_kwargs,
         )
 
@@ -390,11 +779,30 @@ def main():
     print(f"LIVE_DEMO_UI=http://{args.host}:{args.port}")
     print(f"LIVE_DEMO_OUTPUT_ROOT={output_root}")
     print(f"SCENE_CALIBRATION_CONFIG={scene_calibration_path}")
+    print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        for worker in workers:
+            worker.stop()
+        for worker in workers:
+            worker.join(timeout=2.0)
+        summary_path = output_root / "summaries" / "server_runtime_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "target_fps": args.stream_target_fps,
+                    "camera_state": frame_hub.snapshot(),
+                    "architecture": "background_frame_workers_latest_jpeg_buffer_mjpeg_stream",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         server.server_close()
 
 

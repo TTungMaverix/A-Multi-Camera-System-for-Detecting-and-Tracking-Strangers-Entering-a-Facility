@@ -145,6 +145,13 @@ DEFAULT_ASSOCIATION_POLICY = {
         "minimum_evidence": {
             "require_secondary_when_available": True,
         },
+        "decision_score_weights": {
+            "face": 0.45,
+            "body": 0.25,
+            "time": 0.20,
+            "topology": 0.10,
+        },
+        "decision_score_threshold": 0.65,
         "topology_supported_accept": {
             "enabled": False,
             "allowed_relations": ["sequential"],

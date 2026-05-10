@@ -21,8 +21,22 @@ It uses:
 - per-clip evaluation that now separates appearance-only passes from topology-supported passes
 - a2 pair-level overlay debugging for direction/event failures
 - a3 traditional-CV preprocessing and bbox-shrink benchmarking
+- P0 C4 direction debugging, where `C4` must emit `ENTRY_IN` from direction analysis rather than API event cloning
+- facility Known DB matching from `New Dataset/Known ID`
 
 The earlier Wildtrack benchmark path still remains in the repo for legacy comparison and regression checks, but it is no longer the active dataset narrative.
+
+## P0 C4 Direction Requirement
+
+Logical `C3/C4` replay streams are allowed only as source-video adapters. They must not be created as fake events in the API/UI layer. The offline pipeline must produce `ENTRY_IN` rows for `C4` in `events/entry_in_events.csv` before the live demo server exposes C4 in `/api/latest-events`, `/api/camera-state`, or `/api/timeline`.
+
+The current direction detector uses:
+
+- primary line crossing
+- ROI outside-to-inside transition
+- clipped-track inside-entry fallback with reason `entry_inferred_from_inside_roi_track_start`
+
+The P0 C4 debug command and artifacts are documented in `docs/direction_detector_debug.md`.
 
 ## Entry Points
 

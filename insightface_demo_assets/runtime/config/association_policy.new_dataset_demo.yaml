@@ -119,6 +119,12 @@ association_policy:
         body_secondary: 0.22
     minimum_evidence:
       require_secondary_when_available: true
+    decision_score_weights:
+      face: 0.45
+      body: 0.25
+      time: 0.20
+      topology: 0.10
+    decision_score_threshold: 0.65
     topology_supported_accept:
       enabled: true
       allowed_relations: [sequential]

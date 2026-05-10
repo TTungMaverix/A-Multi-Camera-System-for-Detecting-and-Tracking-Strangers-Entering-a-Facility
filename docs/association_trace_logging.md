@@ -1,5 +1,24 @@
 # Association Trace Logging
 
+## P0 Score Breakdown
+
+Association decision logs now include the supervisor-required score components when a candidate is evaluated:
+
+- `FaceScore`
+- `BodyScore`
+- `TimeScore`
+- `TopologyScore`
+- `FinalScore`
+- `score_formula`
+- `score_threshold`
+- `score_weights`
+
+The formula is:
+
+`Score = a * FaceScore + b * BodyScore + c * TimeScore + d * TopologyScore`
+
+These fields are evidence for UI handoff cards and for audit; they do not justify merging if face/body evidence contradicts topology/time.
+
 The demo now writes decision logs to:
 
 - `insightface_demo_assets/runtime/association_logs/association_decisions.jsonl`

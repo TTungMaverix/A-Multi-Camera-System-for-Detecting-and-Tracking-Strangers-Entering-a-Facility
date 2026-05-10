@@ -199,11 +199,12 @@ def _late_start_inside_direction_result(window_rows, line, in_side_point, direct
     result["decision"] = "IN"
     result["cross_in"] = False
     result["late_start_inside_entry"] = True
+    result["entry_inferred_from_inside_roi_track_start"] = True
     result["source_start_frame"] = int(source_start_frame)
     result["start_distance_to_line_px"] = round(float(start_distance), 3)
     result["late_start_max_distance_px"] = round(float(max_distance), 3)
     result["reason"] = (
-        "late_start_inside_entry;"
+        "entry_inferred_from_inside_roi_track_start;"
         f"source_start_frame={source_start_frame};"
         f"start_distance_to_line_px={round(float(start_distance), 3)};"
         f"momentum={round(momentum_px, 3)};"
@@ -1452,8 +1453,8 @@ def build_entry_events(
                 "best_body_crop": str(body_path),
                 "direction": "IN",
                 "direction_reason": direction_result.get("reason", ""),
-                "direction_accept_mode": "late_start_inside_entry"
-                if direction_result.get("late_start_inside_entry")
+                "direction_accept_mode": "entry_inferred_from_inside_roi_track_start"
+                if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
                 else "cross_in",
                 "direction_history_points": direction_result.get("history_points", 0),
                 "direction_momentum_px": direction_result.get("momentum_px", 0.0),
@@ -1510,8 +1511,8 @@ def build_entry_events(
                     "best_body_crop": str(body_path),
                     "direction": "IN",
                     "direction_reason": direction_result.get("reason", ""),
-                    "direction_accept_mode": "late_start_inside_entry"
-                    if direction_result.get("late_start_inside_entry")
+                    "direction_accept_mode": "entry_inferred_from_inside_roi_track_start"
+                    if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
                     else "cross_in",
                     "direction_history_points": direction_result.get("history_points", 0),
                     "direction_momentum_px": direction_result.get("momentum_px", 0.0),
@@ -1560,8 +1561,8 @@ def build_entry_events(
                     "zone_fallback_used": spatial["zone_fallback_used"],
                     "subzone_fallback_used": spatial["subzone_fallback_used"],
                     "direction_reason": direction_result.get("reason", ""),
-                    "direction_accept_mode": "late_start_inside_entry"
-                    if direction_result.get("late_start_inside_entry")
+                    "direction_accept_mode": "entry_inferred_from_inside_roi_track_start"
+                    if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
                     else "cross_in",
                     "direction_history_points": direction_result.get("history_points", 0),
                     "direction_momentum_px": direction_result.get("momentum_px", 0.0),
@@ -1749,8 +1750,8 @@ def build_entry_anchor_packets(camera_id, camera_cfg, camera_rows, line_threshol
                 "global_gt_id": int(curr_row["global_gt_id"]),
                 "direction": "IN",
                 "direction_reason": direction_result.get("reason", ""),
-                "direction_accept_mode": "late_start_inside_entry"
-                if direction_result.get("late_start_inside_entry")
+                "direction_accept_mode": "entry_inferred_from_inside_roi_track_start"
+                if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
                 else "cross_in",
                 "direction_history_points": direction_result.get("history_points", 0),
                 "direction_momentum_px": direction_result.get("momentum_px", 0.0),

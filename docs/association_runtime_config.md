@@ -1,5 +1,27 @@
 # Association Runtime Config
 
+## P0 New Dataset Additions
+
+The New Dataset profile now externalizes the score formula required for spatio-temporal Re-ID:
+
+`Score = a * FaceScore + b * BodyScore + c * TimeScore + d * TopologyScore`
+
+Current keys live in `insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml`:
+
+- `decision_policy.decision_score_weights.face`
+- `decision_policy.decision_score_weights.body`
+- `decision_policy.decision_score_weights.time`
+- `decision_policy.decision_score_weights.topology`
+- `decision_policy.decision_score_threshold`
+
+The active Known DB for this dataset is configured through:
+
+- `insightface_demo_assets/runtime/face_demo_config.json`
+- `insightface_demo_assets/runtime/config/offline_pipeline_demo.new_dataset_logical_4cam_demo.yaml`
+
+The active facility Known DB root is `D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID`.
+Build and validation details are documented in `docs/known_face_db.md`.
+
 Association runtime policy is externalized at:
 
 - [association_policy.example.yaml](../insightface_demo_assets/runtime/config/association_policy.example.yaml)

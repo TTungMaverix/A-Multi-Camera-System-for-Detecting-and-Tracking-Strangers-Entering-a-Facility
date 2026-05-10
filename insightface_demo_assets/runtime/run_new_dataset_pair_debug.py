@@ -13,6 +13,7 @@ from dataset_profiles import load_dataset_profile_from_config
 from offline_pipeline.event_builder import (
     FrameSourceCache,
     build_direction_windows,
+    get_line_cross_value,
     group_rows_by_track,
     point_to_segment_distance,
     test_is_in_side,
@@ -50,6 +51,15 @@ def write_image_unicode(path: Path, image):
     encoded.tofile(str(path))
 
 
+def write_csv_rows(path: Path, rows, fieldnames):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
 def _physical_camera_ids(dataset_profile):
     selected = list(dataset_profile.get("selected_cameras", []) or [])
     cameras = dataset_profile.get("cameras", {}) or {}
@@ -59,6 +69,17 @@ def _physical_camera_ids(dataset_profile):
         if not bool((cameras.get(camera_id, {}) or {}).get("logical_demo_copy", False))
     ]
     return physical_ids or selected[:2]
+
+
+def _debug_camera_ids(dataset_profile, requested_camera_ids):
+    selected = list(dataset_profile.get("selected_cameras", []) or [])
+    requested = [item.strip() for item in (requested_camera_ids or []) if item.strip()]
+    if requested:
+        unknown = [camera_id for camera_id in requested if camera_id not in selected]
+        if unknown:
+            raise RuntimeError(f"Unknown debug camera(s): {unknown}. Available={selected}")
+        return requested
+    return selected
 
 
 def _event_rows_by_camera_frame(events):
@@ -116,8 +137,8 @@ def _track_debug_rows(camera_id, camera_cfg, runtime_camera, track_rows, transit
                 ),
                 "anchor_reason": selected_window.get("anchor_reason", ""),
                 "direction_reason": direction_result.get("reason", ""),
-                "direction_accept_mode": "late_start_inside_entry"
-                if direction_result.get("late_start_inside_entry")
+                "direction_accept_mode": "entry_inferred_from_inside_roi_track_start"
+                if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
                 else "cross_in",
                 "momentum_px": float(direction_result.get("momentum_px", 0.0) or 0.0),
                 "inside_ratio": float(direction_result.get("inside_ratio", 0.0) or 0.0),
@@ -146,6 +167,50 @@ def _track_debug_rows(camera_id, camera_cfg, runtime_camera, track_rows, transit
             )
     render_rows.sort(key=lambda item: int(float(item["record"].get("source_frame_id_actual", item["record"].get("frame_id", 0)) or 0)))
     return camera_tracks, render_rows
+
+
+def _track_coordinate_rows(camera_id, camera_cfg, track_rows, transition_map):
+    line = camera_cfg.get("entry_line") or []
+    in_side_point = camera_cfg.get("in_side_point") or []
+    rows = []
+    for local_track_id, records in sorted(group_rows_by_track(track_rows).items(), key=lambda item: item[0]):
+        window_by_anchor_frame = {}
+        for window in build_direction_windows(records, camera_id, camera_cfg, transition_map, camera_cfg.get("direction_filter", {})):
+            frame_key = int(float(window["anchor_row"].get("source_frame_id_actual", window["anchor_row"].get("frame_id", 0)) or 0))
+            window_by_anchor_frame[frame_key] = window
+        for record in records:
+            frame_id = int(float(record.get("source_frame_id_actual", record.get("frame_id", 0)) or 0))
+            point = {"x": float(record.get("foot_x", 0.0) or 0.0), "y": float(record.get("foot_y", 0.0) or 0.0)}
+            spatial = resolve_spatial_context(camera_id, point["x"], point["y"], transition_map)
+            window = window_by_anchor_frame.get(frame_id, {})
+            direction_result = window.get("direction_result", {}) or {}
+            rows.append(
+                {
+                    "camera_id": camera_id,
+                    "frame_id": int(float(record.get("frame_id", 0) or 0)),
+                    "source_frame_id_actual": frame_id,
+                    "local_track_id": str(local_track_id),
+                    "bbox_xmin": record.get("xmin", ""),
+                    "bbox_ymin": record.get("ymin", ""),
+                    "bbox_xmax": record.get("xmax", ""),
+                    "bbox_ymax": record.get("ymax", ""),
+                    "anchor_x": round(point["x"], 3),
+                    "anchor_y": round(point["y"], 3),
+                    "distance_to_entry_line": round(float(point_to_segment_distance(point, line)) if line else 0.0, 3),
+                    "line_side_value": round(float(get_line_cross_value(point, line)) if line else 0.0, 3),
+                    "inside_state": bool(test_is_in_side(point, line, in_side_point)) if line and in_side_point else False,
+                    "zone_id": spatial.get("zone_id", ""),
+                    "subzone_id": spatial.get("subzone_id", ""),
+                    "direction_decision": direction_result.get("decision", ""),
+                    "direction_reason": direction_result.get("reason", ""),
+                    "direction_accept_mode": "late_start_inside_entry"
+                    if direction_result.get("entry_inferred_from_inside_roi_track_start") or direction_result.get("late_start_inside_entry")
+                    else ("cross_in" if direction_result.get("decision") == "IN" else ""),
+                    "momentum_px": round(float(direction_result.get("momentum_px", 0.0) or 0.0), 3),
+                    "inside_ratio": round(float(direction_result.get("inside_ratio", 0.0) or 0.0), 3),
+                }
+            )
+    return rows
 
 
 def _render_row_frame(frame, camera_id, runtime_camera, record, track_summary, event_rows, transition_map):
@@ -242,7 +307,7 @@ def build_root_cause_summary(stage_input_summary, track_debug, missing_event_row
         for camera_id, payload in track_debug.items():
             for track in payload.get("tracks", []):
                 anchor = track.get("selected_anchor", {}) or {}
-                if anchor.get("direction_accept_mode") == "late_start_inside_entry":
+                if anchor.get("direction_accept_mode") in {"late_start_inside_entry", "entry_inferred_from_inside_roi_track_start"}:
                     lines.append(
                         f"{camera_id}/{track['local_track_id']} is a late-start track: source_start_frame={track['source_start_frame']}, "
                         f"track starts inside the line, and a late-start entry anchor is available."
@@ -252,7 +317,7 @@ def build_root_cause_summary(stage_input_summary, track_debug, missing_event_row
         late_start_events = [
             row
             for row in entry_events
-            if str(row.get("direction_accept_mode", "") or "") == "late_start_inside_entry"
+            if str(row.get("direction_accept_mode", "") or "") in {"late_start_inside_entry", "entry_inferred_from_inside_roi_track_start"}
         ]
         if late_start_events:
             lines.append(f"{len(late_start_events)} entry event(s) were recovered by the late-start inside-entry fallback.")
@@ -300,6 +365,7 @@ def main():
     parser.add_argument("--run-output-root", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--pair-id", default="")
+    parser.add_argument("--camera-id", action="append", default=[], help="Limit debug output to one or more logical cameras, e.g. --camera-id C4")
     args = parser.parse_args()
 
     pipeline_config_path = Path(args.pipeline_config).resolve()
@@ -334,14 +400,16 @@ def main():
     entry_events = read_csv_rows(run_output_root / "events" / "entry_in_events.csv")
     event_rows_by_camera_frame = _event_rows_by_camera_frame(entry_events)
 
-    physical_camera_ids = _physical_camera_ids(dataset_profile)
+    debug_camera_ids = _debug_camera_ids(dataset_profile, args.camera_id) if args.camera_id else _physical_camera_ids(dataset_profile)
     track_debug = {}
     render_rows_by_camera = {}
-    for camera_id in physical_camera_ids:
+    coordinate_rows = []
+    for camera_id in debug_camera_ids:
         camera_rows = read_csv_rows(run_output_root / "tracks" / f"{camera_id}_tracks.csv")
         runtime_camera = runtime_cameras[camera_id]
         camera_cfg = dataset_profile["cameras"][camera_id]
         tracks, render_rows = _track_debug_rows(camera_id, camera_cfg, runtime_camera, camera_rows, transition_map)
+        coordinate_rows.extend(_track_coordinate_rows(camera_id, camera_cfg, camera_rows, transition_map))
         track_debug[camera_id] = {
             "track_count": len(tracks),
             "track_rows": len(camera_rows),
@@ -349,13 +417,42 @@ def main():
         }
         render_rows_by_camera[camera_id] = render_rows
 
+    if coordinate_rows:
+        preferred_prefix = "c4" if debug_camera_ids == ["C4"] else (pair_id or "pair")
+        write_csv_rows(
+            output_dir / f"{preferred_prefix}_track_coordinates.csv",
+            coordinate_rows,
+            [
+                "camera_id",
+                "frame_id",
+                "source_frame_id_actual",
+                "local_track_id",
+                "bbox_xmin",
+                "bbox_ymin",
+                "bbox_xmax",
+                "bbox_ymax",
+                "anchor_x",
+                "anchor_y",
+                "distance_to_entry_line",
+                "line_side_value",
+                "inside_state",
+                "zone_id",
+                "subzone_id",
+                "direction_decision",
+                "direction_reason",
+                "direction_accept_mode",
+                "momentum_px",
+                "inside_ratio",
+            ],
+        )
+
     frame_cache = FrameSourceCache()
     try:
         reference_shape = None
         panel_width = 0
         panel_height = 0
         camera_frames = {}
-        for camera_id in physical_camera_ids:
+        for camera_id in debug_camera_ids:
             rows = render_rows_by_camera.get(camera_id, [])
             camera_frames[camera_id] = []
             for item in rows:
@@ -372,18 +469,19 @@ def main():
             raise RuntimeError(f"No track rows were available to render debug overlay for {run_output_root}")
         panel_shape = (panel_height, panel_width, 3)
 
-        max_frames = max(len(camera_frames.get(camera_id, [])) for camera_id in physical_camera_ids)
-        video_path = output_dir / f"{pair_id or 'pair'}_overlay_debug.mp4"
+        max_frames = max(len(camera_frames.get(camera_id, [])) for camera_id in debug_camera_ids)
+        video_prefix = "c4_direction" if debug_camera_ids == ["C4"] else (pair_id or "pair")
+        video_path = output_dir / f"{video_prefix}_overlay.mp4"
         writer = cv2.VideoWriter(
             str(video_path),
             cv2.VideoWriter_fourcc(*"mp4v"),
             4.0,
-            (panel_width * len(physical_camera_ids), panel_height),
+            (panel_width * len(debug_camera_ids), panel_height),
         )
         try:
             for frame_index in range(max_frames):
                 panels = []
-                for camera_id in physical_camera_ids:
+                for camera_id in debug_camera_ids:
                     rows = camera_frames.get(camera_id, [])
                     if frame_index < len(rows):
                         panels.append(_fit_panel(rows[frame_index], panel_shape))
@@ -395,13 +493,17 @@ def main():
 
         failure_dir = output_dir / f"{pair_id or 'pair'}_failure_frames"
         failure_dir.mkdir(parents=True, exist_ok=True)
-        for camera_id in physical_camera_ids:
+        overlay_frame_written = False
+        for camera_id in debug_camera_ids:
             rows = camera_frames.get(camera_id, [])
             indices = _failure_frame_indices(render_rows_by_camera.get(camera_id, []), track_debug[camera_id]["tracks"])
             for image_index in indices:
                 if image_index >= len(rows):
                     continue
                 write_image_unicode(failure_dir / f"{camera_id}_{image_index:02d}.png", rows[image_index])
+                if not overlay_frame_written and debug_camera_ids == ["C4"]:
+                    write_image_unicode(output_dir / "c4_direction_overlay_frame.png", rows[image_index])
+                    overlay_frame_written = True
     finally:
         frame_cache.close()
 
@@ -419,11 +521,15 @@ def main():
         "track_debug": track_debug,
         "root_cause_summary": root_cause_summary,
         "artifacts": {
-            "overlay_video": str(output_dir / f"{pair_id or 'pair'}_overlay_debug.mp4"),
+            "overlay_video": str(video_path),
             "failure_frames_dir": str(output_dir / f"{pair_id or 'pair'}_failure_frames"),
             "root_cause_report": str(output_dir / f"{pair_id or 'pair'}_root_cause_report.md"),
+            "track_coordinates_csv": str(output_dir / ("c4_track_coordinates.csv" if debug_camera_ids == ["C4"] else f"{pair_id or 'pair'}_track_coordinates.csv")),
+            "direction_overlay_frame": str(output_dir / "c4_direction_overlay_frame.png") if debug_camera_ids == ["C4"] else "",
         },
     }
+    if debug_camera_ids == ["C4"]:
+        save_json(output_dir / "c4_direction_debug.json", summary_payload)
     save_json(output_dir / f"{pair_id or 'pair'}_stage_debug_summary.json", summary_payload)
     write_root_cause_report(
         output_dir / f"{pair_id or 'pair'}_root_cause_report.md",

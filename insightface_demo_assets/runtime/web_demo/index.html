@@ -71,9 +71,54 @@
     }
     .event-grid,
     .timeline-grid,
-    .appearance-grid {
+    .appearance-grid,
+    .camera-grid,
+    .handoff-grid {
       display: grid;
       gap: 16px;
+    }
+    .camera-grid {
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      margin-bottom: 22px;
+    }
+    .camera-card,
+    .handoff-card {
+      background: #101711;
+      color: #e9f2ea;
+      border: 1px solid #2f4436;
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.12);
+    }
+    .camera-card img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #1d241e;
+    }
+    .camera-meta {
+      display: grid;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #b8c7bb;
+    }
+    .handoff-grid {
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      margin-top: 20px;
+    }
+    .handoff-card {
+      display: grid;
+      gap: 10px;
+    }
+    .score-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      font-size: 12px;
+      color: #d8e6d9;
     }
     .event-grid {
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -218,7 +263,9 @@
       <p><a href="/calibration.html">Open manual calibration tool</a></p>
     </section>
     <section class="summary" id="summary"></section>
+    <section class="camera-grid" id="cameraStreams"></section>
     <section class="event-grid" id="events"></section>
+    <section class="handoff-grid" id="handoffs"></section>
     <section class="timeline-grid" id="timeline"></section>
     <section class="timeline-detail" id="timelineDetail"></section>
   </main>
@@ -226,6 +273,7 @@
     const browserState = {
       selectedIdentityId: "",
       timelines: [],
+      camerasInitialized: false,
     };
 
     async function fetchJson(url) {
@@ -253,6 +301,69 @@
         metric("Dropped Frames", summary.dropped_frames_total || 0),
         metric("Workers", workerCount),
       ].join("");
+    }
+
+    function renderCameraStreams(cameraConfig, cameraState) {
+      const root = document.getElementById("cameraStreams");
+      const cameras = Object.keys(cameraConfig.cameras || {});
+      if (!cameras.length) {
+        root.innerHTML = `<div class="empty">No camera config available.</div>`;
+        return;
+      }
+      root.innerHTML = cameras.map((cameraId) => {
+        const cfg = cameraConfig.cameras[cameraId] || {};
+        const state = (cameraState.cameras || {})[cameraId] || {};
+        return `
+          <article class="camera-card">
+            <img src="/api/camera-stream?camera_id=${encodeURIComponent(cameraId)}" alt="${cameraId} stream">
+            <div class="camera-meta">
+              <strong>${cameraId} - ${cfg.role || "camera"} - ${state.mode || "OFFLINE_REPLAY_STREAM"}</strong>
+              <span>${cfg.description || ""}</span>
+              <span>FPS=${state.fps_estimate || 0} frame=${state.frame_index || 0} tracks=${state.track_count || 0} ENTRY_IN=${state.event_count || 0}</span>
+              <span>age=${state.latest_frame_age_ms ?? "N/A"}ms error=${state.error || "none"}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderCameraStateOnly(cameraState) {
+      [...document.querySelectorAll(".camera-card")].forEach((node, index) => {
+        const cameraId = Object.keys(cameraState.cameras || {})[index];
+        if (!cameraId) return;
+        const state = cameraState.cameras[cameraId] || {};
+        const meta = node.querySelector(".camera-meta");
+        if (meta) {
+          meta.querySelectorAll("span")[1].textContent = `FPS=${state.fps_estimate || 0} frame=${state.frame_index || 0} tracks=${state.track_count || 0} ENTRY_IN=${state.event_count || 0}`;
+          meta.querySelectorAll("span")[2].textContent = `age=${state.latest_frame_age_ms ?? "N/A"}ms error=${state.error || "none"}`;
+        }
+      });
+    }
+
+    function renderHandoffs(payload) {
+      const root = document.getElementById("handoffs");
+      const rows = payload.decision_handoffs || payload.handoffs || payload.handoff_edges || payload.edges || [];
+      if (!rows.length) {
+        root.innerHTML = `<div class="empty">No cross-camera handoff edge yet. This panel only renders real association output.</div>`;
+        return;
+      }
+      root.innerHTML = rows.slice(-6).map((row) => {
+        const edge = row.transition_edge || row.edge || `${row.source_camera_id || row.from_camera || "-"} -> ${row.target_camera_id || row.to_camera || "-"}`;
+        return `
+          <article class="handoff-card">
+            <strong>RE-ID ${row.unknown_global_id || row.identity_id || ""} ${edge}</strong>
+            <div class="meta">reason=${row.reason_code || row.acceptance_reason || row.decision_reason || "-"}</div>
+            <div class="score-row">
+              <span>Face=${row.FaceScore ?? row.face_score ?? "N/A"}</span>
+              <span>Body=${row.BodyScore ?? row.body_score ?? "N/A"}</span>
+              <span>Time=${row.TimeScore ?? row.time_score ?? "N/A"}</span>
+              <span>Topology=${row.TopologyScore ?? row.topology_score ?? "N/A"}</span>
+              <span>Final=${row.final_score ?? row.final_total_score ?? "N/A"}</span>
+              <span>Threshold=${row.score_threshold ?? row.threshold ?? "N/A"}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
     }
 
     function selectIdentity(identityId) {
@@ -382,17 +493,27 @@
 
     async function refresh() {
       try {
-        const [summary, latest, timeline] = await Promise.all([
+        const [summary, latest, timeline, cameraConfig, cameraState, handoffs] = await Promise.all([
           fetchJson("/api/summary"),
           fetchJson("/api/latest-events"),
           fetchJson("/api/timeline"),
+          fetchJson("/api/camera-config"),
+          fetchJson("/api/camera-state"),
+          fetchJson("/api/reid-handoffs"),
         ]);
         browserState.timelines = timeline.identities || [];
         if (browserState.selectedIdentityId && !browserState.timelines.some((item) => item.identity_id === browserState.selectedIdentityId)) {
           browserState.selectedIdentityId = "";
         }
         renderSummary(summary);
+        if (!browserState.camerasInitialized) {
+          renderCameraStreams(cameraConfig, cameraState);
+          browserState.camerasInitialized = true;
+        } else {
+          renderCameraStateOnly(cameraState);
+        }
         renderEvents(latest.events || []);
+        renderHandoffs(handoffs);
         renderTimeline(browserState.timelines);
         renderTimelineDetail(browserState.timelines);
       } catch (error) {
