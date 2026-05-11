@@ -208,6 +208,23 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_new_dataset_pair_debug.py" --run-output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --output-dir ".\outputs\evaluations\p0_c4_direction_debug" --pair-id a1 --camera-id C4
 ```
 
+Draw ROI and entry line for a new camera:
+
+```cmd
+cd /d "<repo-root>"
+".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" --camera C1 --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" --frame-index 0
+```
+
+Controls:
+
+- left click: add ROI / line point
+- right click or Enter: commit ROI
+- entry line uses three clicks: `p1`, `p2`, then IN-side point
+- `u`: undo
+- `r`: reset current shape
+- `s`: save
+- `q` / Esc: quit
+
 Run live demo server with buffered MJPEG streams:
 
 ```cmd

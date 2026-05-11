@@ -16,6 +16,30 @@ Subzones are currently stored inside:
 
 This keeps camera zones, subzones, and directed transition rules in one dataset-facing file.
 
+The OpenCV calibration tool writes camera-local `zones` into the scene
+calibration file when it generates a default zone from the processing ROI. That
+zone is used by event creation and spatial assignment. Directed transition
+constraints such as `allowed_entry_subzones` and `allowed_exit_subzones` still
+belong in the camera transition map.
+
+Tool command:
+
+```powershell
+& ".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" `
+  --camera C1 `
+  --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" `
+  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```
+
+By default, the tool creates:
+
+- `processing_roi.polygon`
+- `entry_line.points`
+- `entry_line.in_side_point`
+- a default zone named `<camera>_entry_main` whose polygon matches the ROI
+
+Subzones remain a second pass when a dataset needs finer route constraints.
+
 ## Camera-Level Fields
 
 Each camera can define:

@@ -99,6 +99,116 @@ Capabilities:
 - reload config
 - reset per-camera config
 
+## OpenCV Calibration Tool
+
+For a new camera source, use the standalone OpenCV tool when you need a quick
+mouse-driven calibration without starting the web UI:
+
+```powershell
+cd /d "<repo-root>"
+& ".\.venv_insightface_demo\Scripts\python.exe" `
+  ".\tools\calibrate_camera.py" `
+  --camera C1 `
+  --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" `
+  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
+  --frame-index 0
+```
+
+Alternative direct module path:
+
+```powershell
+& ".\.venv_insightface_demo\Scripts\python.exe" `
+  ".\insightface_demo_assets\runtime\tools\calibrate_camera.py" `
+  --camera C2 `
+  --source "0" `
+  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```
+
+Supported source types are whatever OpenCV can open:
+
+- image file
+- video file
+- webcam index such as `0`
+- RTSP / HTTP stream URL
+
+Useful options:
+
+- `--frame-index N` selects a frame from a video.
+- `--time-sec S` selects a video timestamp.
+- `--base-config existing.yaml` merges into an existing scene calibration.
+- `--per-camera-json C1.json` writes a simple per-camera JSON export.
+- `--anchor-point-mode bottom_center|center_center` sets the ROI test anchor.
+- `--no-default-zone` disables the generated zone-from-ROI helper.
+
+Mouse / keyboard controls:
+
+- left click adds a point
+- right click or Enter commits the ROI polygon
+- after ROI commit, click entry line point 1, entry line point 2, then the IN-side point
+- `u` undoes the last point
+- `r` resets the current shape
+- `s` saves once ROI and entry line are complete
+- `q` or Esc quits without saving
+
+The overlay shows the detection ROI, the entry line, and an arrow pointing to the
+clicked IN side.
+
+### Output Format
+
+The main output is runtime-compatible scene calibration:
+
+```yaml
+scene_calibration:
+  coordinate_space: normalized
+  cameras:
+    C1:
+      processing_roi:
+        polygon: [[...], [...], [...]]
+      entry_line:
+        points: [[x1, y1], [x2, y2]]
+        in_side_point: [xin, yin]
+      zones:
+        - zone_id: c1_entry_main
+          zone_type: entry
+          polygon: ...
+```
+
+The per-camera JSON export is for supervisor/debug review and contains pixel
+coordinates plus the explicit direction vector:
+
+```json
+{
+  "camera_id": "C1",
+  "resolution": [1418, 720],
+  "detection_roi": [[x1, y1], [x2, y2]],
+  "entry_line": {
+    "p1": [xa, ya],
+    "p2": [xb, yb],
+    "in_side_point": [xi, yi],
+    "in_direction_vector": [dx, dy]
+  }
+}
+```
+
+The backend still uses `entry_line.in_side_point` for line-side tests. The
+`in_direction_vector` is exported as an explicit audit field: movement with a
+positive dot product against this vector moves toward the facility side.
+
+### Pipeline Integration
+
+The generated YAML/JSON can be passed directly to the existing runtime:
+
+```powershell
+& ".\.venv_insightface_demo\Scripts\python.exe" `
+  ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" `
+  --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```
+
+For the offline logical demo, point the pipeline config's
+`scene_calibration_config` at the generated file. `C3` and `C4` may reuse/copy
+the physical source-camera geometry from `C1` and `C2`, but that relationship
+must stay explicit in config/docs because they are logical replay cameras.
+
 ## Direction Stabilization
 
 `IN` is no longer decided from a single-frame tripwire crossing alone.
