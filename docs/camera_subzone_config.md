@@ -12,9 +12,12 @@ They let the association core reason about:
 
 Subzones are currently stored inside:
 
+- [manual_scene_calibration.new_dataset_demo.yaml](../insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml)
 - [camera_transition_map.example.yaml](../insightface_demo_assets/runtime/config/camera_transition_map.example.yaml)
 
-This keeps camera zones, subzones, and directed transition rules in one dataset-facing file.
+The scene calibration file owns camera-local ROI, zone, and subzone geometry.
+The transition map owns directed route constraints such as allowed entry/exit
+zone IDs and subzone IDs.
 
 The OpenCV calibration tool writes camera-local `zones` into the scene
 calibration file when it generates a default zone from the processing ROI. That
@@ -39,6 +42,23 @@ By default, the tool creates:
 - a default zone named `<camera>_entry_main` whose polygon matches the ROI
 
 Subzones remain a second pass when a dataset needs finer route constraints.
+The OpenCV tool can now create minimal review-ready subzone placeholders with:
+
+```powershell
+& ".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" `
+  --camera C1 `
+  --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" `
+  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
+  --with-default-subzones
+```
+
+That flag writes:
+
+- `<camera>_entry_band`: projected from the entry line toward the clicked IN side.
+- `<camera>_interior`: a second projected band farther inside the ROI.
+
+Both are marked `placeholder: true`. Treat them as a starting schema and visual
+review target, not as final route evidence until checked against the camera view.
 
 ## Camera-Level Fields
 
@@ -68,6 +88,13 @@ Each directed transition can define:
 - `allowed_entry_subzones`
 
 These are optional. If they are omitted, the filter falls back to zone-level logic.
+
+For logical replay cameras:
+
+- `C3` should derive geometry from the same source-camera calibration as `C1`.
+- `C4` should derive geometry from the same source-camera calibration as `C2`.
+- Keep the derived relationship explicit in config/docs. Do not create hidden
+  per-clip or per-replay calibration unless the source camera geometry changes.
 
 ## Runtime Behavior
 

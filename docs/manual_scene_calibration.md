@@ -139,6 +139,8 @@ Useful options:
 - `--per-camera-json C1.json` writes a simple per-camera JSON export.
 - `--anchor-point-mode bottom_center|center_center` sets the ROI test anchor.
 - `--no-default-zone` disables the generated zone-from-ROI helper.
+- `--with-default-subzones` also writes two review-ready subzone placeholders:
+  `<camera>_entry_band` and `<camera>_interior`.
 
 Mouse / keyboard controls:
 
@@ -152,6 +154,17 @@ Mouse / keyboard controls:
 
 The overlay shows the detection ROI, the entry line, and an arrow pointing to the
 clicked IN side.
+
+Subzone note:
+
+- The OpenCV tool is intentionally still a fast ROI/entry-line tool, not a full
+  subzone editor.
+- With `--with-default-subzones`, it projects two approximate subzone polygons
+  from the entry line toward the clicked IN side. They are marked
+  `placeholder: true` and must be visually reviewed before strict topology
+  filters depend on them.
+- For final route constraints, edit the generated YAML or use
+  `/calibration.html`, which already supports drawing named zones and subzones.
 
 ### Output Format
 
@@ -171,6 +184,15 @@ scene_calibration:
         - zone_id: c1_entry_main
           zone_type: entry
           polygon: ...
+      subzones:
+        - subzone_id: c1_entry_band
+          parent_zone_id: c1_entry_main
+          subzone_type: entry
+          placeholder: true
+        - subzone_id: c1_interior
+          parent_zone_id: c1_entry_main
+          subzone_type: interior
+          placeholder: true
 ```
 
 The per-camera JSON export is for supervisor/debug review and contains pixel
@@ -202,6 +224,17 @@ The generated YAML/JSON can be passed directly to the existing runtime:
 & ".\.venv_insightface_demo\Scripts\python.exe" `
   ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" `
   --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```
+
+Example with review-ready subzone placeholders:
+
+```powershell
+& ".\.venv_insightface_demo\Scripts\python.exe" `
+  ".\tools\calibrate_camera.py" `
+  --camera C1 `
+  --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" `
+  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
+  --with-default-subzones
 ```
 
 For the offline logical demo, point the pipeline config's

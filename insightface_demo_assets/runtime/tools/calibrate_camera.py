@@ -107,6 +107,78 @@ def classify_movement_by_direction_vector(prev_point, curr_point, in_direction_v
     return "STATIONARY", round(score, 6)
 
 
+def _clamp_normalized_point(point):
+    return [
+        round(max(0.0, min(1.0, float(point[0]))), 8),
+        round(max(0.0, min(1.0, float(point[1]))), 8),
+    ]
+
+
+def _shift_point(point, direction, distance):
+    return _clamp_normalized_point(
+        [
+            float(point[0]) + (float(direction[0]) * float(distance)),
+            float(point[1]) + (float(direction[1]) * float(distance)),
+        ]
+    )
+
+
+def build_default_subzones(camera_id, zone_id, normalized_entry_points, entry_band_depth=0.16, interior_depth=0.48):
+    """Create two review-ready subzones from the entry line and clicked IN side.
+
+    These are intentionally conservative placeholders: they make the exported
+    schema ready for topology/subzone validation without pretending that a full
+    interactive subzone editor has been completed.
+    """
+    p1, p2, in_side = normalized_entry_points
+    inward = compute_in_direction_vector(p1, p2, in_side)
+    if inward == [0.0, 0.0]:
+        return []
+    entry_band_id = f"{camera_id.lower()}_entry_band"
+    interior_id = f"{camera_id.lower()}_interior"
+    behind_line = -0.03
+    entry_far = max(0.04, float(entry_band_depth))
+    interior_far = max(entry_far + 0.04, float(interior_depth))
+    return [
+        {
+            "subzone_id": entry_band_id,
+            "parent_zone_id": zone_id,
+            "subzone_type": "entry",
+            "polygon": [
+                _shift_point(p1, inward, behind_line),
+                _shift_point(p2, inward, behind_line),
+                _shift_point(p2, inward, entry_far),
+                _shift_point(p1, inward, entry_far),
+            ],
+            "priority": 90,
+            "allowed_transitions": [],
+            "placeholder": True,
+            "description": (
+                "Auto-generated entry-band subzone from entry line and IN-side point. "
+                "Review against camera geometry before using strict transition filters."
+            ),
+        },
+        {
+            "subzone_id": interior_id,
+            "parent_zone_id": zone_id,
+            "subzone_type": "interior",
+            "polygon": [
+                _shift_point(p1, inward, entry_far),
+                _shift_point(p2, inward, entry_far),
+                _shift_point(p2, inward, interior_far),
+                _shift_point(p1, inward, interior_far),
+            ],
+            "priority": 80,
+            "allowed_transitions": [],
+            "placeholder": True,
+            "description": (
+                "Auto-generated interior subzone projected from the entry line. "
+                "Use as a starting point, not as final topology evidence without visual review."
+            ),
+        },
+    ]
+
+
 def load_scene_document(path: Path | None, camera_ids=None):
     if path and path.exists():
         text = path.read_text(encoding="utf-8")
@@ -142,6 +214,7 @@ def build_camera_config(
     role="entry",
     description="",
     create_default_zone=True,
+    create_default_subzones=False,
 ):
     if len(roi_points) < 3:
         raise ValueError("processing ROI requires at least 3 points")
@@ -178,6 +251,10 @@ def build_camera_config(
                 "placeholder": False,
             }
         )
+    if create_default_zone and create_default_subzones:
+        default_subzones = build_default_subzones(camera_id, zone_id, normalized_entry_points)
+        cfg["subzones"].extend(default_subzones)
+        cfg["default_subzone_id"] = default_subzones[0]["subzone_id"] if default_subzones else ""
     return cfg
 
 
@@ -340,6 +417,7 @@ def write_outputs(args, frame, source_type, roi_points, entry_points):
         role=args.role,
         description=args.description,
         create_default_zone=not args.no_default_zone,
+        create_default_subzones=getattr(args, "with_default_subzones", False),
     )
     calibration["cameras"][args.camera] = camera_cfg
     errors, warnings = validate_scene_calibration(calibration)
@@ -369,6 +447,11 @@ def parse_args(argv=None):
     parser.add_argument("--role", default="entry")
     parser.add_argument("--description", default="")
     parser.add_argument("--no-default-zone", action="store_true", help="Do not create a default zone from the ROI polygon.")
+    parser.add_argument(
+        "--with-default-subzones",
+        action="store_true",
+        help="Also generate review-ready entry/interior subzone placeholders from the entry line.",
+    )
     return parser.parse_args(argv)
 
 
