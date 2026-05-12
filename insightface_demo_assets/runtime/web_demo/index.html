@@ -6,39 +6,45 @@
   <title>Live Stranger Demo</title>
   <style>
     :root {
-      --bg: #f3efe6;
-      --card: #fffaf0;
-      --ink: #1b2a1f;
-      --accent: #0d6b4c;
-      --accent-2: #c65c2d;
-      --muted: #6b766f;
-      --line: #d9d0bf;
+      --bg: #07100c;
+      --card: #0f1b15;
+      --panel: #14231b;
+      --ink: #edf7ef;
+      --accent: #43d17f;
+      --accent-2: #ff675c;
+      --amber: #ffbe4d;
+      --muted: #9bb4a5;
+      --line: #294235;
     }
     body {
       margin: 0;
       font-family: "Segoe UI", Tahoma, sans-serif;
-      background: radial-gradient(circle at top, #fff7df 0%, var(--bg) 55%);
+      background:
+        radial-gradient(circle at top left, rgba(67, 209, 127, 0.16), transparent 34%),
+        linear-gradient(135deg, #050907 0%, var(--bg) 58%, #111b16 100%);
       color: var(--ink);
     }
     .shell {
-      max-width: 1240px;
+      max-width: 1380px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 16px;
     }
     .hero {
       display: grid;
+      grid-template-columns: 1fr auto;
       gap: 12px;
-      margin-bottom: 24px;
+      align-items: end;
+      margin-bottom: 14px;
     }
     .hero h1 {
       margin: 0;
-      font-size: clamp(28px, 4vw, 42px);
+      font-size: clamp(24px, 3vw, 34px);
       letter-spacing: 0.02em;
     }
     .hero p {
       margin: 0;
       color: var(--muted);
-      max-width: 840px;
+      max-width: 760px;
     }
     .hero a {
       color: var(--accent);
@@ -47,16 +53,16 @@
     }
     .summary {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 12px;
-      margin-bottom: 22px;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
     }
     .metric {
-      background: var(--card);
+      background: rgba(15, 27, 21, 0.9);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px 16px;
-      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.06);
+      border-radius: 14px;
+      padding: 10px 12px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
     }
     .metric .label {
       font-size: 12px;
@@ -65,9 +71,41 @@
       color: var(--muted);
     }
     .metric .value {
-      font-size: 28px;
+      font-size: 22px;
       font-weight: 700;
-      margin-top: 6px;
+      margin-top: 4px;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      border: 1px solid rgba(67, 209, 127, 0.35);
+      border-radius: 18px;
+      background: rgba(67, 209, 127, 0.08);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+    }
+    .flow strong { color: var(--accent); }
+    .flow-path {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .flow-step {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 999px;
+      padding: 5px 10px;
+    }
+    .flow-step.active {
+      color: #06110b;
+      background: var(--accent);
+      border-color: var(--accent);
     }
     .event-grid,
     .timeline-grid,
@@ -78,17 +116,27 @@
       gap: 16px;
     }
     .camera-grid {
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      margin-bottom: 22px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 16px;
     }
     .camera-card,
     .handoff-card {
-      background: #101711;
+      background: #0b130f;
       color: #e9f2ea;
       border: 1px solid #2f4436;
-      border-radius: 18px;
-      padding: 12px;
-      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.12);
+      border-radius: 16px;
+      padding: 10px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
+      transition: transform 0.2s ease, opacity 0.2s ease, border-color 0.2s ease;
+    }
+    .camera-card.active {
+      grid-column: span 2;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(67, 209, 127, 0.35) inset, 0 18px 56px rgba(67, 209, 127, 0.12);
+      transform: translateY(-2px);
+    }
+    .camera-card.standby {
+      opacity: 0.56;
     }
     .camera-card img {
       display: block;
@@ -102,9 +150,21 @@
       display: grid;
       gap: 4px;
       margin-top: 8px;
-      font-size: 13px;
+      font-size: 12px;
       color: #b8c7bb;
     }
+    .status-badge {
+      display: inline-flex;
+      width: fit-content;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .status-badge.active { background: var(--accent); color: #06110b; }
+    .status-badge.standby { background: rgba(255, 190, 77, 0.18); color: var(--amber); border: 1px solid rgba(255, 190, 77, 0.35); }
     .handoff-grid {
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       margin-top: 20px;
@@ -134,7 +194,7 @@
       display: grid;
       grid-template-columns: 120px 1fr;
       gap: 14px;
-      background: var(--card);
+      background: rgba(15, 27, 21, 0.92);
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 14px;
@@ -198,12 +258,12 @@
       border: 1px dashed var(--line);
       border-radius: 16px;
       color: var(--muted);
-      background: rgba(255,255,255,0.55);
+      background: rgba(255,255,255,0.04);
     }
     .timeline-card,
     .timeline-detail,
     .appearance-card {
-      background: var(--card);
+      background: rgba(15, 27, 21, 0.92);
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 16px;
@@ -253,19 +313,38 @@
       height: 72px;
       border-radius: 10px;
     }
+    h2.section-title {
+      margin: 18px 0 10px;
+      font-size: 16px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    @media (max-width: 980px) {
+      .camera-grid { grid-template-columns: 1fr; }
+      .camera-card.active { grid-column: span 1; }
+      .hero, .flow { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <main class="shell">
     <section class="hero">
-      <h1>Realtime Stranger Event Demo</h1>
-      <p>This page reads real event and timeline artifacts from the current run directory. It is for debugging and defense presentation: latest event cards show the current decision state, and the Unknown timeline below reconstructs the cross-camera history from real resolved events.</p>
-      <p><a href="/calibration.html">Open manual calibration tool</a></p>
+      <div>
+        <h1>Sequential Stranger Tracking Demo</h1>
+        <p>C1 -> fake travel time -> C2 -> fake travel time -> C3 -> fake travel time -> C4. Events, IDs, and Re-ID cards are read from real pipeline artifacts.</p>
+      </div>
+      <p><a href="/calibration.html">Calibration tool</a></p>
     </section>
+    <section class="flow" id="demoFlow"></section>
     <section class="summary" id="summary"></section>
+    <h2 class="section-title">Camera replay</h2>
     <section class="camera-grid" id="cameraStreams"></section>
+    <h2 class="section-title">Latest ENTRY_IN events</h2>
     <section class="event-grid" id="events"></section>
+    <h2 class="section-title">Cross-camera Re-ID evidence</h2>
     <section class="handoff-grid" id="handoffs"></section>
+    <h2 class="section-title">Unknown identity timeline</h2>
     <section class="timeline-grid" id="timeline"></section>
     <section class="timeline-detail" id="timelineDetail"></section>
   </main>
@@ -292,15 +371,33 @@
       const root = document.getElementById("summary");
       const workerCount = Object.keys(summary.worker_summaries || {}).length;
       root.innerHTML = [
-        metric("Live Events", summary.live_event_count || 0),
+        metric("ENTRY_IN", summary.live_event_count || 0),
         metric("Unknown", summary.unknown_event_count || 0),
         metric("Known", summary.known_event_count || 0),
-        metric("Pending", summary.pending_event_count || 0),
         metric("Body Fallback", summary.body_fallback_used_count || 0),
-        metric("Avg Latency", `${summary.avg_latency_sec || 0}s`),
-        metric("Dropped Frames", summary.dropped_frames_total || 0),
         metric("Workers", workerCount),
       ].join("");
+    }
+
+    function renderDemoFlow(cameraState) {
+      const root = document.getElementById("demoFlow");
+      const states = cameraState.cameras || {};
+      const first = Object.values(states)[0] || {};
+      const sequence = first.camera_sequence || Object.keys(states);
+      const active = first.active_camera || Object.values(states).find((item) => item.is_active_camera)?.camera_id || "";
+      const phase = first.phase_kind || "active";
+      const remaining = first.phase_remaining_sec ?? 0;
+      const travel = first.travel_from_camera && first.travel_to_camera
+        ? `${first.travel_from_camera} -> ${first.travel_to_camera}`
+        : "";
+      const path = sequence.map((cameraId) => `<span class="flow-step ${cameraId === active ? "active" : ""}">${cameraId}</span>`).join("<span>-></span>");
+      root.innerHTML = `
+        <div>
+          <strong>${phase === "travel_gap" ? "Fake travel time" : `Now showing ${active || "camera"}`}</strong>
+          <div class="meta">${travel || "Only one camera is active at a time for the non-overlap travel-time demo."}</div>
+        </div>
+        <div class="flow-path">${path}<span class="flow-step">${Number(remaining).toFixed(1)}s</span></div>
+      `;
     }
 
     function renderCameraStreams(cameraConfig, cameraState) {
@@ -313,14 +410,18 @@
       root.innerHTML = cameras.map((cameraId) => {
         const cfg = cameraConfig.cameras[cameraId] || {};
         const state = (cameraState.cameras || {})[cameraId] || {};
+        const isActive = !!state.is_active_camera;
+        const cardClass = `camera-card ${isActive ? "active" : "standby"}`;
+        const statusClass = isActive ? "active" : "standby";
+        const statusText = isActive ? "ACTIVE" : (state.phase_kind === "travel_gap" ? "TRAVEL GAP" : "WAITING");
         return `
-          <article class="camera-card">
+          <article class="${cardClass}">
             <img src="/api/camera-stream?camera_id=${encodeURIComponent(cameraId)}" alt="${cameraId} stream">
             <div class="camera-meta">
-              <strong>${cameraId} - ${cfg.role || "camera"} - ${state.mode || "OFFLINE_REPLAY_STREAM"}</strong>
-              <span>${cfg.description || ""}</span>
-              <span>FPS=${state.fps_estimate || 0} frame=${state.frame_index || 0} tracks=${state.track_count || 0} ENTRY_IN=${state.event_count || 0}</span>
-              <span>age=${state.latest_frame_age_ms ?? "N/A"}ms error=${state.error || "none"}</span>
+              <span class="status-badge ${statusClass}">${statusText}</span>
+              <strong>${cameraId} - ${cfg.role || "camera"} - clip ${state.demo_pair_id || "-"}</strong>
+              <span>FPS=${state.fps_estimate || 0} | frame=${state.frame_index || 0} | tracks=${state.track_count || 0} | ENTRY_IN=${state.event_count || 0}</span>
+              <span>mode=${state.mode || "OFFLINE_REPLAY_STREAM"} | error=${state.error || "none"}</span>
             </div>
           </article>
         `;
@@ -332,10 +433,20 @@
         const cameraId = Object.keys(cameraState.cameras || {})[index];
         if (!cameraId) return;
         const state = cameraState.cameras[cameraId] || {};
+        node.classList.toggle("active", !!state.is_active_camera);
+        node.classList.toggle("standby", !state.is_active_camera);
         const meta = node.querySelector(".camera-meta");
         if (meta) {
-          meta.querySelectorAll("span")[1].textContent = `FPS=${state.fps_estimate || 0} frame=${state.frame_index || 0} tracks=${state.track_count || 0} ENTRY_IN=${state.event_count || 0}`;
-          meta.querySelectorAll("span")[2].textContent = `age=${state.latest_frame_age_ms ?? "N/A"}ms error=${state.error || "none"}`;
+          const badge = meta.querySelector(".status-badge");
+          if (badge) {
+            const isActive = !!state.is_active_camera;
+            badge.className = `status-badge ${isActive ? "active" : "standby"}`;
+            badge.textContent = isActive ? "ACTIVE" : (state.phase_kind === "travel_gap" ? "TRAVEL GAP" : "WAITING");
+          }
+          const strong = meta.querySelector("strong");
+          if (strong) strong.textContent = `${cameraId} - ${state.demo_pair_id ? `clip ${state.demo_pair_id}` : "camera"}`;
+          meta.querySelectorAll("span")[1].textContent = `FPS=${state.fps_estimate || 0} | frame=${state.frame_index || 0} | tracks=${state.track_count || 0} | ENTRY_IN=${state.event_count || 0}`;
+          meta.querySelectorAll("span")[2].textContent = `mode=${state.mode || "OFFLINE_REPLAY_STREAM"} | error=${state.error || "none"}`;
         }
       });
     }
@@ -506,6 +617,7 @@
           browserState.selectedIdentityId = "";
         }
         renderSummary(summary);
+        renderDemoFlow(cameraState);
         if (!browserState.camerasInitialized) {
           renderCameraStreams(cameraConfig, cameraState);
           browserState.camerasInitialized = true;

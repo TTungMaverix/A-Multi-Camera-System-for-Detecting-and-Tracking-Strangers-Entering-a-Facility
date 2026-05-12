@@ -135,6 +135,44 @@ cd /d "<repo-root>"
 ".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --host 127.0.0.1 --port 8765 --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_a1\offline_runs\a1" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --stream-target-fps 15
 ```
 
+## Run C1 Demo Data
+
+The `c1` clip pair is a newly added New Dataset case. It is not a training run; it uses the existing pretrained detector/tracker/face models and produces runtime artifacts for the Live Demo UI.
+
+Expected source files:
+
+- `D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\c1.mp4`
+- `D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 2\c1.mp4`
+
+The generated run used by the UI is:
+
+- `outputs/evaluations/c1_demo_artifacts/offline_runs/c1`
+
+Run the server with Command Prompt:
+
+```cmd
+cd /d "C:\Users\Admin\AppData\Local\Temp\doantn-p0-phase"
+set "DATASET_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset"
+set "KNOWN_DB_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID"
+run_live_event_demo_server_c1.cmd
+```
+
+Or run the explicit command:
+
+```cmd
+cd /d "C:\Users\Admin\AppData\Local\Temp\doantn-p0-phase"
+set "DATASET_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset"
+"D:\ĐỒ ÁN TỐT NGHIỆP\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --project-root "." --dataset-root "%DATASET_ROOT%" --demo-pair-id c1 --output-root ".\outputs\evaluations\c1_demo_artifacts\offline_runs\c1" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --stream-target-fps 15 --presentation-mode sequential --camera-sequence C1,C2,C3,C4 --camera-segment-sec 12 --travel-gap-sec 3
+```
+
+Important: `--demo-pair-id c1` is required. Without it, camera streams would keep using the calibration preview source, which may point to `a1.mp4`, while event cards come from the `c1` output root.
+
+Current `c1` limitation from the generated artifacts:
+
+- CAM1 produced `0` raw detections in the configured 0-120 frame low-load window, so C1/C3 have no track rows or ENTRY_IN events.
+- CAM2 produced `31` detections and emitted C2/C4 ENTRY_IN events.
+- The UI can show `c1` streams and artifacts, but `c1` is currently a Camera-2-only event case under this smoke window.
+
 FPS benchmark command:
 
 ```cmd

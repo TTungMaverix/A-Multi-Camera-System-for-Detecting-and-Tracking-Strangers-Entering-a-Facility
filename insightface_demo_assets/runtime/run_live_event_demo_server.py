@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import mimetypes
+import os
 import sys
 import threading
 import time
@@ -166,6 +167,56 @@ def resolve_preview_source(project_root: Path, camera_cfg, *, source_type_overri
     return source_type, str(resolved)
 
 
+def resolve_demo_pair_id(output_root: Path, requested_pair_id: str) -> str:
+    requested_pair_id = str(requested_pair_id or "").strip()
+    if requested_pair_id and requested_pair_id.lower() != "auto":
+        return requested_pair_id
+    if requested_pair_id.lower() == "auto":
+        return output_root.name.strip()
+    return ""
+
+
+def apply_demo_pair_video_sources(calibration, project_root: Path, dataset_root_value: str, pair_id: str):
+    """Override camera preview videos so stream panels match the selected clip.
+
+    Scene calibration is source-camera geometry, not per-clip geometry. The
+    coordinates stay from calibration, but video streams must use the selected
+    pair (a1/a2/a3/b1/...) so the UI does not keep showing a1 while events come
+    from another output root.
+    """
+
+    if not pair_id:
+        return {}
+    dataset_root = resolve_path(project_root, dataset_root_value or "New Dataset")
+    camera_source_dirs = {
+        "C1": "Camera 1",
+        "C2": "Camera 2",
+        "C3": "Camera 1",
+        "C4": "Camera 2",
+    }
+    applied = {}
+    missing = []
+    cameras = calibration.get("cameras", {}) or {}
+    for camera_id, source_dir in camera_source_dirs.items():
+        if camera_id not in cameras:
+            continue
+        video_path = None
+        for suffix in (".mp4", ".avi", ".mov", ".mkv"):
+            candidate = dataset_root / source_dir / f"{pair_id}{suffix}"
+            if candidate.exists():
+                video_path = candidate
+                break
+        if video_path is None:
+            missing.append(str(dataset_root / source_dir / f"{pair_id}.mp4"))
+            continue
+        cameras[camera_id]["preview_source"] = str(video_path)
+        cameras[camera_id]["preview_source_type"] = "file"
+        applied[camera_id] = str(video_path)
+    if missing:
+        raise RuntimeError("demo_pair_video_missing:" + ";".join(missing))
+    return applied
+
+
 def render_calibration_preview(
     calibration,
     camera_id,
@@ -287,6 +338,66 @@ class FrameBufferHub:
             }
 
 
+class SequentialDemoClock:
+    """Presentation clock for non-overlap demo playback.
+
+    The thesis demo uses C3/C4 as delayed logical replays. Showing all four
+    streams at once makes the non-overlap travel-time story hard to follow, so
+    this clock exposes one active camera segment at a time with an explicit
+    travel gap before the next camera becomes active.
+    """
+
+    def __init__(self, camera_sequence, segment_sec=10.0, travel_gap_sec=3.0):
+        self.camera_sequence = [str(item).strip() for item in camera_sequence if str(item).strip()]
+        self.segment_sec = max(1.0, float(segment_sec or 10.0))
+        self.travel_gap_sec = max(0.0, float(travel_gap_sec or 0.0))
+        self.started_at = time.time()
+
+    def phase(self):
+        if not self.camera_sequence:
+            return {
+                "presentation_mode": "simultaneous",
+                "phase_kind": "active",
+                "active_camera": "",
+                "phase_remaining_sec": 0.0,
+            }
+        slot_sec = self.segment_sec + self.travel_gap_sec
+        cycle_sec = max(slot_sec * len(self.camera_sequence), 1.0)
+        elapsed = (time.time() - self.started_at) % cycle_sec
+        slot_index = min(int(elapsed // slot_sec), len(self.camera_sequence) - 1)
+        slot_pos = elapsed - (slot_index * slot_sec)
+        current_camera = self.camera_sequence[slot_index]
+        next_camera = self.camera_sequence[(slot_index + 1) % len(self.camera_sequence)]
+        if slot_pos < self.segment_sec:
+            return {
+                "presentation_mode": "sequential",
+                "phase_kind": "active",
+                "active_camera": current_camera,
+                "next_camera": next_camera,
+                "travel_from_camera": "",
+                "travel_to_camera": "",
+                "phase_elapsed_sec": round(slot_pos, 3),
+                "phase_remaining_sec": round(self.segment_sec - slot_pos, 3),
+                "segment_sec": self.segment_sec,
+                "travel_gap_sec": self.travel_gap_sec,
+                "camera_sequence": self.camera_sequence,
+            }
+        travel_elapsed = slot_pos - self.segment_sec
+        return {
+            "presentation_mode": "sequential",
+            "phase_kind": "travel_gap",
+            "active_camera": "",
+            "next_camera": next_camera,
+            "travel_from_camera": current_camera,
+            "travel_to_camera": next_camera,
+            "phase_elapsed_sec": round(travel_elapsed, 3),
+            "phase_remaining_sec": round(self.travel_gap_sec - travel_elapsed, 3),
+            "segment_sec": self.segment_sec,
+            "travel_gap_sec": self.travel_gap_sec,
+            "camera_sequence": self.camera_sequence,
+        }
+
+
 def _draw_text_panel(frame, lines, origin=(14, 26)):
     for index, line in enumerate(lines):
         y = origin[1] + (index * 25)
@@ -304,7 +415,17 @@ def _row_bbox(row):
 
 
 class OfflineReplayFrameWorker(threading.Thread):
-    def __init__(self, camera_id, camera_cfg, runtime_camera, project_root: Path, output_root: Path, hub: FrameBufferHub, target_fps=15.0):
+    def __init__(
+        self,
+        camera_id,
+        camera_cfg,
+        runtime_camera,
+        project_root: Path,
+        output_root: Path,
+        hub: FrameBufferHub,
+        target_fps=15.0,
+        demo_clock=None,
+    ):
         super().__init__(name=f"frame-worker-{camera_id}", daemon=True)
         self.camera_id = camera_id
         self.camera_cfg = camera_cfg
@@ -313,6 +434,7 @@ class OfflineReplayFrameWorker(threading.Thread):
         self.output_root = output_root
         self.hub = hub
         self.target_fps = max(1.0, float(target_fps or 15.0))
+        self.demo_clock = demo_clock
         self.stop_event = threading.Event()
         self.track_rows_by_source_frame = defaultdict(list)
         self.event_rows_by_source_frame = defaultdict(list)
@@ -331,7 +453,8 @@ class OfflineReplayFrameWorker(threading.Thread):
     def stop(self):
         self.stop_event.set()
 
-    def _annotate(self, frame, source_frame_idx, fps):
+    def _annotate(self, frame, source_frame_idx, fps, phase=None):
+        phase = phase or {}
         frame = draw_scene_overlay(frame, self.runtime_camera)
         active_tracks = []
         for row in self.track_rows_by_source_frame.get(source_frame_idx, []):
@@ -369,6 +492,57 @@ class OfflineReplayFrameWorker(threading.Thread):
             "entry_events": event_rows,
             "event_count": len(event_rows),
             "track_count": len(active_tracks),
+            "video_source": self.camera_cfg.get("preview_source", ""),
+            "demo_pair_id": Path(str(self.camera_cfg.get("preview_source", ""))).stem,
+            "presentation_mode": phase.get("presentation_mode", "simultaneous"),
+            "phase_kind": phase.get("phase_kind", "active"),
+            "is_active_camera": phase.get("presentation_mode") != "sequential" or phase.get("active_camera") == self.camera_id,
+            "active_camera": phase.get("active_camera", self.camera_id),
+            "next_camera": phase.get("next_camera", ""),
+            "travel_from_camera": phase.get("travel_from_camera", ""),
+            "travel_to_camera": phase.get("travel_to_camera", ""),
+            "phase_remaining_sec": phase.get("phase_remaining_sec", 0.0),
+            "camera_sequence": phase.get("camera_sequence", []),
+        }
+
+    def _standby(self, frame, phase):
+        frame = draw_scene_overlay(frame.copy(), self.runtime_camera)
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
+        frame = cv2.addWeighted(overlay, 0.48, frame, 0.52, 0)
+        if phase.get("phase_kind") == "travel_gap":
+            status = f"FAKE TRAVEL TIME: {phase.get('travel_from_camera')} -> {phase.get('travel_to_camera')}"
+        else:
+            status = f"WAITING FOR TURN. Active camera: {phase.get('active_camera')}"
+        _draw_text_panel(
+            frame,
+            [
+                f"{self.camera_id} STANDBY",
+                status,
+                f"next={phase.get('next_camera', '-')} remaining={phase.get('phase_remaining_sec', 0):.1f}s",
+            ],
+            origin=(18, 34),
+        )
+        return frame, {
+            "camera_id": self.camera_id,
+            "mode": "SEQUENTIAL_STANDBY",
+            "frame_index": 0,
+            "demo_time_sec": 0.0,
+            "active_tracks": [],
+            "entry_events": [],
+            "event_count": 0,
+            "track_count": 0,
+            "video_source": self.camera_cfg.get("preview_source", ""),
+            "demo_pair_id": Path(str(self.camera_cfg.get("preview_source", ""))).stem,
+            "presentation_mode": phase.get("presentation_mode", "sequential"),
+            "phase_kind": phase.get("phase_kind", "travel_gap"),
+            "is_active_camera": False,
+            "active_camera": phase.get("active_camera", ""),
+            "next_camera": phase.get("next_camera", ""),
+            "travel_from_camera": phase.get("travel_from_camera", ""),
+            "travel_to_camera": phase.get("travel_to_camera", ""),
+            "phase_remaining_sec": phase.get("phase_remaining_sec", 0.0),
+            "camera_sequence": phase.get("camera_sequence", []),
         }
 
     def run(self):
@@ -380,17 +554,36 @@ class OfflineReplayFrameWorker(threading.Thread):
             if not capture.isOpened():
                 raise RuntimeError(f"failed_to_open_video:{source_value}")
             fps = capture.get(cv2.CAP_PROP_FPS) or self.target_fps
+            ok, first_frame = capture.read()
+            if not ok:
+                raise RuntimeError(f"failed_to_read_first_frame:{source_value}")
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
             frame_interval = 1.0 / self.target_fps
             source_frame_idx = 0
+            was_active = False
             try:
                 while not self.stop_event.is_set():
                     loop_started = time.time()
+                    phase = self.demo_clock.phase() if self.demo_clock else {"presentation_mode": "simultaneous", "phase_kind": "active", "active_camera": self.camera_id}
+                    is_active = phase.get("presentation_mode") != "sequential" or phase.get("active_camera") == self.camera_id
+                    if not is_active:
+                        standby_frame, metadata = self._standby(first_frame, phase)
+                        ok, encoded = cv2.imencode(".jpg", standby_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+                        if ok:
+                            self.hub.update(self.camera_id, encoded.tobytes(), metadata)
+                        was_active = False
+                        time.sleep(min(0.5, frame_interval))
+                        continue
+                    if not was_active:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        source_frame_idx = 0
+                        was_active = True
                     ok, frame = capture.read()
                     if not ok:
                         capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         source_frame_idx = 0
                         continue
-                    annotated, metadata = self._annotate(frame, source_frame_idx, fps)
+                    annotated, metadata = self._annotate(frame, source_frame_idx, fps, phase=phase)
                     ok, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
                     if ok:
                         self.hub.update(self.camera_id, encoded.tobytes(), metadata)
@@ -723,6 +916,12 @@ def parse_args():
     parser.add_argument("--output-root", default="outputs/live_runs/file_sanity")
     parser.add_argument("--scene-calibration-config", default=DEFAULT_SCENE_CALIBRATION_PATH)
     parser.add_argument("--stream-target-fps", type=float, default=15.0)
+    parser.add_argument("--presentation-mode", choices=["simultaneous", "sequential"], default="simultaneous")
+    parser.add_argument("--camera-sequence", default="C1,C2,C3,C4")
+    parser.add_argument("--camera-segment-sec", type=float, default=10.0)
+    parser.add_argument("--travel-gap-sec", type=float, default=3.0)
+    parser.add_argument("--dataset-root", default=os.environ.get("DATASET_ROOT", "New Dataset"))
+    parser.add_argument("--demo-pair-id", default="", help="Clip pair to show in camera streams, e.g. a1, a3, b1. Use auto to infer from output-root basename.")
     return parser.parse_args()
 
 
@@ -737,8 +936,22 @@ def main():
         base_dir=project_root,
         required=False,
     )
+    demo_pair_id = resolve_demo_pair_id(output_root, args.demo_pair_id)
+    applied_video_sources = apply_demo_pair_video_sources(
+        calibration,
+        project_root,
+        args.dataset_root,
+        demo_pair_id,
+    )
     runtime_cameras = {}
     frame_hub = FrameBufferHub()
+    demo_clock = None
+    if args.presentation_mode == "sequential":
+        demo_clock = SequentialDemoClock(
+            [item.strip() for item in args.camera_sequence.split(",") if item.strip()],
+            segment_sec=args.camera_segment_sec,
+            travel_gap_sec=args.travel_gap_sec,
+        )
     workers = []
     for camera_id, camera_cfg in sorted(((calibration.get("cameras", {}) or {}).items())):
         try:
@@ -758,6 +971,7 @@ def main():
                 output_root,
                 frame_hub,
                 target_fps=args.stream_target_fps,
+                demo_clock=demo_clock,
             )
             workers.append(worker)
             worker.start()
@@ -780,6 +994,12 @@ def main():
     print(f"LIVE_DEMO_OUTPUT_ROOT={output_root}")
     print(f"SCENE_CALIBRATION_CONFIG={scene_calibration_path}")
     print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
+    print(f"PRESENTATION_MODE={args.presentation_mode}")
+    print(f"DEMO_PAIR_ID={demo_pair_id or 'from_calibration_preview_source'}")
+    for camera_id, source_path in sorted(applied_video_sources.items()):
+        print(f"DEMO_VIDEO_SOURCE[{camera_id}]={source_path}")
+    if demo_clock:
+        print(f"CAMERA_SEQUENCE={','.join(demo_clock.camera_sequence)} SEGMENT_SEC={demo_clock.segment_sec} TRAVEL_GAP_SEC={demo_clock.travel_gap_sec}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
