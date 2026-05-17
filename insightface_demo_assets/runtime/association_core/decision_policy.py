@@ -71,32 +71,83 @@ def _relation_thresholds(policy, relation_type):
     return thresholds["weak_link"]
 
 
-def _topology_supported_accept(candidate, decision_cfg, primary_threshold):
+def _topology_supported_accept(candidate, decision_cfg, primary_threshold, primary_floor=0.0):
     cfg = decision_cfg.get("topology_supported_accept", {}) or {}
+    appearance_primary = float(candidate.get("appearance_primary", 0.0) or 0.0)
+    candidate_count_after_filter = int(candidate.get("candidate_count_after_filter", candidate.get("candidate_count_total", 0)) or 0)
+    result = {
+        "allowed": False,
+        "base_body_threshold": round(float(primary_threshold), 4),
+        "dynamic_body_threshold": round(float(primary_threshold), 4),
+        "dynamic_threshold_applied": False,
+        "candidate_count_after_filter": candidate_count_after_filter,
+        "shortfall": round(max(0.0, float(primary_threshold) - appearance_primary), 4),
+        "reason": "",
+    }
+
+    def _reject(reason):
+        result["reason"] = reason
+        return result
+
     if not cfg.get("enabled", False):
-        return False
+        return _reject("topology_supported_accept_disabled")
     if candidate.get("primary_modality") != str(cfg.get("require_primary_modality", "body")):
-        return False
+        return _reject("topology_supported_primary_modality_mismatch")
     if candidate.get("relation_type") not in list(cfg.get("allowed_relations", ["sequential"])):
-        return False
+        return _reject("topology_supported_relation_reject")
     if not candidate.get("hard_filter_pass", candidate.get("topology_allowed", False)):
-        return False
-    if float(candidate.get("time_score", 0.0)) < float(cfg.get("min_time_score", 0.9)):
-        return False
+        return _reject("topology_supported_hard_filter_reject")
+    if float(candidate.get("time_score", 0.0) or 0.0) < float(cfg.get("min_time_score", 0.9)):
+        return _reject("topology_supported_low_time_score")
+    if float(candidate.get("topology_score", 0.0) or 0.0) < float(cfg.get("min_topology_score", 0.95)):
+        return _reject("topology_supported_low_topology_score")
     if bool(cfg.get("require_exact_zone", True)) and (
         not candidate.get("zone_valid", False) or candidate.get("fallback_without_zone", False)
     ):
-        return False
+        return _reject("topology_supported_zone_reject")
     if bool(cfg.get("require_exact_subzone", True)) and (
         not candidate.get("subzone_valid", False) or candidate.get("fallback_without_subzone", False)
     ):
-        return False
-    shortfall = float(primary_threshold) - float(candidate.get("appearance_primary", 0.0))
-    if shortfall < 0.0:
-        shortfall = 0.0
-    if shortfall > float(cfg.get("max_primary_shortfall", 0.1)):
-        return False
-    return True
+        return _reject("topology_supported_subzone_reject")
+    if bool(cfg.get("require_unique_candidate", True)) and candidate_count_after_filter > int(
+        cfg.get("max_candidate_count_after_filter", 1)
+    ):
+        return _reject("topology_supported_candidate_not_unique")
+    if (
+        candidate.get("face_available", False)
+        and candidate.get("face_reliable", False)
+        and float(candidate.get("face_score", 0.0) or 0.0) <= float(cfg.get("strong_face_conflict_max_score", 0.2))
+    ):
+        return _reject("topology_supported_strong_face_conflict")
+
+    shortfall_threshold = max(
+        float(primary_floor),
+        float(primary_threshold) - float(cfg.get("max_primary_shortfall", 0.1)),
+    )
+    dynamic_threshold = shortfall_threshold
+    if bool(cfg.get("dynamic_body_threshold_enabled", False)):
+        ratio = max(0.5, min(1.0, float(cfg.get("dynamic_body_threshold_ratio", 0.8))))
+        max_relaxation = max(0.0, float(cfg.get("dynamic_body_threshold_max_relaxation", 0.16)))
+        relaxed_threshold = max(
+            float(primary_floor),
+            max(float(primary_threshold) * ratio, float(primary_threshold) - max_relaxation),
+        )
+        dynamic_threshold = min(shortfall_threshold, relaxed_threshold)
+        if dynamic_threshold < (shortfall_threshold - 1e-6):
+            result["dynamic_threshold_applied"] = True
+    if float(candidate.get("body_score", 0.0) or 0.0) < float(cfg.get("min_dynamic_body_score", primary_floor)):
+        return _reject("topology_supported_body_score_below_floor")
+
+    result["dynamic_body_threshold"] = round(dynamic_threshold, 4)
+    if appearance_primary < dynamic_threshold:
+        return _reject("topology_supported_body_score_below_dynamic_threshold")
+    result["allowed"] = True
+    result["reason"] = (
+        "topology_supported_dynamic_body_accept"
+        if result["dynamic_threshold_applied"]
+        else "topology_supported_body_accept"
+    )
+    return result
 
 
 def _decision_score_components(candidate, policy):
@@ -171,13 +222,28 @@ def _candidate_acceptance(candidate, policy):
     }
 
     if candidate["appearance_primary"] < primary_threshold:
-        if _topology_supported_accept(candidate, policy, primary_threshold):
-            threshold_info["topology_supported_accept"] = True
-            threshold_info["topology_supported_shortfall"] = round(
-                float(primary_threshold) - float(candidate["appearance_primary"]),
-                4,
-            )
-            return True, "topology_supported_body_accept", threshold_info
+        topology_supported = _topology_supported_accept(candidate, policy, primary_threshold, primary_floor)
+        threshold_info.update(
+            {
+                "topology_supported_accept": bool(topology_supported.get("allowed", False)),
+                "topology_supported_shortfall": round(
+                    float(primary_threshold) - float(candidate["appearance_primary"]),
+                    4,
+                ),
+                "base_body_threshold": float(topology_supported.get("base_body_threshold", primary_threshold)),
+                "dynamic_body_threshold": float(topology_supported.get("dynamic_body_threshold", primary_threshold)),
+                "dynamic_threshold_applied": bool(topology_supported.get("dynamic_threshold_applied", False)),
+                "candidate_count_after_filter": int(
+                    topology_supported.get(
+                        "candidate_count_after_filter",
+                        candidate.get("candidate_count_after_filter", candidate.get("candidate_count_total", 0)),
+                    )
+                ),
+                "dynamic_threshold_reason": topology_supported.get("reason", ""),
+            }
+        )
+        if topology_supported.get("allowed", False):
+            return True, topology_supported.get("reason", "topology_supported_body_accept"), threshold_info
         return False, "below_primary_threshold", threshold_info
     if (
         minimum_evidence["require_secondary_when_available"]
@@ -256,6 +322,8 @@ def evaluate_profile_candidate(item, profile, topology, policy=None):
         "body_quality": quality["body_quality"],
         "face_available": appearance["face_available"],
         "body_available": appearance["body_available"],
+        "face_reliable": bool(appearance.get("face_reliable")),
+        "body_reliable": bool(appearance.get("body_reliable")),
         "appearance_secondary_available": appearance["appearance_secondary"]
         > float(merged_policy["appearance_evidence"]["secondary_available_min_score"]),
         "appearance_secondary_reliable": bool(appearance.get("secondary_reliable")),
@@ -469,6 +537,11 @@ def _build_decision_log(
                 "time_score": candidate["time_score"],
                 "topology_score": candidate["topology_score"],
                 "zone_score": candidate["zone_score"],
+                "candidate_count_after_filter": candidate.get("candidate_count_after_filter", 0),
+                "base_body_threshold": candidate.get("base_body_threshold", ""),
+                "dynamic_body_threshold": candidate.get("dynamic_body_threshold", ""),
+                "dynamic_threshold_applied": candidate.get("dynamic_threshold_applied", False),
+                "dynamic_threshold_reason": candidate.get("dynamic_threshold_reason", ""),
                 "quality_reliability": candidate["quality_reliability"],
                 "selected_candidate": selected_candidate is not None
                 and candidate["candidate_unknown_global_id"] == selected_candidate["candidate_unknown_global_id"],
@@ -591,12 +664,21 @@ def _score_candidates_for_item(item, profiles, topology, merged_policy, decision
     candidate_scores = []
     for profile in profiles:
         candidate = evaluate_profile_candidate(item, profile, topology, merged_policy)
+        candidate_scores.append(candidate)
+    candidate_count_total = len(candidate_scores)
+    candidate_count_after_filter = sum(1 for candidate in candidate_scores if candidate.get("hard_filter_pass"))
+    for candidate in candidate_scores:
+        candidate["candidate_count_total"] = candidate_count_total
+        candidate["candidate_count_after_filter"] = candidate_count_after_filter
         allowed, acceptance_reason, threshold_info = _candidate_acceptance(candidate, decision_cfg)
         candidate["acceptance_pass"] = allowed
         candidate["acceptance_reason"] = acceptance_reason
         candidate["thresholds_used"] = threshold_info
+        candidate["base_body_threshold"] = threshold_info.get("base_body_threshold", "")
+        candidate["dynamic_body_threshold"] = threshold_info.get("dynamic_body_threshold", "")
+        candidate["dynamic_threshold_applied"] = bool(threshold_info.get("dynamic_threshold_applied", False))
+        candidate["dynamic_threshold_reason"] = threshold_info.get("dynamic_threshold_reason", "")
         candidate["ranking_key"] = json.dumps(_ranking_key(candidate))
-        candidate_scores.append(candidate)
     candidate_scores.sort(key=_ranking_key, reverse=True)
 
     top1 = candidate_scores[0] if candidate_scores else None

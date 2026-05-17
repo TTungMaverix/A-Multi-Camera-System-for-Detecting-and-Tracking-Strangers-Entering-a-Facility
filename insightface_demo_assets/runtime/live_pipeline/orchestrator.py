@@ -660,7 +660,20 @@ def _load_known_gallery(runtime_config, app, project_root: Path, output_root: Pa
     manifest_rows = read_csv(manifest_csv) if manifest_csv.exists() else []
     gallery_embeddings_csv = output_root / "events" / "known_face_embeddings_live.csv"
     identity_means, _rows = build_gallery_embeddings(app, manifest_rows, project_root, gallery_embeddings_csv)
-    return identity_means
+    embedding_dim = 0
+    if identity_means:
+        first_embedding = next(iter(identity_means.values()))
+        embedding_dim = len(first_embedding) if first_embedding is not None else 0
+    summary = {
+        "known_db_root": runtime_config.get("known_face_gallery_root", ""),
+        "known_manifest_csv": str(manifest_csv),
+        "known_embeddings_csv": str(gallery_embeddings_csv),
+        "identity_count": len(identity_means),
+        "known_ids_loaded": sorted(identity_means.keys()),
+        "embedding_dimension": int(embedding_dim),
+        "known_match_threshold": float(runtime_config.get("matching", {}).get("known_match_threshold", 0.0)),
+    }
+    return identity_means, summary
 
 
 def _build_live_event_view(latest_row, event, latest_log, pipeline_start_time):
@@ -733,7 +746,13 @@ def run_live_pipeline(config_path: Path):
         providers=[runtime_config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
-    identity_means = _load_known_gallery(runtime_config, app, project_root, output_root)
+    identity_means, known_gallery_summary = _load_known_gallery(runtime_config, app, project_root, output_root)
+    print(f"KNOWN_DB_ROOT={known_gallery_summary['known_db_root']}")
+    print(f"KNOWN_DB_MANIFEST={known_gallery_summary['known_manifest_csv']}")
+    print(f"KNOWN_DB_IDENTITIES={known_gallery_summary['identity_count']}")
+    print(f"KNOWN_DB_IDS={','.join(known_gallery_summary['known_ids_loaded'])}")
+    print(f"KNOWN_DB_EMBED_DIM={known_gallery_summary['embedding_dimension']}")
+    print(f"KNOWN_DB_THRESHOLD={known_gallery_summary['known_match_threshold']}")
     preview_dir = output_root / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
     for camera_id, source_cfg in build_source_lookup(project_root, live_config).items():
@@ -935,6 +954,7 @@ def run_live_pipeline(config_path: Path):
         "association_policy_runtime": policy_runtime,
         "camera_transition_map_runtime": transition_runtime,
         "scene_calibration_runtime": scene_runtime,
+        "known_gallery_summary": known_gallery_summary,
         "architecture_mode": "asynchronous_producer_consumer",
         "runtime_mode": "simulated_realtime_recorded_video",
         "trace_artifact": str(simulated_trace_jsonl),

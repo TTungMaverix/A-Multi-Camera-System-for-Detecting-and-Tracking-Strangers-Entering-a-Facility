@@ -171,6 +171,43 @@ def test_gray_world_preprocessing_rebalances_channels():
     assert max(means) - min(means) < 10.0
 
 
+def test_lab_clahe_preprocessing_preserves_color_channels():
+    image = np.zeros((64, 32, 3), dtype=np.uint8)
+    image[:, :] = (45, 110, 180)
+    processed = preprocess_body_crop(
+        image,
+        {
+            "preprocessing_mode": "lab_clahe",
+            "bbox_shrink_ratio": 0.0,
+            "clahe_enabled": True,
+            "gray_world_normalization": False,
+        },
+    )
+
+    assert processed.shape == image.shape
+    assert processed.ndim == 3
+    assert processed.shape[2] == 3
+    assert not np.array_equal(processed[:, :, 0], processed[:, :, 1])
+
+
+def test_gray_world_lab_clahe_keeps_valid_color_image():
+    image = np.zeros((64, 32, 3), dtype=np.uint8)
+    image[:, :] = (30, 90, 170)
+    processed = preprocess_body_crop(
+        image,
+        {
+            "preprocessing_mode": "gray_world_lab_clahe",
+            "bbox_shrink_ratio": 0.0,
+            "clahe_enabled": True,
+            "gray_world_normalization": True,
+        },
+    )
+
+    assert processed.shape == image.shape
+    assert processed.dtype == np.uint8
+    assert processed.mean() > 0
+
+
 def test_histogram_match_moves_source_toward_reference_distribution():
     source = np.zeros((40, 20, 3), dtype=np.uint8)
     source[:, :] = (30, 60, 90)

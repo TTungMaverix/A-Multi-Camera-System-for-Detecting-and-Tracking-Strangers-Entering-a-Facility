@@ -20,18 +20,15 @@ The transition map owns directed route constraints such as allowed entry/exit
 zone IDs and subzone IDs.
 
 The OpenCV calibration tool writes camera-local `zones` into the scene
-calibration file when it generates a default zone from the processing ROI. That
-zone is used by event creation and spatial assignment. Directed transition
-constraints such as `allowed_entry_subzones` and `allowed_exit_subzones` still
-belong in the camera transition map.
+calibration file when it generates a default zone from the processing ROI that
+you clicked manually. That zone is used by event creation and spatial
+assignment. Directed transition constraints such as `allowed_entry_subzones`
+and `allowed_exit_subzones` still belong in the camera transition map.
 
 Tool command:
 
-```powershell
-& ".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" `
-  --camera C1 `
-  --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" `
-  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```cmd
+".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" --camera C1 --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
 ```
 
 By default, the tool creates:
@@ -44,12 +41,8 @@ By default, the tool creates:
 Subzones remain a second pass when a dataset needs finer route constraints.
 The OpenCV tool can now create minimal review-ready subzone placeholders with:
 
-```powershell
-& ".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" `
-  --camera C1 `
-  --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" `
-  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
-  --with-default-subzones
+```cmd
+".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" --camera C1 --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" --with-default-subzones
 ```
 
 That flag writes:
@@ -59,6 +52,9 @@ That flag writes:
 
 Both are marked `placeholder: true`. Treat them as a starting schema and visual
 review target, not as final route evidence until checked against the camera view.
+
+The tool does not guess the ROI or entry line. A human must always click the
+geometry on the real frame first.
 
 ## Camera-Level Fields
 

@@ -14,7 +14,7 @@ Server:
 
 Wrapper:
 
-- `run_live_event_demo_server.ps1`
+- `run_live_event_demo_server_c1.cmd`
 
 Static pages:
 
@@ -37,7 +37,7 @@ Offline 4-camera ROI benchmark artifacts:
 - `outputs/offline_runs/<run_name>/timelines/unknown_identity_timeline.json`
 - `outputs/offline_runs/<run_name>/summaries/cross_camera_handoff_summary.json`
 
-The current PowerShell wrapper is configured to point at the official 4-camera ROI benchmark output root.
+The current Command Prompt wrapper is configured to point at the selected offline run root.
 
 Frame serving:
 
@@ -121,7 +121,7 @@ OpenAPI docs are in `docs/api/openapi.yaml`.
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_live_event_demo_server.ps1"
+run_live_event_demo_server_c1.cmd
 ```
 
 Default URL:
@@ -172,6 +172,11 @@ Current `c1` limitation from the generated artifacts:
 - CAM1 produced `0` raw detections in the configured 0-120 frame low-load window, so C1/C3 have no track rows or ENTRY_IN events.
 - CAM2 produced `31` detections and emitted C2/C4 ENTRY_IN events.
 - The UI can show `c1` streams and artifacts, but `c1` is currently a Camera-2-only event case under this smoke window.
+
+Calibration note:
+
+- The UI can preview calibration state, but ROI, entry line, and IN-side point still must be clicked manually by a human.
+- Do not use the server or Codex to auto-generate calibration coordinates for a new source camera.
 
 FPS benchmark command:
 

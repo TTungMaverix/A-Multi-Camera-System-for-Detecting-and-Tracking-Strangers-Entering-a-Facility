@@ -3,17 +3,17 @@ association_policy:
     min_bbox_area: 1800.0
     min_body_area: 2500.0
     full_body_area: 26000.0
-    reliable_face_det_score: 0.35
-    strong_face_det_score: 0.5
-    min_face_bbox_width: 36
-    min_face_bbox_height: 36
-    min_face_bbox_area: 1296
-    min_face_blur_score: 55.0
-    max_abs_yaw_deg: 25.0
-    max_abs_pitch_deg: 18.0
-    max_abs_roll_deg: 20.0
+    reliable_face_det_score: 0.25
+    strong_face_det_score: 0.4
+    min_face_bbox_width: 28
+    min_face_bbox_height: 28
+    min_face_bbox_area: 900
+    min_face_blur_score: 40.0
+    max_abs_yaw_deg: 35.0
+    max_abs_pitch_deg: 24.0
+    max_abs_roll_deg: 24.0
     require_landmarks_for_face_buffer: true
-    max_face_buffer_candidates_per_track: 3
+    max_face_buffer_candidates_per_track: 4
   topology_filter:
     relation_priors:
       overlap: 1.0

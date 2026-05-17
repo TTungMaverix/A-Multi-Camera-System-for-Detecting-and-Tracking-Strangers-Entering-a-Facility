@@ -2101,8 +2101,28 @@ def main(config_path: Path):
         manifest_rows,
         ["identity_id", "display_name", "source_repo_path", "gallery_rel_path", "seed_type", "status", "notes"],
     )
-    identity_means, _ = build_gallery_embeddings(app, manifest_rows, base_dir, known_embeddings_csv)
+    identity_means, known_gallery_rows = build_gallery_embeddings(app, manifest_rows, base_dir, known_embeddings_csv)
     gallery_elapsed_sec = round(max(time.perf_counter() - gallery_started, 1e-9), 3)
+    embedding_dim = 0
+    if identity_means:
+        first_identity = next(iter(identity_means.values()))
+        try:
+            embedding_dim = int(len(first_identity))
+        except TypeError:
+            embedding_dim = 0
+    known_gallery_summary = {
+        "known_db_root": str(known_root),
+        "known_manifest_csv": str(known_manifest_csv),
+        "known_embeddings_csv": str(known_embeddings_csv),
+        "identity_count": len(identity_means),
+        "known_ids_loaded": sorted(identity_means.keys()),
+        "embedding_dimension": embedding_dim,
+        "known_match_threshold": float(config["matching"].get("known_match_threshold", 0.65)),
+        "embedding_ok_count": sum(1 for row in known_gallery_rows if row.get("embedding_status") == "ok"),
+        "grayscale_aligned_ok_count": sum(
+            1 for row in known_gallery_rows if row.get("grayscale_preprocessing_status") == "ok"
+        ),
+    }
 
     stage_a, stage_a_rows, _ = build_timeline_audit(track_rows, wildtrack_config["selected_cameras"])
     stage_b_baseline = build_baseline_stage_b(track_rows, queue_rows, wildtrack_config, camera_transition_map)
@@ -2226,6 +2246,18 @@ def main(config_path: Path):
         "stale_pending_count_remaining",
         0,
     )
+    face_body_summary["known_gallery_summary"] = known_gallery_summary
+    face_body_summary["quality_gate_summary"] = {
+        "reliable_face_det_score": association_policy.get("quality_gate", {}).get("reliable_face_det_score", ""),
+        "strong_face_det_score": association_policy.get("quality_gate", {}).get("strong_face_det_score", ""),
+        "min_face_bbox_width": association_policy.get("quality_gate", {}).get("min_face_bbox_width", ""),
+        "min_face_bbox_height": association_policy.get("quality_gate", {}).get("min_face_bbox_height", ""),
+        "min_face_bbox_area": association_policy.get("quality_gate", {}).get("min_face_bbox_area", ""),
+        "min_face_blur_score": association_policy.get("quality_gate", {}).get("min_face_blur_score", ""),
+        "max_abs_yaw_deg": association_policy.get("quality_gate", {}).get("max_abs_yaw_deg", ""),
+        "max_abs_pitch_deg": association_policy.get("quality_gate", {}).get("max_abs_pitch_deg", ""),
+        "max_abs_roll_deg": association_policy.get("quality_gate", {}).get("max_abs_roll_deg", ""),
+    }
     face_body_summary["body_reid_runtime"] = body_reid_runtime.describe()
     face_body_summary["timings_sec"] = {
         "gallery_embedding_sec": gallery_elapsed_sec,
@@ -2464,6 +2496,13 @@ def main(config_path: Path):
         "SCENE_CALIBRATION_SOURCE="
         + (scene_runtime["source_path"] or "preview_only_or_missing")
     )
+    print(f"KNOWN_DB_ROOT={known_gallery_summary['known_db_root']}")
+    print(f"KNOWN_DB_MANIFEST={known_gallery_summary['known_manifest_csv']}")
+    print(f"KNOWN_DB_EMBEDDINGS={known_gallery_summary['known_embeddings_csv']}")
+    print(f"KNOWN_DB_IDENTITIES={known_gallery_summary['identity_count']}")
+    print(f"KNOWN_DB_IDS={','.join(known_gallery_summary['known_ids_loaded'])}")
+    print(f"KNOWN_DB_EMBED_DIM={known_gallery_summary['embedding_dimension']}")
+    print(f"KNOWN_DB_THRESHOLD={known_gallery_summary['known_match_threshold']}")
     print(f"TOTAL_EVENTS={mode_b_metrics['total_event_count']}")
     print(f"UNKNOWN_EVENTS={mode_b_metrics['unknown_event_count']}")
     print(f"UNIQUE_UNKNOWN_IDS={mode_b_metrics['unique_unknown_id_count']}")

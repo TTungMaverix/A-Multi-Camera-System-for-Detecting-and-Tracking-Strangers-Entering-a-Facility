@@ -104,9 +104,15 @@ def preprocess_body_crop(image, cfg, reference_image=None):
     normalized = processed.copy()
     if mode in {"histogram_match", "histogram_match_gray_world"} and reference_image is not None:
         normalized = match_histogram_to_reference(normalized, reference_image)
-    if mode in {"gray_world", "gray_world_clahe", "histogram_match_gray_world"}:
+    if mode in {
+        "gray_world",
+        "gray_world_clahe",
+        "gray_world_lab_clahe",
+        "gray_world_ycrcb_clahe",
+        "histogram_match_gray_world",
+    }:
         normalized = _gray_world_normalize(normalized)
-    if mode in {"clahe", "gray_world_clahe"}:
+    if mode in {"clahe", "lab_clahe", "gray_world_clahe", "gray_world_lab_clahe"}:
         lab = cv2.cvtColor(normalized, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
         grid_size = int(cfg.get("clahe_tile_grid_size", 8))
@@ -117,6 +123,17 @@ def preprocess_body_crop(image, cfg, reference_image=None):
         )
         l_channel = clahe.apply(l_channel)
         normalized = cv2.cvtColor(cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
+    if mode in {"ycrcb_clahe", "gray_world_ycrcb_clahe"}:
+        ycrcb = cv2.cvtColor(normalized, cv2.COLOR_BGR2YCrCb)
+        y_channel, cr_channel, cb_channel = cv2.split(ycrcb)
+        grid_size = int(cfg.get("clahe_tile_grid_size", 8))
+        grid_size = max(2, grid_size)
+        clahe = cv2.createCLAHE(
+            clipLimit=float(cfg.get("clahe_clip_limit", 2.0)),
+            tileGridSize=(grid_size, grid_size),
+        )
+        y_channel = clahe.apply(y_channel)
+        normalized = cv2.cvtColor(cv2.merge((y_channel, cr_channel, cb_channel)), cv2.COLOR_YCrCb2BGR)
     return normalized
 
 
@@ -172,6 +189,10 @@ class OSNetBodyReIDExtractor:
         )
 
     def describe(self):
+        embedding_dim = getattr(self.model, "feature_dim", None)
+        if embedding_dim is None:
+            classifier = getattr(self.model, "classifier", None)
+            embedding_dim = getattr(classifier, "in_features", None)
         return {
             "enabled": True,
             "extractor_name": self.cfg.get("extractor_name", "osnet_x0_25"),
@@ -179,8 +200,13 @@ class OSNetBodyReIDExtractor:
             "pretrained": bool(self.cfg.get("pretrained", True)),
             "input_width": int(self.cfg.get("input_width", 128)),
             "input_height": int(self.cfg.get("input_height", 256)),
+            "embedding_dim": int(embedding_dim) if embedding_dim else 0,
+            "preprocessing_mode": _resolve_preprocessing_mode(self.cfg),
+            "bbox_shrink_ratio": round(float(self.cfg.get("bbox_shrink_ratio", 0.0) or 0.0), 4),
             "tracklet_pooling_top_k": int(self.cfg.get("tracklet_pooling_top_k", 5)),
+            "tracklet_pooling_mode": str(self.cfg.get("tracklet_pooling_mode", "mean") or "mean"),
             "clahe_enabled": bool(self.cfg.get("clahe_enabled", True)),
+            "gray_world_normalization": bool(self.cfg.get("gray_world_normalization", False)),
         }
 
     def extract_array(self, image, source_path="", reference_image=None):

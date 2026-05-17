@@ -35,9 +35,9 @@ A3_CV_VARIANTS = (
     },
     {
         "variant_id": "clahe_only",
-        "description": "CLAHE-only preprocessing without bbox shrink.",
+        "description": "LAB CLAHE on the luminance channel without bbox shrink.",
         "body_reid_override": {
-            "preprocessing_mode": "clahe",
+            "preprocessing_mode": "lab_clahe",
             "clahe_enabled": True,
             "gray_world_normalization": False,
             "bbox_shrink_ratio": 0.0,
@@ -50,16 +50,6 @@ A3_CV_VARIANTS = (
             "preprocessing_mode": "gray_world",
             "clahe_enabled": False,
             "gray_world_normalization": True,
-            "bbox_shrink_ratio": 0.0,
-        },
-    },
-    {
-        "variant_id": "histogram_match_only",
-        "description": "Histogram-match target crops to the source tracklet reference without bbox shrink.",
-        "body_reid_override": {
-            "preprocessing_mode": "histogram_match",
-            "clahe_enabled": False,
-            "gray_world_normalization": False,
             "bbox_shrink_ratio": 0.0,
         },
     },
@@ -84,12 +74,32 @@ A3_CV_VARIANTS = (
         },
     },
     {
-        "variant_id": "histogram_match_shrink",
-        "description": "Histogram matching plus 10% bbox shrink.",
+        "variant_id": "lab_clahe_shrink",
+        "description": "LAB CLAHE plus 10% bbox shrink.",
         "body_reid_override": {
-            "preprocessing_mode": "histogram_match",
-            "clahe_enabled": False,
+            "preprocessing_mode": "lab_clahe",
+            "clahe_enabled": True,
             "gray_world_normalization": False,
+            "bbox_shrink_ratio": 0.1,
+        },
+    },
+    {
+        "variant_id": "gray_world_lab_clahe",
+        "description": "Gray World plus LAB CLAHE without bbox shrink.",
+        "body_reid_override": {
+            "preprocessing_mode": "gray_world_lab_clahe",
+            "clahe_enabled": True,
+            "gray_world_normalization": True,
+            "bbox_shrink_ratio": 0.0,
+        },
+    },
+    {
+        "variant_id": "gray_world_lab_clahe_shrink",
+        "description": "Gray World plus LAB CLAHE plus 10% bbox shrink.",
+        "body_reid_override": {
+            "preprocessing_mode": "gray_world_lab_clahe",
+            "clahe_enabled": True,
+            "gray_world_normalization": True,
             "bbox_shrink_ratio": 0.1,
         },
     },
@@ -270,6 +280,7 @@ def main():
             f"{row['source_camera_id']}->{row['target_camera_id']} "
             f"baseline={row.get('baseline_current_body_score', 0.0)} "
             f"gray_world={row.get('gray_world_only_body_score', 0.0)} "
+            f"lab_clahe={row.get('clahe_only_body_score', 0.0)} "
             f"shrink={row.get('shrink_only_body_score', 0.0)}"
         )
         stacked = _stack_labeled_pair(Path(row["source_best_body_crop"]), Path(row["target_best_body_crop"]), label)
@@ -288,15 +299,17 @@ def main():
         "no_preproc_no_shrink",
         "clahe_only",
         "gray_world_only",
-        "histogram_match_only",
+        "gray_world_lab_clahe",
     ]
     shrink_variants = [
         "no_preproc_no_shrink",
         "shrink_only",
         "gray_world_only",
         "gray_world_shrink",
-        "histogram_match_only",
-        "histogram_match_shrink",
+        "clahe_only",
+        "lab_clahe_shrink",
+        "gray_world_lab_clahe",
+        "gray_world_lab_clahe_shrink",
     ]
     preprocessing_summary = _variant_scores_from_rows(comparison_rows, preprocessing_variants)
     shrink_summary = _variant_scores_from_rows(comparison_rows, shrink_variants)

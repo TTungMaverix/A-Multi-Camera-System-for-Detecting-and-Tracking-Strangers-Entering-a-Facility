@@ -4,6 +4,8 @@ Manual ROI and scene calibration is the required runtime path for this repositor
 
 The old auto/inferred ROI flow is deprecated for runtime use and is no longer allowed to silently drive event creation.
 
+Codex/AI is not allowed to invent ROI polygons, entry-line points, or IN-side points for a new clip. A human must open the real frame and click the geometry manually.
+
 ## Why
 
 The previous defaulted ROI/zone behavior was too loose for:
@@ -102,26 +104,18 @@ Capabilities:
 ## OpenCV Calibration Tool
 
 For a new camera source, use the standalone OpenCV tool when you need a quick
-mouse-driven calibration without starting the web UI:
+mouse-driven calibration without starting the web UI. The tool only exports the
+geometry you click by hand; it does not auto-generate scene coordinates.
 
-```powershell
+```cmd
 cd /d "<repo-root>"
-& ".\.venv_insightface_demo\Scripts\python.exe" `
-  ".\tools\calibrate_camera.py" `
-  --camera C1 `
-  --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" `
-  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
-  --frame-index 0
+".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" --camera C1 --source "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Camera 1\a1.mp4" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" --frame-index 0
 ```
 
 Alternative direct module path:
 
-```powershell
-& ".\.venv_insightface_demo\Scripts\python.exe" `
-  ".\insightface_demo_assets\runtime\tools\calibrate_camera.py" `
-  --camera C2 `
-  --source "0" `
-  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```cmd
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\tools\calibrate_camera.py" --camera C2 --source "0" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
 ```
 
 Supported source types are whatever OpenCV can open:
@@ -220,21 +214,14 @@ positive dot product against this vector moves toward the facility side.
 
 The generated YAML/JSON can be passed directly to the existing runtime:
 
-```powershell
-& ".\.venv_insightface_demo\Scripts\python.exe" `
-  ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" `
-  --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
+```cmd
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml"
 ```
 
 Example with review-ready subzone placeholders:
 
-```powershell
-& ".\.venv_insightface_demo\Scripts\python.exe" `
-  ".\tools\calibrate_camera.py" `
-  --camera C1 `
-  --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" `
-  --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" `
-  --with-default-subzones
+```cmd
+".\.venv_insightface_demo\Scripts\python.exe" ".\tools\calibrate_camera.py" --camera C1 --source "D:\DO AN TOT NGHIEP\New Dataset\Camera 1\a1.mp4" --output-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.custom.yaml" --with-default-subzones
 ```
 
 For the offline logical demo, point the pipeline config's

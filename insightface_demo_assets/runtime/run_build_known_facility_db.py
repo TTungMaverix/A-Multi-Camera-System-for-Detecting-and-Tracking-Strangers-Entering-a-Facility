@@ -102,11 +102,19 @@ def main():
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
     identity_means, per_image_rows = build_gallery_embeddings(app, rows, project_root, embeddings_csv)
+    embedding_dim = 0
+    if identity_means:
+        first_identity = next(iter(identity_means.values()))
+        try:
+            embedding_dim = int(len(first_identity))
+        except TypeError:
+            embedding_dim = 0
     summary = {
         "known_root": str(known_root),
         "manifest_csv": str(manifest_csv),
         "embeddings_csv": str(embeddings_csv),
         "model_name": args.model_name,
+        "embedding_dimension": embedding_dim,
         "person_count": len({row.get("identity_id") for row in rows if row.get("identity_id")}),
         "image_count": len(rows),
         "embedding_ok_count": sum(1 for row in per_image_rows if row.get("embedding_status") == "ok"),

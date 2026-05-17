@@ -116,7 +116,7 @@ What changed:
 - kept `sequential.body_primary = 0.72` with no threshold rollback
 - kept the existing extractor family and focused on pragmatic CV preprocessing instead:
   - `gray_world`
-  - `histogram_match`
+  - `lab_clahe`
   - bbox shrink
 - reran per-clip evaluation on all paired local clips and added a regression summary against the previous evaluation phase
 - kept topology/time as a logged decision signal, but explicitly separated appearance-only quality from topology-supported final decisions
@@ -184,7 +184,7 @@ Current offline smoke demo:
 
 ```cmd
 cd /d "<repo-root>"
-powershell -ExecutionPolicy Bypass -File ".\run_new_dataset_logical_demo.ps1"
+".\.venv_insightface_demo\Scripts\python.exe" ".\insightface_demo_assets\runtime\run_live_event_demo_server.py" --project-root "." --output-root ".\outputs\evaluations\p0_repair_eval_all\offline_runs\a1" --scene-calibration-config ".\insightface_demo_assets\runtime\config\manual_scene_calibration.new_dataset_demo.yaml" --stream-target-fps 15
 ```
 
 Direct offline orchestrator run:
@@ -280,7 +280,8 @@ Traditional CV benchmark on `a3`:
 - baseline `no_preproc_no_shrink`: average `0.4849`
 - `shrink_only`: average `0.5574`
 - `gray_world_shrink`: average `0.5597`
-- `histogram_match_shrink`: average `0.5272`
+- `lab_clahe_shrink`: average `0.5465`
+- `gray_world_lab_clahe_shrink`: average `0.5502`
 
 Important interpretation:
 

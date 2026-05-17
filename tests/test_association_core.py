@@ -485,6 +485,54 @@ def test_topology_supported_body_accept_can_reuse_without_lowering_global_thresh
     assert debug["decision_logs"][1]["decision"] == "unknown_reuse"
 
 
+def test_dynamic_topology_threshold_can_relax_body_threshold_with_safety_gates():
+    policy = default_policy()
+    policy["decision_policy"]["relation_thresholds"]["sequential"]["body_primary"] = 0.72
+    topo_cfg = policy["decision_policy"]["topology_supported_accept"]
+    topo_cfg["enabled"] = True
+    topo_cfg["min_time_score"] = 0.9
+    topo_cfg["min_topology_score"] = 0.85
+    topo_cfg["max_primary_shortfall"] = 0.1
+    topo_cfg["require_exact_zone"] = True
+    topo_cfg["require_exact_subzone"] = True
+    topo_cfg["require_unique_candidate"] = True
+    topo_cfg["max_candidate_count_after_filter"] = 1
+    topo_cfg["dynamic_body_threshold_enabled"] = True
+    topo_cfg["dynamic_body_threshold_ratio"] = 0.8
+    topo_cfg["dynamic_body_threshold_max_relaxation"] = 0.16
+    topo_cfg["min_dynamic_body_score"] = 0.55
+    topo_cfg["strong_face_conflict_max_score"] = 0.2
+    body_vec = [0.58, 0.81461656]
+    items = [
+        make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0], zone_id="z1", subzone_id="s1"),
+        make_item("e2", "C2", 2.0, face=None, body=body_vec, gt_id="2", zone_id="z2", subzone_id="s2"),
+    ]
+    rows, _profiles, _trace, debug = assign_model_identities(
+        items,
+        {},
+        make_transition_topology(
+            "sequential",
+            min_sec=1.0,
+            max_sec=3.0,
+            avg_sec=2.0,
+            allowed_exit_zones=["z1"],
+            allowed_entry_zones=["z2"],
+            allowed_exit_subzones=["s1"],
+            allowed_entry_subzones=["s2"],
+        ),
+        "UNK",
+        1,
+        policy=policy,
+        return_debug_bundle=True,
+    )
+    assert rows[0]["unknown_global_id"] == rows[1]["unknown_global_id"]
+    candidate = debug["decision_logs"][1]["candidate_evaluations"][0]
+    assert candidate["acceptance_reason"] == "topology_supported_dynamic_body_accept"
+    assert candidate["dynamic_threshold_applied"] is True
+    assert candidate["dynamic_body_threshold"] < candidate["base_body_threshold"]
+    assert candidate["candidate_count_after_filter"] == 1
+
+
 def test_same_appearance_is_still_rejected_when_travel_time_is_impossible():
     items = [
         make_item("e1", "C1", 0.0, face=None, body=[1.0, 0.0]),

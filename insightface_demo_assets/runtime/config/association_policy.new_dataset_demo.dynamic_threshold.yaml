@@ -133,10 +133,10 @@ association_policy:
       min_topology_score: 0.85
       max_primary_shortfall: 0.1
       require_exact_zone: true
-      require_exact_subzone: true
+      require_exact_subzone: false
       require_unique_candidate: true
       max_candidate_count_after_filter: 1
-      dynamic_body_threshold_enabled: false
+      dynamic_body_threshold_enabled: true
       dynamic_body_threshold_ratio: 0.8
       dynamic_body_threshold_max_relaxation: 0.16
       min_dynamic_body_score: 0.55
