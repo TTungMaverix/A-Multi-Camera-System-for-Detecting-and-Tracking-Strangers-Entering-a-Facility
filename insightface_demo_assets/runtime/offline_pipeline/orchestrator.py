@@ -7,8 +7,9 @@ from pathlib import Path
 
 import yaml
 
+from association_core.known_db_runtime import DEFAULT_KNOWN_FACE_MANIFEST, apply_known_db_defaults
 from association_core import load_camera_transition_map
-from dataset_profiles import load_dataset_profile_from_config
+from dataset_profiles import load_dataset_profile_from_config, resolve_known_db_settings
 from offline_pipeline.event_builder import build_offline_stage_inputs, load_json, save_json
 from run_face_resolution_demo import main as run_face_resolution_main
 from scene_calibration import (
@@ -32,13 +33,13 @@ def resolve_path(project_root: Path, value):
     return (project_root / path).resolve()
 
 
-def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
+def build_face_runtime_config(offline_config, stage_inputs, output_root: Path, dataset_profile=None):
     project_root = Path(stage_inputs["project_root"]).resolve()
     face_demo_config_path = resolve_path(project_root, offline_config["face_demo_config"])
     face_demo_config = load_json(face_demo_config_path)
     runtime_dir = output_root / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_config = dict(face_demo_config)
+    runtime_config = apply_known_db_defaults(dict(face_demo_config))
     runtime_config.update(
         {
             "project_root": str(project_root),
@@ -75,6 +76,10 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
         runtime_config["known_face_gallery_root"] = str(
             resolve_path(project_root, offline_config["known_gallery"]["gallery_root"])
         )
+    known_db_settings = resolve_known_db_settings(project_root, dataset_profile or {})
+    if known_db_settings.get("enabled", False):
+        runtime_config["known_face_gallery_root"] = known_db_settings["path"]
+        runtime_config["known_face_manifest_csv"] = DEFAULT_KNOWN_FACE_MANIFEST
     runtime_config_path = runtime_dir / "face_demo_runtime_config.json"
     runtime_config_path.write_text(json.dumps(runtime_config, ensure_ascii=False, indent=2), encoding="utf-8")
     return runtime_config_path, runtime_config
@@ -222,7 +227,12 @@ def run_offline_pipeline(config_path: Path, cli_overrides=None):
     stage_started = time.perf_counter()
     stage_inputs = build_offline_stage_inputs(offline_config, transition_map, dataset_profile_override=dataset_profile)
     stage_elapsed_sec = round(max(time.perf_counter() - stage_started, 1e-9), 3)
-    runtime_config_path, runtime_config = build_face_runtime_config(offline_config, stage_inputs, output_root)
+    runtime_config_path, runtime_config = build_face_runtime_config(
+        offline_config,
+        stage_inputs,
+        output_root,
+        dataset_profile=dataset_profile,
+    )
     face_resolution_started = time.perf_counter()
     run_face_resolution_main(runtime_config_path)
     face_resolution_elapsed_sec = round(max(time.perf_counter() - face_resolution_started, 1e-9), 3)

@@ -9,6 +9,10 @@ DEFAULT_DATASET_PROFILE = {
     "profile_name": "",
     "dataset_name": "",
     "dataset_root": ".",
+    "known_db": {
+        "enabled": False,
+        "path": "",
+    },
     "assumed_video_fps": 10.0,
     "selected_cameras": [],
     "best_shot_window_frames": 80,
@@ -109,6 +113,10 @@ def _normalize_profile(profile, source_path: Path | None = None):
         logical_cfg.setdefault("logical_demo_copy", bool(cameras.get(camera_id, {}).get("logical_demo_copy", False)))
         logical_demo["logical_cameras"][camera_id] = logical_cfg
     normalized["logical_demo"] = logical_demo
+    known_db = copy.deepcopy(normalized.get("known_db", {}) or {})
+    known_db.setdefault("enabled", False)
+    known_db.setdefault("path", "")
+    normalized["known_db"] = known_db
     return normalized
 
 
@@ -155,6 +163,22 @@ def resolve_dataset_root(project_root: Path, config, dataset_profile):
     if path.is_absolute():
         return path.resolve()
     return (project_root / path).resolve()
+
+
+def resolve_known_db_settings(project_root: Path, dataset_profile):
+    known_db = copy.deepcopy((dataset_profile or {}).get("known_db", {}) or {})
+    if not bool(known_db.get("enabled", False)):
+        return {"enabled": False}
+    known_db_path = str(known_db.get("path", "") or "").strip()
+    if not known_db_path:
+        return {"enabled": False}
+    path = Path(known_db_path)
+    if not path.is_absolute():
+        path = (project_root / path).resolve()
+    return {
+        "enabled": True,
+        "path": str(path.resolve()),
+    }
 
 
 def _pair_extensions(clip_pairing_cfg):

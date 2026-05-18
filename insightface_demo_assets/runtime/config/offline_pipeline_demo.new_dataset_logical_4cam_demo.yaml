@@ -16,12 +16,12 @@ offline_pipeline:
     start_method: spawn
   dataset_profile_config: insightface_demo_assets/runtime/config/dataset_profile.new_dataset_demo.yaml
   logical_demo:
-    pair_id: ""
+    pair_id: a1
   multi_source_inference:
     detector_model: yolov8n.pt
     tracker: insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml
     device: cpu
-    conf_threshold: 0.4
+    conf_threshold: 0.6
     iou_threshold: 0.35
     imgsz: 768
     person_class_id: 0
@@ -48,8 +48,8 @@ offline_pipeline:
   face_demo_overrides:
     demo_auto_enroll_count: 0
   known_gallery:
-    manifest_csv: insightface_demo_assets/known_face_manifest.csv
-    gallery_root: insightface_demo_assets/known_faces
+    manifest_csv: insightface_demo_assets/known_face_facility_manifest.csv
+    gallery_root: D:/ĐỒ ÁN TỐT NGHIỆP/New Dataset/Known ID
   association_policy_config: insightface_demo_assets/runtime/config/association_policy.new_dataset_demo.yaml
   camera_transition_map_config: insightface_demo_assets/runtime/config/camera_transition_map.new_dataset_demo.yaml
   scene_calibration_config: insightface_demo_assets/runtime/config/manual_scene_calibration.new_dataset_demo.yaml

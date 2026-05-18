@@ -5,9 +5,9 @@ association_policy:
     full_body_area: 26000.0
     reliable_face_det_score: 0.35
     strong_face_det_score: 0.5
-    min_face_bbox_width: 36
-    min_face_bbox_height: 36
-    min_face_bbox_area: 1296
+    min_face_bbox_width: 30
+    min_face_bbox_height: 30
+    min_face_bbox_area: 900
     min_face_blur_score: 55.0
     max_abs_yaw_deg: 25.0
     max_abs_pitch_deg: 18.0
@@ -109,7 +109,7 @@ association_policy:
         fusion_primary: 0.56
         face_primary: 0.35
         face_secondary: 0.45
-        body_primary: 0.72
+        body_primary: 0.58
         body_secondary: 0.18
       weak_link:
         fusion_primary: 0.62
@@ -124,6 +124,14 @@ association_policy:
       allowed_relations: [sequential]
       require_primary_modality: body
       min_time_score: 0.9
-      max_primary_shortfall: 0.1
+      min_topology_score: 0.85
+      max_primary_shortfall: 0.08
       require_exact_zone: true
       require_exact_subzone: true
+      require_unique_candidate: true
+      max_candidate_count_after_filter: 1
+      dynamic_body_threshold_enabled: true
+      dynamic_body_threshold_ratio: 0.9
+      dynamic_body_threshold_max_relaxation: 0.08
+      min_dynamic_body_score: 0.5
+      strong_face_conflict_max_score: 0.2

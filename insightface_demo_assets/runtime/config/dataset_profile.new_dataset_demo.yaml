@@ -2,6 +2,9 @@ dataset_profile:
   profile_name: new_dataset_demo
   dataset_name: New Dataset
   dataset_root: New Dataset
+  known_db:
+    enabled: true
+    path: D:/ĐỒ ÁN TỐT NGHIỆP/New Dataset/Known ID
   assumed_video_fps: 10.0
   selected_cameras:
     - C1
