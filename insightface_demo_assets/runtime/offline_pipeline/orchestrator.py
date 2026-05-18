@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from association_core import load_camera_transition_map
+from association_core.known_db_runtime import apply_known_db_defaults
 from dataset_profiles import load_dataset_profile_from_config
 from offline_pipeline.event_builder import build_offline_stage_inputs, load_json, save_json
 from run_face_resolution_demo import main as run_face_resolution_main
@@ -38,7 +39,7 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path):
     face_demo_config = load_json(face_demo_config_path)
     runtime_dir = output_root / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_config = dict(face_demo_config)
+    runtime_config = apply_known_db_defaults(dict(face_demo_config))
     runtime_config.update(
         {
             "project_root": str(project_root),

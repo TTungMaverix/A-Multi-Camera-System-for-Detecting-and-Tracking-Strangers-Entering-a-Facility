@@ -21,7 +21,7 @@ offline_pipeline:
     detector_model: yolov8n.pt
     tracker: insightface_demo_assets/runtime/config/bytetrack.new_dataset_demo.yaml
     device: cpu
-    conf_threshold: 0.4
+    conf_threshold: 0.6
     iou_threshold: 0.35
     imgsz: 768
     person_class_id: 0

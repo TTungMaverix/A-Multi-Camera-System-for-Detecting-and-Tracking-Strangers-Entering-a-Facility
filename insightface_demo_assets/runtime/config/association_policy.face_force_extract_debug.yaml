@@ -1,0 +1,19 @@
+association_policy:
+  quality_gate:
+    reliable_face_det_score: 0.05
+    strong_face_det_score: 0.10
+    min_face_bbox_width: 10
+    min_face_bbox_height: 10
+    min_face_bbox_area: 100
+    face_detector_runtime_threshold: 0.10
+    min_face_blur_score: 0.0
+    max_abs_yaw_deg: 90.0
+    max_abs_pitch_deg: 90.0
+    max_abs_roll_deg: 90.0
+    require_landmarks_for_face_buffer: false
+    max_face_buffer_candidates_per_track: 6
+  decision_policy:
+    topology_supported_accept:
+      enabled: true
+      require_exact_subzone: false
+      dynamic_body_threshold_enabled: true

@@ -8,6 +8,7 @@ association_policy:
     min_face_bbox_width: 36
     min_face_bbox_height: 36
     min_face_bbox_area: 1296
+    face_detector_runtime_threshold: 0.35
     min_face_blur_score: 55.0
     max_abs_yaw_deg: 25.0
     max_abs_pitch_deg: 18.0
@@ -133,10 +134,10 @@ association_policy:
       min_topology_score: 0.85
       max_primary_shortfall: 0.1
       require_exact_zone: true
-      require_exact_subzone: true
+      require_exact_subzone: false
       require_unique_candidate: true
       max_candidate_count_after_filter: 1
-      dynamic_body_threshold_enabled: false
+      dynamic_body_threshold_enabled: true
       dynamic_body_threshold_ratio: 0.8
       dynamic_body_threshold_max_relaxation: 0.16
       min_dynamic_body_score: 0.55

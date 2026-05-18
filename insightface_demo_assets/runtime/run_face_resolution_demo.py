@@ -39,6 +39,7 @@ from association_core import (
 )
 from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor
 from association_core.face_pixel import save_aligned_grayscale_face
+from association_core.known_db_runtime import apply_known_db_defaults, ensure_known_db_manifest_rows
 from association_core.quality_gate import evaluate_buffered_face_gate
 from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
@@ -2000,7 +2001,7 @@ def render_report(report_path: Path, mode_a_metrics, mode_b_metrics, stage_a, ro
 
 def main(config_path: Path):
     runtime_started = time.perf_counter()
-    config = load_json(config_path)
+    config = apply_known_db_defaults(load_json(config_path))
     base_dir = resolve_path(config_path.parent, config.get("project_root", str(config_path.parents[1])))
     association_policy_config = config.get("association_policy_config", "")
     camera_transition_map_config = config.get("camera_transition_map_config", "")
@@ -2056,7 +2057,7 @@ def main(config_path: Path):
 
     track_rows = parse_track_rows(read_csv(tracks_csv))
     queue_rows = read_csv(queue_csv)
-    base_manifest_rows = read_csv(known_manifest_csv)
+    base_manifest_rows, manifest_runtime = ensure_known_db_manifest_rows(base_dir, known_manifest_csv, known_root)
     association_policy, association_policy_runtime = load_association_policy(
         config_path=association_policy_config,
         base_dir=config_path.parent,
@@ -2089,7 +2090,11 @@ def main(config_path: Path):
         root=str(Path(config["insightface_runtime"].get("recommended_model_root", str(Path.home() / ".insightface")))),
         providers=[config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
-    app.prepare(ctx_id=-1, det_size=(640, 640))
+    app.prepare(
+        ctx_id=-1,
+        det_size=(640, 640),
+        det_thresh=float(association_policy.get("quality_gate", {}).get("face_detector_runtime_threshold", 0.35)),
+    )
     body_reid_runtime = get_body_reid_extractor(policy=association_policy.get("body_reid"))
 
     auto_enroll_count = max(0, as_int(config.get("demo_auto_enroll_count", 2), 2))
@@ -2114,6 +2119,7 @@ def main(config_path: Path):
         "known_db_root": str(known_root),
         "known_manifest_csv": str(known_manifest_csv),
         "known_embeddings_csv": str(known_embeddings_csv),
+        "manifest_auto_discovered": bool(manifest_runtime.get("auto_discovered", False)),
         "identity_count": len(identity_means),
         "known_ids_loaded": sorted(identity_means.keys()),
         "embedding_dimension": embedding_dim,
@@ -2122,6 +2128,8 @@ def main(config_path: Path):
         "grayscale_aligned_ok_count": sum(
             1 for row in known_gallery_rows if row.get("grayscale_preprocessing_status") == "ok"
         ),
+        "manifest_image_count": int(manifest_runtime.get("image_count", len(manifest_rows))),
+        "manifest_identity_count": int(manifest_runtime.get("identity_count", len(identity_means))),
     }
 
     stage_a, stage_a_rows, _ = build_timeline_audit(track_rows, wildtrack_config["selected_cameras"])

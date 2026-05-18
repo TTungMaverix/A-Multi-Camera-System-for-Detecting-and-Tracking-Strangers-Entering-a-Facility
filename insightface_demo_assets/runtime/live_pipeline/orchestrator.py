@@ -28,7 +28,9 @@ from offline_pipeline.direction_logic import evaluate_direction
 from run_face_resolution_demo import (
     CONFIG_DEFAULT,
     analyze_event_crops,
+    apply_known_db_defaults,
     build_gallery_embeddings,
+    ensure_known_db_manifest_rows,
     load_json,
     read_csv,
     save_json,
@@ -62,7 +64,7 @@ def load_live_config(config_path: Path):
 def build_face_runtime_config(live_config, project_root: Path):
     face_demo_config_path = resolve_path(project_root, live_config["face_demo_config"])
     face_demo_config = load_json(face_demo_config_path)
-    runtime_config = dict(face_demo_config)
+    runtime_config = apply_known_db_defaults(dict(face_demo_config))
     if live_config.get("association_policy_config"):
         runtime_config["association_policy_config"] = str(
             resolve_path(project_root, live_config["association_policy_config"])
@@ -656,8 +658,10 @@ def live_camera_worker(worker_context, queue):
 
 
 def _load_known_gallery(runtime_config, app, project_root: Path, output_root: Path):
+    runtime_config = apply_known_db_defaults(runtime_config)
+    known_root = resolve_path(project_root, runtime_config["known_face_gallery_root"])
     manifest_csv = resolve_path(project_root, runtime_config["known_face_manifest_csv"])
-    manifest_rows = read_csv(manifest_csv) if manifest_csv.exists() else []
+    manifest_rows, manifest_runtime = ensure_known_db_manifest_rows(project_root, manifest_csv, known_root)
     gallery_embeddings_csv = output_root / "events" / "known_face_embeddings_live.csv"
     identity_means, _rows = build_gallery_embeddings(app, manifest_rows, project_root, gallery_embeddings_csv)
     embedding_dim = 0
@@ -668,6 +672,7 @@ def _load_known_gallery(runtime_config, app, project_root: Path, output_root: Pa
         "known_db_root": runtime_config.get("known_face_gallery_root", ""),
         "known_manifest_csv": str(manifest_csv),
         "known_embeddings_csv": str(gallery_embeddings_csv),
+        "manifest_auto_discovered": bool(manifest_runtime.get("auto_discovered", False)),
         "identity_count": len(identity_means),
         "known_ids_loaded": sorted(identity_means.keys()),
         "embedding_dimension": int(embedding_dim),
@@ -745,7 +750,15 @@ def run_live_pipeline(config_path: Path):
         root=runtime_config["insightface_runtime"].get("recommended_model_root", str(Path.home() / ".insightface")),
         providers=[runtime_config["insightface_runtime"].get("provider", "CPUExecutionProvider")],
     )
-    app.prepare(ctx_id=-1, det_size=(640, 640))
+    association_policy, _association_runtime = load_association_policy(
+        config_path=runtime_config.get("association_policy_config", ""),
+        base_dir=project_root,
+    )
+    app.prepare(
+        ctx_id=-1,
+        det_size=(640, 640),
+        det_thresh=float(association_policy.get("quality_gate", {}).get("face_detector_runtime_threshold", 0.35)),
+    )
     identity_means, known_gallery_summary = _load_known_gallery(runtime_config, app, project_root, output_root)
     print(f"KNOWN_DB_ROOT={known_gallery_summary['known_db_root']}")
     print(f"KNOWN_DB_MANIFEST={known_gallery_summary['known_manifest_csv']}")

@@ -14,6 +14,7 @@ DEFAULT_ASSOCIATION_POLICY = {
         "min_face_bbox_width": 36,
         "min_face_bbox_height": 36,
         "min_face_bbox_area": 1296,
+        "face_detector_runtime_threshold": 0.35,
         "min_face_blur_score": 45.0,
         "max_abs_yaw_deg": 30.0,
         "max_abs_pitch_deg": 20.0,
