@@ -1,7 +1,9 @@
 import csv
+import csv
 import json
 import math
 import os
+import pickle
 import shutil
 import sys
 import time
@@ -38,7 +40,13 @@ from association_core import (
     write_jsonl as core_write_jsonl,
 )
 from association_core.body_reid import build_tracklet_body_representation, get_body_reid_extractor
-from association_core.known_db_runtime import apply_known_db_defaults, ensure_known_db_manifest_rows
+from association_core.known_db_runtime import (
+    DEFAULT_KNOWN_FACE_EMBEDDINGS_CSV,
+    DEFAULT_KNOWN_FACE_EMBEDDINGS_PKL,
+    apply_known_db_defaults,
+    ensure_known_db_manifest_rows,
+    load_known_face_embeddings,
+)
 from association_core.quality_gate import evaluate_buffered_face_gate
 from evaluation_utils import build_unknown_timeline, summarize_unknown_handoffs
 from offline_pipeline.event_builder import (
@@ -420,44 +428,107 @@ def enroll_demo_authorized_identities(app, queue_rows, known_root: Path, count=2
     return selected
 
 
-def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Path):
+def build_gallery_embeddings(app, manifest_rows, base_dir: Path, output_csv: Path, output_pkl: Path | None = None):
     per_image_rows = []
-    per_identity_vectors = defaultdict(list)
+    gallery_records = []
+    known_gallery = {}
     for row in manifest_rows:
-        image_path = base_dir / row["gallery_rel_path"]
+        image_path = Path(row["gallery_rel_path"])
+        if not image_path.is_absolute():
+            image_path = base_dir / image_path
         emb = extract_embedding_from_image(app, image_path)
         per_image_rows.append(
             {
                 "identity_id": row["identity_id"],
                 "display_name": row["display_name"],
-                "image_rel_path": row["gallery_rel_path"],
+                "image_path": str(image_path),
                 "embedding_status": emb["status"],
                 "embedding_dim": len(emb["embedding"]) if emb["embedding"] is not None else "",
                 "model_name": "buffalo_l",
                 "embedding_json": json.dumps(emb["embedding"].tolist()) if emb["embedding"] is not None else "",
+                "det_score": round(float(emb.get("det_score", 0.0) or 0.0), 6),
+                "face_bbox": emb.get("bbox", ""),
+                "bbox_width": emb.get("bbox_width", 0),
+                "bbox_height": emb.get("bbox_height", 0),
+                "bbox_area": emb.get("bbox_area", 0),
+                "view_label": "",
+                "source_folder": "",
                 "notes": emb["message"],
             }
         )
         if emb["embedding"] is not None:
-            per_identity_vectors[row["identity_id"]].append(emb["embedding"])
+            record = {
+                "identity_id": row["identity_id"],
+                "display_name": row["display_name"],
+                "image_path": str(image_path),
+                "view_label": "",
+                "source_folder": "",
+                "embedding_dimension": int(len(emb["embedding"])),
+                "model_name": "buffalo_l",
+                "det_score": round(float(emb.get("det_score", 0.0) or 0.0), 6),
+                "face_bbox": emb.get("bbox", ""),
+                "embedding": emb["embedding"].tolist(),
+            }
+            gallery_records.append(record)
+            entry = known_gallery.setdefault(
+                row["identity_id"],
+                {
+                    "display_name": row["display_name"],
+                    "embeddings": [],
+                    "refs": [],
+                },
+            )
+            entry["embeddings"].append(emb["embedding"])
+            entry["refs"].append(
+                {
+                    "image_path": str(image_path),
+                    "view_label": "",
+                    "source_folder": "",
+                    "det_score": round(float(emb.get("det_score", 0.0) or 0.0), 6),
+                    "face_bbox": emb.get("bbox", ""),
+                    "embedding_dim": int(len(emb["embedding"])),
+                    "model_name": "buffalo_l",
+                }
+            )
     write_csv(
         output_csv,
         per_image_rows,
         [
             "identity_id",
             "display_name",
-            "image_rel_path",
+            "image_path",
+            "view_label",
+            "source_folder",
             "embedding_status",
             "embedding_dim",
             "model_name",
             "embedding_json",
+            "det_score",
+            "face_bbox",
+            "bbox_width",
+            "bbox_height",
+            "bbox_area",
             "notes",
         ],
     )
-    identity_means = {}
-    for identity_id, vectors in per_identity_vectors.items():
-        identity_means[identity_id] = normalize(np.mean(np.stack(vectors, axis=0), axis=0).astype(np.float32))
-    return identity_means, per_image_rows
+    for entry in known_gallery.values():
+        if entry["embeddings"]:
+            entry["embedding"] = normalize(np.mean(np.stack(entry["embeddings"], axis=0), axis=0).astype(np.float32))
+            entry["embedding_dim"] = int(entry["embeddings"][0].shape[0])
+            entry["embedding_count"] = len(entry["embeddings"])
+            entry["model_name"] = "buffalo_l"
+    if output_pkl is not None:
+        output_pkl.parent.mkdir(parents=True, exist_ok=True)
+        output_pkl.write_bytes(
+            pickle.dumps(
+                {
+                    "model_name": "buffalo_l",
+                    "embedding_dimension": 512,
+                    "records": gallery_records,
+                }
+            )
+        )
+    return known_gallery, per_image_rows
 
 
 def _laplacian_variance(image_path: Path):
@@ -1322,15 +1393,14 @@ def build_baseline_assignments(analyzed_events, identity_means, threshold, unkno
             emb = item["face_embedding"]
             if emb is None or not identity_means:
                 continue
-            for identity_id, ref_vec in identity_means.items():
-                score = cosine_similarity(emb, ref_vec)
-                if best_known is None or score > best_known["score"]:
-                    best_known = {
-                        "identity_id": identity_id,
-                        "score": score,
-                        "event_id": item["event"]["event_id"],
-                        "used_crop": item["used_face_crop"],
-                    }
+            candidate = core_best_known_match(emb, identity_means)
+            if candidate and (best_known is None or candidate["score"] > best_known["score"]):
+                best_known = {
+                    "identity_id": candidate["identity_id"],
+                    "score": candidate["score"],
+                    "event_id": item["event"]["event_id"],
+                    "used_crop": item["used_face_crop"],
+                }
         if best_known and best_known["score"] >= threshold:
             assignments[gt_id] = {
                 "identity_status": "known",
@@ -1993,7 +2063,12 @@ def main(config_path: Path):
     tracks_csv = resolve_path(base_dir, config.get("tracks_csv", str(queue_csv.parents[1] / "tracks" / "all_tracks_filtered.csv")))
     known_root = resolve_path(base_dir, config["known_face_gallery_root"])
     known_manifest_csv = resolve_path(base_dir, config["known_face_manifest_csv"])
-    known_embeddings_csv = resolve_path(base_dir, config["known_face_embeddings_csv"])
+    known_embeddings_csv = resolve_path(
+        base_dir, config.get("known_face_embeddings_csv", DEFAULT_KNOWN_FACE_EMBEDDINGS_CSV)
+    )
+    known_embeddings_pkl = resolve_path(
+        base_dir, config.get("known_face_embeddings_pkl", DEFAULT_KNOWN_FACE_EMBEDDINGS_PKL)
+    )
     resolved_events_csv = resolve_path(base_dir, config["resolved_events_csv"])
     runtime_dir = resolved_events_csv.parent
     runtime_manifest_csv = known_manifest_csv.with_name("known_face_manifest_runtime.csv")
@@ -2075,7 +2150,24 @@ def main(config_path: Path):
         manifest_rows,
         ["identity_id", "display_name", "source_repo_path", "gallery_rel_path", "seed_type", "status", "notes"],
     )
-    identity_means, _ = build_gallery_embeddings(app, manifest_rows, base_dir, known_embeddings_csv)
+    identity_means, gallery_runtime = load_known_face_embeddings(
+        base_dir,
+        embeddings_pkl=known_embeddings_pkl,
+        embeddings_csv=known_embeddings_csv,
+    )
+    if not identity_means:
+        identity_means, _ = build_gallery_embeddings(
+            app,
+            manifest_rows,
+            base_dir,
+            known_embeddings_csv,
+            output_pkl=known_embeddings_pkl,
+        )
+        identity_means, gallery_runtime = load_known_face_embeddings(
+            base_dir,
+            embeddings_pkl=known_embeddings_pkl,
+            embeddings_csv=known_embeddings_csv,
+        )
     gallery_elapsed_sec = round(max(time.perf_counter() - gallery_started, 1e-9), 3)
 
     stage_a, stage_a_rows, _ = build_timeline_audit(track_rows, wildtrack_config["selected_cameras"])
@@ -2402,6 +2494,16 @@ def main(config_path: Path):
             "summary_json": str(association_summary_json),
             "policy_runtime_json": str(association_policy_runtime_json),
             "camera_transition_map_runtime_json": str(camera_transition_map_runtime_json),
+        },
+        "known_db_runtime": {
+            "known_db_root": str(known_root),
+            "manifest_path": str(known_manifest_csv),
+            "embeddings_csv_path": str(known_embeddings_csv),
+            "embeddings_pkl_path": str(known_embeddings_pkl),
+            "identities_loaded": int(gallery_runtime.get("identity_count", 0)),
+            "embedding_count": int(gallery_runtime.get("embedding_count", 0)),
+            "embedding_dimension": gallery_runtime.get("embedding_dimension", 0),
+            "sample_first_10_person_ids": gallery_runtime.get("sample_first_10_person_ids", []),
         },
         "face_body_usage": {
             "summary_json": str(face_body_summary_json),

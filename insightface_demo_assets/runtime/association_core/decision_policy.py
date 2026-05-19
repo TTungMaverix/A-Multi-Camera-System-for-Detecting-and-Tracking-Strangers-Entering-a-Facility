@@ -15,8 +15,32 @@ def _sorted_known_candidates(face_embedding, identity_means):
     rows = []
     if face_embedding is None:
         return rows
-    for identity_id, ref_vec in identity_means.items():
-        rows.append({"identity_id": identity_id, "score": cosine_similarity(face_embedding, ref_vec)})
+    for identity_id, ref_value in identity_means.items():
+        if isinstance(ref_value, dict):
+            vectors = list(ref_value.get("embeddings", []) or [])
+            refs = list(ref_value.get("refs", []) or [])
+            if not vectors and ref_value.get("embedding") is not None:
+                vectors = [ref_value.get("embedding")]
+                refs = refs or [{}]
+            best_score = None
+            best_ref = {}
+            for index, vector in enumerate(vectors):
+                score = cosine_similarity(face_embedding, vector)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_ref = refs[index] if index < len(refs) else {}
+            if best_score is None:
+                continue
+            rows.append(
+                {
+                    "identity_id": identity_id,
+                    "score": best_score,
+                    "best_image_path": best_ref.get("image_path", ""),
+                    "best_view_label": best_ref.get("view_label", ""),
+                }
+            )
+            continue
+        rows.append({"identity_id": identity_id, "score": cosine_similarity(face_embedding, ref_value)})
     rows.sort(key=lambda row: row["score"], reverse=True)
     return rows
 

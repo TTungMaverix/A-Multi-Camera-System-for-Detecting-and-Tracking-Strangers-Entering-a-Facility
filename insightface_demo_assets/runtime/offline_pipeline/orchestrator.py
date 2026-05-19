@@ -51,7 +51,6 @@ def build_face_runtime_config(offline_config, stage_inputs, output_root: Path, d
             "wildtrack_identity_queue_csv": stage_inputs["identity_queue_csv"],
             "resolved_events_csv": str(runtime_dir / "resolved_events_template.csv"),
             "unknown_profiles_csv": str(runtime_dir / "unknown_profiles_template.csv"),
-            "known_face_embeddings_csv": str(runtime_dir / "known_face_embeddings_template.csv"),
         }
     )
     if offline_config.get("face_demo_overrides"):
