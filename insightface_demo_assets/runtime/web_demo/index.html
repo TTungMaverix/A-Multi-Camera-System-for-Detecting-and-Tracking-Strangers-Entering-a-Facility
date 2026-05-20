@@ -146,6 +146,16 @@
       opacity: 0;
     }
 
+    .standby-camera {
+      color: #27405f;
+      letter-spacing: 0.08em;
+    }
+
+    .standby-phase {
+      color: #1a2535;
+      letter-spacing: 0.14em;
+    }
+
     .cam-meta {
       position: absolute;
       bottom: 6px;
@@ -351,14 +361,6 @@
       margin-top: 2px;
       word-break: break-word;
     }
-
-    .sidebar-link {
-      font-size: 8px;
-      color: #3f6f9f;
-      line-height: 1.5;
-      margin-top: 4px;
-      display: inline-block;
-    }
   </style>
 </head>
 <body>
@@ -370,8 +372,8 @@
           <div class="cam-label">CAMERA 1</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
-            <div>C1</div>
-            <div>STANDBY</div>
+            <div class="standby-camera">C1</div>
+            <div class="standby-phase">STANDBY</div>
           </div>
           <div class="cam-meta">
             <span class="cam-meta-left">NO EVENT</span>
@@ -383,8 +385,8 @@
           <div class="cam-label">CAMERA 2</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
-            <div>C2</div>
-            <div>STANDBY</div>
+            <div class="standby-camera">C2</div>
+            <div class="standby-phase">STANDBY</div>
           </div>
           <div class="cam-meta">
             <span class="cam-meta-left">NO EVENT</span>
@@ -396,8 +398,8 @@
           <div class="cam-label">CAMERA 3</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
-            <div>C3</div>
-            <div>STANDBY</div>
+            <div class="standby-camera">C3</div>
+            <div class="standby-phase">STANDBY</div>
           </div>
           <div class="cam-meta">
             <span class="cam-meta-left">NO EVENT</span>
@@ -409,8 +411,8 @@
           <div class="cam-label">CAMERA 4</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
-            <div>C4</div>
-            <div>STANDBY</div>
+            <div class="standby-camera">C4</div>
+            <div class="standby-phase">STANDBY</div>
           </div>
           <div class="cam-meta">
             <span class="cam-meta-left">NO EVENT</span>
@@ -420,7 +422,7 @@
       </div>
       <div id="status-bar">
         <div class="status-text" id="status-left">LIVE DEMO UI READY</div>
-        <div class="status-text" id="status-right">REFRESH 1.5S</div>
+        <div class="status-text" id="status-right">WAITING FOR PLAYBACK STATE</div>
       </div>
     </div>
 
@@ -436,19 +438,30 @@
 
   <script>
     const CAMERA_LAYOUT = [
-      { domId: "cam-1", cameraId: "C1", label: "CAMERA 1" },
-      { domId: "cam-2", cameraId: "C2", label: "CAMERA 2" },
-      { domId: "cam-3", cameraId: "C3", label: "CAMERA 3" },
-      { domId: "cam-4", cameraId: "C4", label: "CAMERA 4" },
+      { domId: "cam-1", cameraId: "C1" },
+      { domId: "cam-2", cameraId: "C2" },
+      { domId: "cam-3", cameraId: "C3" },
+      { domId: "cam-4", cameraId: "C4" },
     ];
+
+    const ACTIVE_FEED_INTERVAL_MS = 200;
+    const CAMERA_STATE_POLL_MS = 1000;
+    const LIVE_DATA_POLL_MS = 1500;
+    const PANEL_RETRY_MS = 3000;
 
     const browserState = {
       activeTab: null,
+      summary: {},
       latestEvents: [],
       timelines: [],
-      summary: {},
-      previewFrameIndex: 0,
+      reidHandoffs: [],
+      cameraState: null,
     };
+
+    const feedIntervals = {};
+    let activeFeedCameraId = null;
+    let panelRetryTimer = null;
+    let panelRequestNonce = 0;
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
@@ -494,89 +507,176 @@
       return `<img class="${escapeHtml(className)}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}">`;
     }
 
+    function getCameraCell(cameraId) {
+      return document.querySelector(`.cam-cell[data-camera-id="${cameraId}"]`);
+    }
+
+    function getCurrentActiveCamera() {
+      return browserState.cameraState?.active_camera || null;
+    }
+
     function latestEventForCamera(cameraId) {
       const events = browserState.latestEvents.filter((event) => (event.camera_id || event.camera) === cameraId);
       return events.length ? events[events.length - 1] : null;
     }
 
-    function resolveActiveCameraId() {
-      if (!browserState.latestEvents.length) {
-        return "";
+    function clearPanelRetry() {
+      if (panelRetryTimer) {
+        clearTimeout(panelRetryTimer);
+        panelRetryTimer = null;
       }
-      const latest = browserState.latestEvents[browserState.latestEvents.length - 1] || {};
-      return latest.camera_id || latest.camera || "";
     }
 
-    function updateCameraFeeds() {
-      browserState.previewFrameIndex += 4;
-      CAMERA_LAYOUT.forEach((camera, index) => {
-        const cell = document.getElementById(camera.domId);
+    function stopCameraFeed(cameraId) {
+      if (feedIntervals[cameraId]) {
+        clearInterval(feedIntervals[cameraId]);
+        delete feedIntervals[cameraId];
+      }
+      const cell = getCameraCell(cameraId);
+      if (!cell) {
+        return;
+      }
+      const feed = cell.querySelector(".cam-feed");
+      if (feed) {
+        feed.removeAttribute("src");
+      }
+      cell.classList.remove("cam-has-feed");
+    }
+
+    function stopAllCameraFeeds() {
+      CAMERA_LAYOUT.forEach((camera) => stopCameraFeed(camera.cameraId));
+      activeFeedCameraId = null;
+    }
+
+    function requestCameraFrame(cameraId) {
+      const cell = getCameraCell(cameraId);
+      if (!cell) {
+        return;
+      }
+      const feed = cell.querySelector(".cam-feed");
+      if (!feed) {
+        return;
+      }
+      feed.src = `/api/camera-frame?camera_id=${encodeURIComponent(cameraId)}&overlay=1&t=${Date.now()}`;
+    }
+
+    function startCameraFeed(cameraId) {
+      if (!cameraId) {
+        return;
+      }
+      if (feedIntervals[cameraId]) {
+        return;
+      }
+      requestCameraFrame(cameraId);
+      feedIntervals[cameraId] = window.setInterval(() => {
+        requestCameraFrame(cameraId);
+      }, ACTIVE_FEED_INTERVAL_MS);
+    }
+
+    function setCameraStandbyLabel(cameraId, phaseText) {
+      const cell = getCameraCell(cameraId);
+      if (!cell) {
+        return;
+      }
+      const phaseNode = cell.querySelector(".standby-phase");
+      if (phaseNode) {
+        phaseNode.textContent = phaseText;
+      }
+    }
+
+    function syncCameraVisualState() {
+      const state = browserState.cameraState || {};
+      const phase = state.phase || "idle";
+      const activeCamera = state.active_camera || null;
+
+      if (activeCamera !== activeFeedCameraId) {
+        if (activeFeedCameraId) {
+          stopCameraFeed(activeFeedCameraId);
+        }
+        CAMERA_LAYOUT.forEach((camera) => {
+          if (camera.cameraId !== activeCamera) {
+            stopCameraFeed(camera.cameraId);
+          }
+        });
+        if (activeCamera) {
+          startCameraFeed(activeCamera);
+          activeFeedCameraId = activeCamera;
+        } else {
+          activeFeedCameraId = null;
+        }
+      } else if (activeCamera && !feedIntervals[activeCamera]) {
+        startCameraFeed(activeCamera);
+      }
+
+      CAMERA_LAYOUT.forEach((camera) => {
+        const cell = getCameraCell(camera.cameraId);
         if (!cell) {
           return;
         }
-        const feed = cell.querySelector(".cam-feed");
-        if (!feed) {
-          return;
-        }
-        const frameOffset = browserState.previewFrameIndex + (index * 12);
-        feed.src = `/api/calibration/preview?camera_id=${encodeURIComponent(camera.cameraId)}&overlay=0&frame_idx=${frameOffset}&t=${Date.now()}`;
-      });
-    }
-
-    function setActiveCamera(activeCameraId) {
-      document.querySelectorAll(".cam-cell").forEach((cell) => {
-        const isActive = !!activeCameraId && cell.dataset.cameraId === activeCameraId;
+        const isActive = activeCamera === camera.cameraId;
         cell.classList.remove("cam-active", "cam-inactive");
         cell.classList.add(isActive ? "cam-active" : "cam-inactive");
+
+        if (!isActive) {
+          cell.classList.remove("cam-has-feed");
+        }
+
+        if (phase === "gap") {
+          setCameraStandbyLabel(camera.cameraId, "TRAVEL GAP");
+        } else if (phase === "done") {
+          setCameraStandbyLabel(camera.cameraId, "DONE");
+        } else if (isActive) {
+          setCameraStandbyLabel(camera.cameraId, "LIVE");
+        } else {
+          setCameraStandbyLabel(camera.cameraId, "STANDBY");
+        }
       });
     }
 
-    function renderCameraGrid() {
-      const activeCameraId = resolveActiveCameraId();
-      setActiveCamera(activeCameraId);
-
+    function renderCameraMeta() {
+      const state = browserState.cameraState || {};
       CAMERA_LAYOUT.forEach((camera) => {
-        const cell = document.getElementById(camera.domId);
+        const cell = getCameraCell(camera.cameraId);
         if (!cell) {
           return;
         }
         const metaLeft = cell.querySelector(".cam-meta-left");
         const metaRight = cell.querySelector(".cam-meta-right");
         const latestEvent = latestEventForCamera(camera.cameraId);
-        const eventCount = browserState.latestEvents.filter((event) => (event.camera_id || event.camera) === camera.cameraId).length;
-
         if (!latestEvent) {
-          metaLeft.textContent = "NO EVENT";
-          metaRight.textContent = "WAITING";
+          metaLeft.textContent = state.active_camera === camera.cameraId ? "LIVE PREVIEW" : "NO EVENT";
+          metaRight.textContent = state.phase === "gap" ? "GAP" : state.phase === "done" ? "DONE" : "WAITING";
           return;
         }
-
         const identityText = latestEvent.identity_label || latestEvent.identity_id || latestEvent.track_label || "ENTRY";
         const modeText = latestEvent.direction || latestEvent.ui_identity_state || latestEvent.identity_type || "ENTRY_IN";
         const timeText = latestEvent.timestamp || `${formatRelativeSec(latestEvent.relative_sec)}s`;
         metaLeft.textContent = `${identityText} · ${modeText}`;
-        metaRight.textContent = `${camera.cameraId} · ${timeText} · ${eventCount}`;
+        metaRight.textContent = `${camera.cameraId} · ${timeText}`;
       });
     }
 
     function renderStatusBar() {
       const summary = browserState.summary || {};
+      const cameraState = browserState.cameraState || {};
       const workerCount = Object.keys(summary.worker_summaries || {}).length;
-      const activeCameraId = resolveActiveCameraId() || "NONE";
+      const activeCamera = cameraState.active_camera || "NONE";
+      const phase = cameraState.phase || "idle";
       document.getElementById("status-left").textContent = [
+        `PHASE ${String(phase).toUpperCase()}`,
+        `ACTIVE ${activeCamera}`,
         `LIVE ${summary.live_event_count || 0}`,
         `UNKNOWN ${summary.unknown_event_count || 0}`,
-        `KNOWN ${summary.known_event_count || 0}`,
-        `PENDING ${summary.pending_event_count || 0}`,
       ].join(" · ");
       document.getElementById("status-right").textContent = [
-        `ACTIVE ${activeCameraId}`,
+        `KNOWN ${summary.known_event_count || 0}`,
+        `PENDING ${summary.pending_event_count || 0}`,
         `WORKERS ${workerCount}`,
         `REFRESH 1.5S`,
       ].join(" · ");
     }
 
-    function buildReidEvidence(timelines) {
+    function buildReidEvidenceFromTimeline(timelines) {
       const rows = [];
       (timelines || []).forEach((identity) => {
         const appearances = Array.isArray(identity.appearances) ? identity.appearances : [];
@@ -597,12 +697,12 @@
       return rows.reverse();
     }
 
-    function getCurrentPanelData(panelKey) {
+    function getCachedPanelData(panelKey) {
       if (panelKey === "entry") {
         return browserState.latestEvents.slice().reverse();
       }
       if (panelKey === "reid") {
-        return buildReidEvidence(browserState.timelines);
+        return browserState.reidHandoffs.length ? browserState.reidHandoffs.slice() : buildReidEvidenceFromTimeline(browserState.timelines);
       }
       if (panelKey === "timeline") {
         return browserState.timelines.slice();
@@ -610,14 +710,15 @@
       return [];
     }
 
-    function renderEntryPanel(data) {
+    function renderEntryPanel(data, messageText = "") {
+      const emptyHtml = `
+        <div class="panel-content">
+          <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+          <div class="panel-empty">${escapeHtml(messageText || "Waiting for pipeline data...")}</div>
+        </div>
+      `;
       if (!data.length) {
-        return `
-          <div class="panel-content">
-            <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
-            <div class="panel-empty">No live events yet.</div>
-          </div>
-        `;
+        return emptyHtml;
       }
       return `
         <div class="panel-content">
@@ -641,14 +742,15 @@
       `;
     }
 
-    function renderReidPanel(data) {
+    function renderReidPanel(data, messageText = "") {
+      const emptyHtml = `
+        <div class="panel-content">
+          <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
+          <div class="panel-empty">${escapeHtml(messageText || "Waiting for pipeline data...")}</div>
+        </div>
+      `;
       if (!data.length) {
-        return `
-          <div class="panel-content">
-            <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
-            <div class="panel-empty">No cross-camera reuse sequence available in the current run.</div>
-          </div>
-        `;
+        return emptyHtml;
       }
       return `
         <div class="panel-content">
@@ -668,10 +770,10 @@
               <div class="${rowClass}">
                 ${pairHtml}
                 <div class="event-copy">
-                  <div class="event-id">${escapeHtml(row.global_id)}</div>
-                  <div class="event-cam">${escapeHtml(row.transition)}</div>
-                  <div class="event-time">${escapeHtml(row.time_window)}</div>
-                  <div class="event-note">${escapeHtml(`score=${toDisplayText(row.score, "N/A")} · ${toDisplayText(row.reason, "N/A")}`)}</div>
+                  <div class="event-id">${escapeHtml(row.global_id || row.identity_id || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(row.transition || row.camera_path || row.path || "N/A")}</div>
+                  <div class="event-time">${escapeHtml(`delta=${toDisplayText(row.observed_delta_sec, "N/A")}s · score=${toDisplayText(row.score, "N/A")}`)}</div>
+                  <div class="event-note">${escapeHtml(toDisplayText(row.reason || row.method, "N/A"))}</div>
                 </div>
               </div>
             `;
@@ -680,14 +782,15 @@
       `;
     }
 
-    function renderTimelinePanel(data) {
+    function renderTimelinePanel(data, messageText = "") {
+      const emptyHtml = `
+        <div class="panel-content">
+          <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
+          <div class="panel-empty">${escapeHtml(messageText || "Waiting for pipeline data...")}</div>
+        </div>
+      `;
       if (!data.length) {
-        return `
-          <div class="panel-content">
-            <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
-            <div class="panel-empty">No Unknown timeline available yet.</div>
-          </div>
-        `;
+        return emptyHtml;
       }
       return `
         <div class="panel-content">
@@ -713,22 +816,84 @@
       `;
     }
 
-    const PANEL_CONTENT = {
+    const PANEL_RENDERERS = {
       entry: renderEntryPanel,
       reid: renderReidPanel,
       timeline: renderTimelinePanel,
     };
 
-    function renderSidebarPanel() {
+    function renderPanel(panelKey, data, messageText = "") {
       const panel = document.getElementById("sidebar-panel");
-      if (!browserState.activeTab) {
+      if (!panelKey) {
         panel.innerHTML = "";
         panel.classList.remove("panel-has-content");
         return;
       }
-      const data = getCurrentPanelData(browserState.activeTab);
-      panel.innerHTML = PANEL_CONTENT[browserState.activeTab](Array.isArray(data) ? data : []);
+      panel.innerHTML = PANEL_RENDERERS[panelKey](Array.isArray(data) ? data : [], messageText);
       panel.classList.add("panel-has-content");
+    }
+
+    function schedulePanelRetry(panelKey) {
+      clearPanelRetry();
+      if (!browserState.activeTab || browserState.activeTab !== panelKey || !getCurrentActiveCamera()) {
+        return;
+      }
+      panelRetryTimer = window.setTimeout(() => {
+        if (browserState.activeTab === panelKey) {
+          openPanel(panelKey, true);
+        }
+      }, PANEL_RETRY_MS);
+    }
+
+    async function fetchPanelData(panelKey) {
+      if (panelKey === "entry") {
+        const payload = await fetchJson("/api/latest-events");
+        browserState.latestEvents = Array.isArray(payload.events) ? payload.events : [];
+        return browserState.latestEvents.slice().reverse();
+      }
+      if (panelKey === "reid") {
+        try {
+          const payload = await fetchJson("/api/reid-handoffs");
+          browserState.reidHandoffs = Array.isArray(payload.handoffs) ? payload.handoffs : [];
+          return browserState.reidHandoffs.slice();
+        } catch (_error) {
+          const payload = await fetchJson("/api/timeline");
+          browserState.timelines = Array.isArray(payload.identities) ? payload.identities : [];
+          browserState.reidHandoffs = buildReidEvidenceFromTimeline(browserState.timelines);
+          return browserState.reidHandoffs.slice();
+        }
+      }
+      if (panelKey === "timeline") {
+        const payload = await fetchJson("/api/timeline");
+        browserState.timelines = Array.isArray(payload.identities) ? payload.identities : [];
+        return browserState.timelines.slice();
+      }
+      return [];
+    }
+
+    async function openPanel(panelKey, fromRetry = false) {
+      const requestNonce = ++panelRequestNonce;
+      clearPanelRetry();
+      renderPanel(panelKey, [], fromRetry ? "Waiting for pipeline data..." : "Refreshing panel...");
+      try {
+        const data = await fetchPanelData(panelKey);
+        if (requestNonce !== panelRequestNonce || browserState.activeTab !== panelKey) {
+          return;
+        }
+        if (!data.length) {
+          const messageText = "Waiting for pipeline data...";
+          renderPanel(panelKey, [], messageText);
+          schedulePanelRetry(panelKey);
+          return;
+        }
+        renderPanel(panelKey, data);
+      } catch (error) {
+        if (requestNonce !== panelRequestNonce || browserState.activeTab !== panelKey) {
+          return;
+        }
+        renderPanel(panelKey, [], `Failed to load panel data: ${error.message}`);
+        schedulePanelRetry(panelKey);
+      }
     }
 
     function initSidebarTabs() {
@@ -738,26 +903,30 @@
           const panelKey = tab.dataset.panel;
           if (browserState.activeTab === panelKey) {
             browserState.activeTab = null;
+            panelRequestNonce += 1;
+            clearPanelRetry();
             tabs.forEach((item) => item.classList.remove("tab-selected"));
-            renderSidebarPanel();
+            renderPanel(null, []);
             return;
           }
           browserState.activeTab = panelKey;
           tabs.forEach((item) => item.classList.toggle("tab-selected", item === tab));
-          renderSidebarPanel();
+          openPanel(panelKey);
         });
       });
     }
 
     function initCameraFeedHandlers() {
       CAMERA_LAYOUT.forEach((camera) => {
-        const cell = document.getElementById(camera.domId);
+        const cell = getCameraCell(camera.cameraId);
         if (!cell) {
           return;
         }
         const feed = cell.querySelector(".cam-feed");
         feed.addEventListener("load", () => {
-          cell.classList.add("cam-has-feed");
+          if (activeFeedCameraId === camera.cameraId) {
+            cell.classList.add("cam-has-feed");
+          }
         });
         feed.addEventListener("error", () => {
           cell.classList.remove("cam-has-feed");
@@ -765,8 +934,7 @@
       });
     }
 
-    async function refresh() {
-      updateCameraFeeds();
+    async function refreshLiveData() {
       try {
         const [summary, latest, timeline] = await Promise.all([
           fetchJson("/api/summary"),
@@ -776,29 +944,51 @@
         browserState.summary = summary || {};
         browserState.latestEvents = Array.isArray(latest.events) ? latest.events : [];
         browserState.timelines = Array.isArray(timeline.identities) ? timeline.identities : [];
+        if (!browserState.reidHandoffs.length) {
+          browserState.reidHandoffs = buildReidEvidenceFromTimeline(browserState.timelines);
+        }
         renderStatusBar();
-        renderCameraGrid();
-        renderSidebarPanel();
+        renderCameraMeta();
+        if (browserState.activeTab) {
+          const cachedData = getCachedPanelData(browserState.activeTab);
+          if (cachedData.length) {
+            clearPanelRetry();
+            renderPanel(browserState.activeTab, cachedData);
+          }
+        }
       } catch (error) {
         document.getElementById("status-left").textContent = "LIVE DATA LOAD FAILED";
         document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");
-        renderCameraGrid();
-        if (browserState.activeTab) {
-          document.getElementById("sidebar-panel").innerHTML = `
-            <div class="panel-content">
-              <div class="panel-header">${escapeHtml(browserState.activeTab.toUpperCase())}</div>
-              <div class="panel-empty">${escapeHtml(`Failed to load live data: ${error.message}`)}</div>
-            </div>
-          `;
-          document.getElementById("sidebar-panel").classList.add("panel-has-content");
-        }
+      }
+    }
+
+    async function pollCameraState() {
+      try {
+        browserState.cameraState = await fetchJson("/api/camera-state");
+        syncCameraVisualState();
+        renderStatusBar();
+        renderCameraMeta();
+      } catch (error) {
+        browserState.cameraState = {
+          phase: "idle",
+          active_camera: null,
+          sequence: ["C1", "C2", "C3", "C4"],
+          demo_time_sec: null,
+          gap_seconds: 8,
+        };
+        stopAllCameraFeeds();
+        syncCameraVisualState();
+        document.getElementById("status-left").textContent = "CAMERA STATE LOAD FAILED";
+        document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");
       }
     }
 
     initSidebarTabs();
     initCameraFeedHandlers();
-    refresh();
-    setInterval(refresh, 1500);
+    pollCameraState();
+    refreshLiveData();
+    setInterval(pollCameraState, CAMERA_STATE_POLL_MS);
+    setInterval(refreshLiveData, LIVE_DATA_POLL_MS);
   </script>
 </body>
 </html>

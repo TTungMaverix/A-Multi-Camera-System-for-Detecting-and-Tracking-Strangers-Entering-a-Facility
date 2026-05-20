@@ -2,11 +2,14 @@ import argparse
 import json
 import mimetypes
 import sys
+import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import cv2
+import numpy as np
 
 from calibration_editor import SHAPE_TYPE_PRESETS, build_shape_catalog
 from scene_calibration import (
@@ -21,6 +24,8 @@ from scene_calibration import (
 
 
 DEFAULT_SCENE_CALIBRATION_PATH = "insightface_demo_assets/runtime/config/manual_scene_calibration.wildtrack_4cam_phase.yaml"
+DEFAULT_CAMERA_SEQUENCE = ("C1", "C2", "C3", "C4")
+KNOWN_VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".MP4", ".AVI", ".MOV", ".MKV")
 
 
 def resolve_path(project_root: Path, value: str) -> Path:
@@ -125,9 +130,57 @@ def load_identity_timeline(output_root: Path):
                 "reason_code": event.get("reason_code", ""),
                 "best_body_crop": event.get("snapshot_path", ""),
                 "best_head_crop": event.get("head_snapshot_path", ""),
+                "final_score": event.get("final_score", None),
+                "body_score": event.get("body_score", None),
+                "face_score": event.get("face_score", None),
             }
         )
     return [_timeline_payload_with_urls(item) for item in grouped.values()]
+
+
+def load_reid_handoffs(output_root: Path):
+    edge_summary_path = output_root / "summaries" / "cross_camera_handoff_summary.json"
+    edge_summary = load_json_file(edge_summary_path, {})
+    edge_count_map = {
+        (item.get("src_camera_id", ""), item.get("dst_camera_id", "")): item.get("count", 0)
+        for item in edge_summary.get("handoff_edges", [])
+    }
+    handoffs = []
+    for identity in load_identity_timeline(output_root):
+        appearances = identity.get("appearances", []) or []
+        for index in range(1, len(appearances)):
+            previous = appearances[index - 1] or {}
+            current = appearances[index] or {}
+            from_camera = previous.get("camera_id", "")
+            to_camera = current.get("camera_id", "")
+            handoffs.append(
+                {
+                    "global_id": identity.get("identity_label") or identity.get("identity_id") or "UNKNOWN",
+                    "identity_id": identity.get("identity_id", ""),
+                    "from_camera": from_camera,
+                    "to_camera": to_camera,
+                    "transition": f"{from_camera} -> {to_camera}",
+                    "camera_path": f"{from_camera} -> {to_camera}",
+                    "path": f"{from_camera} -> {to_camera}",
+                    "observed_delta_sec": max(
+                        0.0,
+                        float(current.get("relative_sec", 0.0) or 0.0) - float(previous.get("relative_sec", 0.0) or 0.0),
+                    ),
+                    "method": current.get("modality_primary_used", ""),
+                    "reason": current.get("decision_reason") or current.get("reason_code") or "",
+                    "score": (
+                        current.get("final_score")
+                        if current.get("final_score") not in ("", None)
+                        else current.get("body_score")
+                        if current.get("body_score") not in ("", None)
+                        else current.get("face_score")
+                    ),
+                    "previous_snapshot_url": previous.get("head_snapshot_url") or previous.get("snapshot_url") or "",
+                    "current_snapshot_url": current.get("head_snapshot_url") or current.get("snapshot_url") or "",
+                    "edge_count": edge_count_map.get((from_camera, to_camera), 0),
+                }
+            )
+    return handoffs
 
 
 def load_live_summary(output_root: Path):
@@ -201,14 +254,168 @@ def _json_success(payload):
     return {"ok": True, **payload}
 
 
-class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
-    server_version = "LiveDemoHTTP/0.2"
+def _camera_source_path(dataset_root: Path, pair_id: str, camera_id: str):
+    if not dataset_root or not pair_id:
+        return None
+    normalized = (camera_id or "").upper()
+    if normalized in {"C1", "C3"}:
+        camera_folder = "Camera 1"
+    elif normalized in {"C2", "C4"}:
+        camera_folder = "Camera 2"
+    else:
+        return None
+    base_path = dataset_root / camera_folder
+    for extension in KNOWN_VIDEO_EXTENSIONS:
+        candidate = base_path / f"{pair_id}{extension}"
+        if candidate.exists():
+            return candidate.resolve()
+    return None
 
-    def __init__(self, *args, web_root=None, project_root=None, output_root=None, scene_calibration_path=None, **kwargs):
+
+def _frame_size_from_camera_cfg(camera_cfg):
+    size = camera_cfg.get("frame_size_ref") or camera_cfg.get("frame_size") or camera_cfg.get("resolution")
+    if isinstance(size, (list, tuple)) and len(size) >= 2:
+        try:
+            width = max(1, int(size[0]))
+            height = max(1, int(size[1]))
+            return width, height
+        except (TypeError, ValueError):
+            return 1280, 720
+    return 1280, 720
+
+
+def _placeholder_frame(camera_id, phase_label, width=1280, height=720, secondary_text=""):
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[:, :] = (16, 11, 8)
+    center_y = max(80, height // 2)
+    title = f"{camera_id} {phase_label}".strip().upper()
+    cv2.putText(frame, title, (40, center_y), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (96, 174, 230), 2, cv2.LINE_AA)
+    if secondary_text:
+        cv2.putText(
+            frame,
+            secondary_text.upper(),
+            (40, min(height - 40, center_y + 52)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (58, 90, 122),
+            2,
+            cv2.LINE_AA,
+        )
+    return frame
+
+
+class DemoPlaybackState:
+    def __init__(
+        self,
+        *,
+        presentation_mode="sequential",
+        camera_sequence=None,
+        camera_segment_sec=12.0,
+        gap_seconds=8.0,
+        stream_target_fps=15.0,
+        dataset_root=None,
+        demo_pair_id="",
+    ):
+        self._lock = threading.Lock()
+        self.presentation_mode = presentation_mode or "sequential"
+        self.sequence = [item.strip().upper() for item in (camera_sequence or list(DEFAULT_CAMERA_SEQUENCE)) if item.strip()]
+        self.camera_segment_sec = max(1.0, float(camera_segment_sec or 12.0))
+        self.gap_seconds = max(0.0, float(gap_seconds or 0.0))
+        self.stream_target_fps = max(1.0, float(stream_target_fps or 15.0))
+        self.dataset_root = Path(dataset_root).resolve() if dataset_root else None
+        self.demo_pair_id = demo_pair_id or ""
+        self.demo_start_monotonic = time.monotonic()
+
+    def _elapsed(self):
+        with self._lock:
+            return max(0.0, time.monotonic() - self.demo_start_monotonic)
+
+    def current_state(self):
+        elapsed = self._elapsed()
+        timeline_cursor = 0.0
+        for index, camera_id in enumerate(self.sequence):
+            segment_start = timeline_cursor
+            segment_end = segment_start + self.camera_segment_sec
+            if elapsed < segment_end:
+                return {
+                    "phase": "cam_playing",
+                    "active_camera": camera_id,
+                    "sequence": list(self.sequence),
+                    "phase_start_time": segment_start,
+                    "phase_elapsed_sec": elapsed - segment_start,
+                    "demo_time_sec": elapsed,
+                    "gap_seconds": self.gap_seconds,
+                    "camera_segment_sec": self.camera_segment_sec,
+                    "stream_target_fps": self.stream_target_fps,
+                    "presentation_mode": self.presentation_mode,
+                    "demo_pair_id": self.demo_pair_id,
+                }
+            timeline_cursor = segment_end
+            if index < len(self.sequence) - 1:
+                gap_start = timeline_cursor
+                gap_end = gap_start + self.gap_seconds
+                if elapsed < gap_end:
+                    return {
+                        "phase": "gap",
+                        "active_camera": None,
+                        "sequence": list(self.sequence),
+                        "phase_start_time": gap_start,
+                        "phase_elapsed_sec": elapsed - gap_start,
+                        "demo_time_sec": elapsed,
+                        "gap_seconds": self.gap_seconds,
+                        "camera_segment_sec": self.camera_segment_sec,
+                        "stream_target_fps": self.stream_target_fps,
+                        "presentation_mode": self.presentation_mode,
+                        "demo_pair_id": self.demo_pair_id,
+                    }
+                timeline_cursor = gap_end
+        return {
+            "phase": "done",
+            "active_camera": None,
+            "sequence": list(self.sequence),
+            "phase_start_time": timeline_cursor if self.sequence else None,
+            "phase_elapsed_sec": max(0.0, elapsed - timeline_cursor),
+            "demo_time_sec": elapsed,
+            "gap_seconds": self.gap_seconds,
+            "camera_segment_sec": self.camera_segment_sec,
+            "stream_target_fps": self.stream_target_fps,
+            "presentation_mode": self.presentation_mode,
+            "demo_pair_id": self.demo_pair_id,
+        }
+
+    def frame_index_for_camera(self, camera_id):
+        state = self.current_state()
+        active_camera = state.get("active_camera")
+        if state.get("phase") != "cam_playing" or active_camera != camera_id:
+            return None
+        phase_elapsed = float(state.get("phase_elapsed_sec", 0.0) or 0.0)
+        return max(0, int(round(phase_elapsed * self.stream_target_fps)))
+
+    def preview_source_override(self, camera_id):
+        clip_path = _camera_source_path(self.dataset_root, self.demo_pair_id, camera_id)
+        if not clip_path:
+            return None
+        return {"source_type": "file", "source_value": str(clip_path)}
+
+
+class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
+    server_version = "LiveDemoHTTP/0.3"
+
+    def __init__(
+        self,
+        *args,
+        web_root=None,
+        project_root=None,
+        output_root=None,
+        scene_calibration_path=None,
+        demo_state=None,
+        **kwargs,
+    ):
         self.web_root = web_root
         self.project_root = project_root
         self.output_root = output_root
         self.scene_calibration_path = scene_calibration_path
+        self.demo_state = demo_state
         super().__init__(*args, directory=str(web_root), **kwargs)
 
     def _send_json(self, payload, status=200):
@@ -247,9 +454,15 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         )
         return calibration, runtime
 
-    def _preview_source_for_camera(self, camera_cfg, query):
-        source_type = parse_qs(query).get("source_type", [camera_cfg.get("preview_source_type", "file")])[0]
-        source_value = parse_qs(query).get("source", [camera_cfg.get("preview_source", "")])[0]
+    def _preview_source_for_camera(self, camera_id, camera_cfg, query):
+        query_params = parse_qs(query)
+        source_type = query_params.get("source_type", [camera_cfg.get("preview_source_type", "")])[0]
+        source_value = query_params.get("source", [camera_cfg.get("preview_source", "")])[0]
+        if not source_type or not source_value:
+            override = self.demo_state.preview_source_override(camera_id) if self.demo_state else None
+            if override:
+                source_type = override["source_type"]
+                source_value = override["source_value"]
         return resolve_preview_source(
             self.project_root,
             camera_cfg,
@@ -260,7 +473,7 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
     def _preview_frame(self, calibration, camera_id, query, overlay_enabled=True):
         query_params = parse_qs(query)
         camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
-        source_type, source_value = self._preview_source_for_camera(camera_cfg, query)
+        source_type, source_value = self._preview_source_for_camera(camera_id, camera_cfg, query)
         frame_idx = int(query_params.get("frame_idx", ["0"])[0] or 0)
         return render_calibration_preview(
             calibration,
@@ -271,6 +484,64 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             frame_idx=frame_idx,
             overlay_enabled=overlay_enabled,
         )
+
+    def _camera_frame(self, calibration, camera_id, query, overlay_enabled=True):
+        camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
+        if not camera_cfg:
+            raise RuntimeError(f"camera_not_found:{camera_id}")
+        query_params = parse_qs(query)
+        explicit_frame_idx = query_params.get("frame_idx", [""])[0]
+        if explicit_frame_idx:
+            return self._preview_frame(calibration, camera_id, query, overlay_enabled=overlay_enabled)
+
+        playback_state = self.demo_state.current_state() if self.demo_state else {}
+        active_camera = playback_state.get("active_camera")
+        phase = playback_state.get("phase", "idle")
+
+        if active_camera != camera_id or phase != "cam_playing":
+            width, height = _frame_size_from_camera_cfg(camera_cfg)
+            phase_text = "TRAVEL GAP" if phase == "gap" else "DONE" if phase == "done" else "STANDBY"
+            return _placeholder_frame(camera_id, phase_text, width=width, height=height, secondary_text="inactive camera")
+
+        frame_idx = self.demo_state.frame_index_for_camera(camera_id) if self.demo_state else 0
+        source_type, source_value = self._preview_source_for_camera(camera_id, camera_cfg, query)
+        return render_calibration_preview(
+            calibration,
+            camera_id,
+            self.project_root,
+            source_type_override=source_type,
+            source_override=source_value,
+            frame_idx=frame_idx or 0,
+            overlay_enabled=overlay_enabled,
+        )
+
+    def _camera_config_payload(self):
+        calibration, _runtime = self._load_calibration(required=False)
+        cameras = []
+        for camera_id in (self.demo_state.sequence if self.demo_state else DEFAULT_CAMERA_SEQUENCE):
+            camera_cfg = (calibration.get("cameras", {}) or {}).get(camera_id, {})
+            override = self.demo_state.preview_source_override(camera_id) if self.demo_state else None
+            cameras.append(
+                {
+                    "camera_id": camera_id,
+                    "label": camera_id,
+                    "preview_source_type": (override or {}).get("source_type", camera_cfg.get("preview_source_type", "file")),
+                    "preview_source": (override or {}).get("source_value", camera_cfg.get("preview_source", "")),
+                    "frame_size_ref": camera_cfg.get("frame_size_ref", []),
+                }
+            )
+        state = self.demo_state.current_state() if self.demo_state else {}
+        return {
+            "presentation_mode": state.get("presentation_mode", "sequential"),
+            "demo_pair_id": state.get("demo_pair_id", ""),
+            "sequence": state.get("sequence", list(DEFAULT_CAMERA_SEQUENCE)),
+            "camera_segment_sec": state.get("camera_segment_sec", 12.0),
+            "gap_seconds": state.get("gap_seconds", 8.0),
+            "stream_target_fps": state.get("stream_target_fps", 15.0),
+            "output_root": str(self.output_root),
+            "scene_calibration_config": str(self.scene_calibration_path),
+            "cameras": cameras,
+        }
 
     def _calibration_state_payload(self):
         calibration, runtime = self._load_calibration(required=False)
@@ -298,8 +569,29 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             return self._send_json(load_live_summary(self.output_root))
         if parsed.path == "/api/timeline":
             return self._send_json({"identities": load_identity_timeline(self.output_root)})
+        if parsed.path == "/api/reid-handoffs":
+            return self._send_json({"handoffs": load_reid_handoffs(self.output_root)})
+        if parsed.path == "/api/camera-state":
+            return self._send_json(self.demo_state.current_state() if self.demo_state else {})
+        if parsed.path == "/api/camera-config":
+            return self._send_json(self._camera_config_payload())
         if parsed.path == "/api/calibration/state":
             return self._send_json(self._calibration_state_payload())
+        if parsed.path == "/api/camera-frame":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            if not camera_id:
+                return self._send_json({"ok": False, "error": "missing camera_id"}, status=400)
+            try:
+                calibration, _runtime = self._load_calibration(required=False)
+                frame = self._camera_frame(
+                    calibration,
+                    camera_id,
+                    parsed.query,
+                    overlay_enabled=parse_qs(parsed.query).get("overlay", ["1"])[0] != "0",
+                )
+            except Exception as exc:
+                return self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return self._send_image(frame)
         if parsed.path == "/api/calibration/preview":
             camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
             if not camera_id:
@@ -364,17 +656,35 @@ def parse_args():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--project-root", default=".")
+    parser.add_argument("--dataset-root", default="")
     parser.add_argument("--output-root", default="outputs/live_runs/file_sanity")
     parser.add_argument("--scene-calibration-config", default=DEFAULT_SCENE_CALIBRATION_PATH)
+    parser.add_argument("--demo-pair-id", default="")
+    parser.add_argument("--presentation-mode", default="sequential")
+    parser.add_argument("--camera-sequence", default="C1,C2,C3,C4")
+    parser.add_argument("--camera-segment-sec", type=float, default=12.0)
+    parser.add_argument("--travel-gap-sec", type=float, default=8.0)
+    parser.add_argument("--stream-target-fps", type=float, default=15.0)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     project_root = resolve_path(Path.cwd(), args.project_root)
+    dataset_root = resolve_path(project_root, args.dataset_root) if args.dataset_root else None
     output_root = resolve_path(project_root, args.output_root)
     web_root = Path(__file__).resolve().parent / "web_demo"
     scene_calibration_path = resolve_path(project_root, args.scene_calibration_config)
+    camera_sequence = [item.strip().upper() for item in args.camera_sequence.split(",") if item.strip()]
+    demo_state = DemoPlaybackState(
+        presentation_mode=args.presentation_mode,
+        camera_sequence=camera_sequence or list(DEFAULT_CAMERA_SEQUENCE),
+        camera_segment_sec=args.camera_segment_sec,
+        gap_seconds=args.travel_gap_sec,
+        stream_target_fps=args.stream_target_fps,
+        dataset_root=dataset_root,
+        demo_pair_id=args.demo_pair_id,
+    )
 
     def handler(*handler_args, **handler_kwargs):
         return LiveDemoRequestHandler(
@@ -383,6 +693,7 @@ def main():
             project_root=project_root,
             output_root=output_root,
             scene_calibration_path=scene_calibration_path,
+            demo_state=demo_state,
             **handler_kwargs,
         )
 
@@ -390,6 +701,14 @@ def main():
     print(f"LIVE_DEMO_UI=http://{args.host}:{args.port}")
     print(f"LIVE_DEMO_OUTPUT_ROOT={output_root}")
     print(f"SCENE_CALIBRATION_CONFIG={scene_calibration_path}")
+    print(f"DEMO_PAIR_ID={args.demo_pair_id}")
+    print(f"PRESENTATION_MODE={args.presentation_mode}")
+    print(f"CAMERA_SEQUENCE={','.join(camera_sequence or DEFAULT_CAMERA_SEQUENCE)}")
+    print(f"CAMERA_SEGMENT_SEC={args.camera_segment_sec}")
+    print(f"TRAVEL_GAP_SEC={args.travel_gap_sec}")
+    print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
+    if dataset_root:
+        print(f"DATASET_ROOT={dataset_root}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
