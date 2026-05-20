@@ -70,7 +70,7 @@
 
     .cam-cell video,
     .cam-cell canvas,
-    .cam-cell img.cam-feed {
+    .cam-cell img.cam-feed-img {
       width: 100%;
       height: 100%;
       object-fit: cover;
@@ -368,7 +368,7 @@
     <div id="camera-section">
       <div id="camera-grid">
         <div class="cam-cell cam-inactive" id="cam-1" data-camera-id="C1">
-          <img class="cam-feed" alt="Camera 1 feed">
+          <img class="cam-feed-img" src="" alt="Camera 1 feed">
           <div class="cam-label">CAMERA 1</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
@@ -381,7 +381,7 @@
           </div>
         </div>
         <div class="cam-cell cam-inactive" id="cam-2" data-camera-id="C2">
-          <img class="cam-feed" alt="Camera 2 feed">
+          <img class="cam-feed-img" src="" alt="Camera 2 feed">
           <div class="cam-label">CAMERA 2</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
@@ -394,7 +394,7 @@
           </div>
         </div>
         <div class="cam-cell cam-inactive" id="cam-3" data-camera-id="C3">
-          <img class="cam-feed" alt="Camera 3 feed">
+          <img class="cam-feed-img" src="" alt="Camera 3 feed">
           <div class="cam-label">CAMERA 3</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
@@ -407,7 +407,7 @@
           </div>
         </div>
         <div class="cam-cell cam-inactive" id="cam-4" data-camera-id="C4">
-          <img class="cam-feed" alt="Camera 4 feed">
+          <img class="cam-feed-img" src="" alt="Camera 4 feed">
           <div class="cam-label">CAMERA 4</div>
           <div class="cam-status-dot"></div>
           <div class="cam-standby-overlay">
@@ -444,7 +444,6 @@
       { domId: "cam-4", cameraId: "C4" },
     ];
 
-    const ACTIVE_FEED_INTERVAL_MS = 200;
     const CAMERA_STATE_POLL_MS = 1000;
     const LIVE_DATA_POLL_MS = 1500;
     const PANEL_RETRY_MS = 3000;
@@ -458,8 +457,7 @@
       cameraState: null,
     };
 
-    const feedIntervals = {};
-    let activeFeedCameraId = null;
+    let lastActiveCameraId = null;
     let panelRetryTimer = null;
     let panelRequestNonce = 0;
 
@@ -527,50 +525,39 @@
       }
     }
 
-    function stopCameraFeed(cameraId) {
-      if (feedIntervals[cameraId]) {
-        clearInterval(feedIntervals[cameraId]);
-        delete feedIntervals[cameraId];
-      }
-      const cell = getCameraCell(cameraId);
-      if (!cell) {
-        return;
-      }
-      const feed = cell.querySelector(".cam-feed");
-      if (feed) {
-        feed.removeAttribute("src");
-      }
-      cell.classList.remove("cam-has-feed");
-    }
+    function updateCameraFeeds(activeCameraId) {
+      CAMERA_LAYOUT.forEach((camera) => {
+        const cell = getCameraCell(camera.cameraId);
+        if (!cell) {
+          return;
+        }
+        const feed = cell.querySelector(".cam-feed-img");
+        const overlay = cell.querySelector(".cam-standby-overlay");
+        if (!feed || !overlay) {
+          return;
+        }
 
-    function stopAllCameraFeeds() {
-      CAMERA_LAYOUT.forEach((camera) => stopCameraFeed(camera.cameraId));
-      activeFeedCameraId = null;
-    }
+        if (camera.cameraId === activeCameraId) {
+          const expectedCameraToken = `camera_id=${encodeURIComponent(camera.cameraId)}`;
+          if (!feed.src || !feed.src.includes(expectedCameraToken)) {
+            cell.classList.remove("cam-has-feed");
+            feed.src = `/api/video-stream?camera_id=${encodeURIComponent(camera.cameraId)}&t=${Date.now()}`;
+          }
+          feed.style.display = "block";
+          overlay.style.display = "none";
+          cell.classList.add("cam-active");
+          cell.classList.remove("cam-inactive");
+          return;
+        }
 
-    function requestCameraFrame(cameraId) {
-      const cell = getCameraCell(cameraId);
-      if (!cell) {
-        return;
-      }
-      const feed = cell.querySelector(".cam-feed");
-      if (!feed) {
-        return;
-      }
-      feed.src = `/api/camera-frame?camera_id=${encodeURIComponent(cameraId)}&overlay=1&t=${Date.now()}`;
-    }
-
-    function startCameraFeed(cameraId) {
-      if (!cameraId) {
-        return;
-      }
-      if (feedIntervals[cameraId]) {
-        return;
-      }
-      requestCameraFrame(cameraId);
-      feedIntervals[cameraId] = window.setInterval(() => {
-        requestCameraFrame(cameraId);
-      }, ACTIVE_FEED_INTERVAL_MS);
+        if (feed.getAttribute("src")) {
+          feed.setAttribute("src", "");
+        }
+        feed.style.display = "none";
+        overlay.style.display = "flex";
+        cell.classList.remove("cam-active", "cam-has-feed");
+        cell.classList.add("cam-inactive");
+      });
     }
 
     function setCameraStandbyLabel(cameraId, phaseText) {
@@ -589,24 +576,10 @@
       const phase = state.phase || "idle";
       const activeCamera = state.active_camera || null;
 
-      if (activeCamera !== activeFeedCameraId) {
-        if (activeFeedCameraId) {
-          stopCameraFeed(activeFeedCameraId);
-        }
-        CAMERA_LAYOUT.forEach((camera) => {
-          if (camera.cameraId !== activeCamera) {
-            stopCameraFeed(camera.cameraId);
-          }
-        });
-        if (activeCamera) {
-          startCameraFeed(activeCamera);
-          activeFeedCameraId = activeCamera;
-        } else {
-          activeFeedCameraId = null;
-        }
-      } else if (activeCamera && !feedIntervals[activeCamera]) {
-        startCameraFeed(activeCamera);
+      if (activeCamera !== lastActiveCameraId) {
+        lastActiveCameraId = activeCamera;
       }
+      updateCameraFeeds(activeCamera);
 
       CAMERA_LAYOUT.forEach((camera) => {
         const cell = getCameraCell(camera.cameraId);
@@ -922,9 +895,9 @@
         if (!cell) {
           return;
         }
-        const feed = cell.querySelector(".cam-feed");
+        const feed = cell.querySelector(".cam-feed-img");
         feed.addEventListener("load", () => {
-          if (activeFeedCameraId === camera.cameraId) {
+          if (lastActiveCameraId === camera.cameraId) {
             cell.classList.add("cam-has-feed");
           }
         });
@@ -976,7 +949,7 @@
           demo_time_sec: null,
           gap_seconds: 8,
         };
-        stopAllCameraFeeds();
+        updateCameraFeeds(null);
         syncCameraVisualState();
         document.getElementById("status-left").textContent = "CAMERA STATE LOAD FAILED";
         document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");

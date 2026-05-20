@@ -1,6 +1,7 @@
 import argparse
 import json
 import mimetypes
+import os
 import sys
 import threading
 import time
@@ -254,22 +255,91 @@ def _json_success(payload):
     return {"ok": True, **payload}
 
 
-def _camera_source_path(dataset_root: Path, pair_id: str, camera_id: str):
-    if not dataset_root or not pair_id:
-        return None
+def _camera_folder_for_id(camera_id: str):
     normalized = (camera_id or "").upper()
     if normalized in {"C1", "C3"}:
-        camera_folder = "Camera 1"
-    elif normalized in {"C2", "C4"}:
-        camera_folder = "Camera 2"
-    else:
-        return None
-    base_path = dataset_root / camera_folder
-    for extension in KNOWN_VIDEO_EXTENSIONS:
-        candidate = base_path / f"{pair_id}{extension}"
+        return "Camera 1"
+    if normalized in {"C2", "C4"}:
+        return "Camera 2"
+    return None
+
+
+def _candidate_clip_paths(base_path: Path, pair_id: str):
+    clip_id = (pair_id or "").strip()
+    if not clip_id:
+        return []
+    direct_paths = [base_path / f"{clip_id}{extension}" for extension in KNOWN_VIDEO_EXTENSIONS]
+    nested_paths = [(base_path / clip_id) / f"{clip_id}{extension}" for extension in KNOWN_VIDEO_EXTENSIONS]
+    return direct_paths + nested_paths
+
+
+def _resolve_single_camera_video_path(base_path: Path, pair_id: str):
+    for candidate in _candidate_clip_paths(base_path, pair_id):
         if candidate.exists():
             return candidate.resolve()
     return None
+
+
+def _resolve_clip_video_paths(demo_pair_id: str, dataset_root: str | Path | None) -> dict:
+    if not dataset_root or not demo_pair_id:
+        return {camera_id: None for camera_id in DEFAULT_CAMERA_SEQUENCE}
+    dataset_root = Path(dataset_root).resolve()
+    camera_1_path = _resolve_single_camera_video_path(dataset_root / "Camera 1", demo_pair_id)
+    camera_2_path = _resolve_single_camera_video_path(dataset_root / "Camera 2", demo_pair_id)
+    return {
+        "C1": str(camera_1_path) if camera_1_path else None,
+        "C2": str(camera_2_path) if camera_2_path else None,
+        "C3": str(camera_1_path) if camera_1_path else None,
+        "C4": str(camera_2_path) if camera_2_path else None,
+    }
+
+
+def _camera_source_path(dataset_root: Path, pair_id: str, camera_id: str):
+    if not dataset_root or not pair_id:
+        return None
+    camera_folder = _camera_folder_for_id(camera_id)
+    if not camera_folder:
+        return None
+    return _resolve_single_camera_video_path(dataset_root / camera_folder, pair_id)
+
+
+def _list_directory_entries(path: Path, limit=40):
+    try:
+        entries = sorted(item.name for item in path.iterdir())
+    except FileNotFoundError:
+        return ["<missing directory>"]
+    except NotADirectoryError:
+        return ["<not a directory>"]
+    if len(entries) > limit:
+        return entries[:limit] + [f"... ({len(entries) - limit} more entries)"]
+    return entries
+
+
+def _print_video_path_resolution(video_paths: dict, dataset_root: Path | None):
+    print("=== VIDEO PATH RESOLUTION ===")
+    for camera_id in DEFAULT_CAMERA_SEQUENCE:
+        video_path = video_paths.get(camera_id)
+        status = "FOUND" if (video_path and os.path.exists(video_path)) else "MISSING"
+        print(f"  {camera_id}: {video_path} [{status}]")
+    print("=============================")
+
+    missing_camera_1 = not video_paths.get("C1")
+    missing_camera_2 = not video_paths.get("C2")
+    if not dataset_root or (not missing_camera_1 and not missing_camera_2):
+        return
+
+    if missing_camera_1:
+        camera_1_dir = Path(dataset_root) / "Camera 1"
+        print(f"=== DIRECTORY LISTING: {camera_1_dir} ===")
+        for entry in _list_directory_entries(camera_1_dir):
+            print(f"  {entry}")
+        print("========================================")
+    if missing_camera_2:
+        camera_2_dir = Path(dataset_root) / "Camera 2"
+        print(f"=== DIRECTORY LISTING: {camera_2_dir} ===")
+        for entry in _list_directory_entries(camera_2_dir):
+            print(f"  {entry}")
+        print("========================================")
 
 
 def _frame_size_from_camera_cfg(camera_cfg):
@@ -304,6 +374,125 @@ def _placeholder_frame(camera_id, phase_label, width=1280, height=720, secondary
     return frame
 
 
+class VideoStreamer:
+    """
+    Reads one video file in a background thread and exposes the latest JPEG frame.
+    One logical camera owns one streamer instance even if multiple logical cameras
+    resolve to the same physical video path.
+    """
+
+    _black_jpeg_cache = {}
+    _black_cache_lock = threading.Lock()
+
+    def __init__(self, camera_id, video_path, target_fps=15.0, jpeg_quality=80):
+        self.camera_id = camera_id
+        self.video_path = str(video_path) if video_path else ""
+        self.target_fps = max(1.0, float(target_fps or 15.0))
+        self.jpeg_quality = max(30, min(95, int(jpeg_quality or 80)))
+        self._lock = threading.Lock()
+        self._thread = None
+        self._stop_event = threading.Event()
+        self._capture = None
+        self._current_frame_jpeg = None
+        self._last_error = None
+
+    @classmethod
+    def get_black_jpeg(cls, width=1280, height=720):
+        key = (int(width), int(height))
+        with cls._black_cache_lock:
+            if key not in cls._black_jpeg_cache:
+                frame = np.zeros((key[1], key[0], 3), dtype=np.uint8)
+                ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                cls._black_jpeg_cache[key] = encoded.tobytes() if ok else b""
+            return cls._black_jpeg_cache[key]
+
+    def is_running(self):
+        with self._lock:
+            return bool(self._thread and self._thread.is_alive())
+
+    def _release_capture(self):
+        capture = self._capture
+        self._capture = None
+        if capture is not None:
+            capture.release()
+
+    def _open_capture(self):
+        self._release_capture()
+        if not self.video_path or not os.path.exists(self.video_path):
+            self._last_error = f"video_missing:{self.video_path}"
+            return False
+        capture = cv2.VideoCapture(self.video_path)
+        if not capture or not capture.isOpened():
+            self._last_error = f"video_open_failed:{self.video_path}"
+            if capture is not None:
+                capture.release()
+            return False
+        self._capture = capture
+        self._last_error = None
+        return True
+
+    def _run(self):
+        frame_period = 1.0 / self.target_fps
+        if not self._open_capture():
+            print(f"[VIDEO_STREAMER] {self.camera_id} open failed: {self._last_error}")
+            return
+
+        while not self._stop_event.is_set():
+            cycle_started = time.monotonic()
+            if self._capture is None and not self._open_capture():
+                self._stop_event.wait(0.5)
+                continue
+
+            ok, frame = self._capture.read() if self._capture is not None else (False, None)
+            if not ok or frame is None:
+                if self._capture is not None:
+                    self._capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = self._capture.read()
+            if not ok or frame is None:
+                self._stop_event.wait(0.1)
+                continue
+
+            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+            if ok:
+                with self._lock:
+                    self._current_frame_jpeg = encoded.tobytes()
+
+            remaining = frame_period - (time.monotonic() - cycle_started)
+            if remaining > 0:
+                self._stop_event.wait(remaining)
+
+        self._release_capture()
+
+    def start(self):
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return True
+            self._stop_event = threading.Event()
+            self._thread = threading.Thread(
+                target=self._run,
+                name=f"VideoStreamer-{self.camera_id}",
+                daemon=True,
+            )
+            self._thread.start()
+            return True
+
+    def stop(self):
+        with self._lock:
+            thread = self._thread
+            if thread is None:
+                self._release_capture()
+                return
+            self._stop_event.set()
+            self._thread = None
+        if thread.is_alive():
+            thread.join(timeout=1.5)
+        self._release_capture()
+
+    def get_frame(self):
+        with self._lock:
+            return self._current_frame_jpeg
+
+
 class DemoPlaybackState:
     def __init__(
         self,
@@ -325,6 +514,13 @@ class DemoPlaybackState:
         self.dataset_root = Path(dataset_root).resolve() if dataset_root else None
         self.demo_pair_id = demo_pair_id or ""
         self.demo_start_monotonic = time.monotonic()
+        self.video_paths = _resolve_clip_video_paths(self.demo_pair_id, self.dataset_root)
+        self._streamers = {
+            camera_id: VideoStreamer(camera_id, video_path, target_fps=self.stream_target_fps)
+            for camera_id, video_path in self.video_paths.items()
+            if video_path
+        }
+        self._active_stream_camera = None
 
     def _elapsed(self):
         with self._lock:
@@ -392,14 +588,39 @@ class DemoPlaybackState:
         return max(0, int(round(phase_elapsed * self.stream_target_fps)))
 
     def preview_source_override(self, camera_id):
-        clip_path = _camera_source_path(self.dataset_root, self.demo_pair_id, camera_id)
+        clip_path = self.video_path_for_camera(camera_id)
         if not clip_path:
             return None
         return {"source_type": "file", "source_value": str(clip_path)}
 
+    def video_path_for_camera(self, camera_id):
+        return self.video_paths.get((camera_id or "").upper())
+
+    def streamer_for_camera(self, camera_id):
+        return self._streamers.get((camera_id or "").upper())
+
+    def sync_streamers(self, state=None):
+        state = state or self.current_state()
+        phase = state.get("phase")
+        active_camera = state.get("active_camera") if phase == "cam_playing" else None
+        for camera_id, streamer in self._streamers.items():
+            if camera_id == active_camera:
+                streamer.start()
+            else:
+                streamer.stop()
+        with self._lock:
+            self._active_stream_camera = active_camera
+        return state
+
+    def stop_all_streamers(self):
+        for streamer in self._streamers.values():
+            streamer.stop()
+        with self._lock:
+            self._active_stream_camera = None
+
 
 class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
-    server_version = "LiveDemoHTTP/0.3"
+    server_version = "LiveDemoHTTP/0.4"
 
     def __init__(
         self,
@@ -445,6 +666,22 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_jpeg_bytes(self, data, status=200):
+        payload = data or VideoStreamer.get_black_jpeg()
+        self.send_response(status)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_video_stream_headers(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=mjpegframe")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
 
     def _load_calibration(self, required=False):
         calibration, runtime = load_scene_calibration(
@@ -515,6 +752,98 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             overlay_enabled=overlay_enabled,
         )
 
+    def _camera_frame_bytes(self, camera_id):
+        if not self.demo_state:
+            return VideoStreamer.get_black_jpeg()
+        camera_id = (camera_id or "").upper()
+        playback_state = self.demo_state.current_state()
+        self.demo_state.sync_streamers(playback_state)
+        if playback_state.get("phase") != "cam_playing" or playback_state.get("active_camera") != camera_id:
+            return VideoStreamer.get_black_jpeg()
+        if not self.demo_state.video_path_for_camera(camera_id):
+            print(f"[VIDEO_STREAM] missing video path for {camera_id}")
+            return VideoStreamer.get_black_jpeg()
+        streamer = self.demo_state.streamer_for_camera(camera_id)
+        if not streamer:
+            return VideoStreamer.get_black_jpeg()
+        streamer.start()
+        deadline = time.monotonic() + 2.0
+        frame = streamer.get_frame()
+        while frame is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+            frame = streamer.get_frame()
+        return frame or VideoStreamer.get_black_jpeg()
+
+    def _video_stream_head(self, camera_id):
+        camera_id = (camera_id or "").upper()
+        if not camera_id:
+            return self._send_json({"ok": False, "error": "missing camera_id"}, status=400)
+        state = self.demo_state.current_state() if self.demo_state else {}
+        if self.demo_state:
+            self.demo_state.sync_streamers(state)
+        is_active = state.get("phase") == "cam_playing" and state.get("active_camera") == camera_id
+        has_video = bool(self.demo_state and self.demo_state.video_path_for_camera(camera_id))
+        self.send_response(200)
+        self.send_header(
+            "Content-Type",
+            "multipart/x-mixed-replace; boundary=mjpegframe" if is_active and has_video else "image/jpeg",
+        )
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _serve_video_stream(self, camera_id):
+        camera_id = (camera_id or "").upper()
+        if not camera_id:
+            return self._send_json({"ok": False, "error": "missing camera_id"}, status=400)
+
+        state = self.demo_state.current_state() if self.demo_state else {}
+        if self.demo_state:
+            self.demo_state.sync_streamers(state)
+        is_active = state.get("phase") == "cam_playing" and state.get("active_camera") == camera_id
+        video_path = self.demo_state.video_path_for_camera(camera_id) if self.demo_state else None
+        if not is_active or not video_path:
+            if not video_path:
+                print(f"[VIDEO_STREAM] missing video path for {camera_id}")
+            return self._send_jpeg_bytes(VideoStreamer.get_black_jpeg())
+
+        streamer = self.demo_state.streamer_for_camera(camera_id) if self.demo_state else None
+        if streamer is None:
+            print(f"[VIDEO_STREAM] streamer missing for {camera_id}")
+            return self._send_jpeg_bytes(VideoStreamer.get_black_jpeg())
+
+        streamer.start()
+        deadline = time.monotonic() + 2.0
+        frame = streamer.get_frame()
+        while frame is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+            frame = streamer.get_frame()
+
+        self._send_video_stream_headers()
+        frame_interval = 1.0 / max(1.0, float(state.get("stream_target_fps", 15.0) or 15.0))
+        try:
+            while True:
+                state = self.demo_state.current_state() if self.demo_state else {}
+                if self.demo_state:
+                    self.demo_state.sync_streamers(state)
+                if state.get("phase") != "cam_playing" or state.get("active_camera") != camera_id:
+                    break
+                frame = streamer.get_frame() or VideoStreamer.get_black_jpeg()
+                header = (
+                    b"--mjpegframe\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+                )
+                self.wfile.write(header)
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+                time.sleep(frame_interval)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
+        finally:
+            if self.demo_state:
+                self.demo_state.sync_streamers(self.demo_state.current_state())
+
     def _camera_config_payload(self):
         calibration, _runtime = self._load_calibration(required=False)
         cameras = []
@@ -527,6 +856,7 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
                     "label": camera_id,
                     "preview_source_type": (override or {}).get("source_type", camera_cfg.get("preview_source_type", "file")),
                     "preview_source": (override or {}).get("source_value", camera_cfg.get("preview_source", "")),
+                    "video_path": self.demo_state.video_path_for_camera(camera_id) if self.demo_state else "",
                     "frame_size_ref": camera_cfg.get("frame_size_ref", []),
                 }
             )
@@ -561,6 +891,13 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/video-stream":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            return self._video_stream_head(camera_id)
+        return super().do_HEAD()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/latest-events":
@@ -581,17 +918,10 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
             if not camera_id:
                 return self._send_json({"ok": False, "error": "missing camera_id"}, status=400)
-            try:
-                calibration, _runtime = self._load_calibration(required=False)
-                frame = self._camera_frame(
-                    calibration,
-                    camera_id,
-                    parsed.query,
-                    overlay_enabled=parse_qs(parsed.query).get("overlay", ["1"])[0] != "0",
-                )
-            except Exception as exc:
-                return self._send_json({"ok": False, "error": str(exc)}, status=400)
-            return self._send_image(frame)
+            return self._send_jpeg_bytes(self._camera_frame_bytes(camera_id))
+        if parsed.path == "/api/video-stream":
+            camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
+            return self._serve_video_stream(camera_id)
         if parsed.path == "/api/calibration/preview":
             camera_id = parse_qs(parsed.query).get("camera_id", [""])[0]
             if not camera_id:
@@ -709,11 +1039,13 @@ def main():
     print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
     if dataset_root:
         print(f"DATASET_ROOT={dataset_root}")
+    _print_video_path_resolution(demo_state.video_paths, dataset_root)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        demo_state.stop_all_streamers()
         server.server_close()
 
 

@@ -91,6 +91,7 @@ Supported geometry types:
 - `/calibration.html`
 - `/api/camera-state`
 - `/api/camera-config`
+- `/api/video-stream?camera_id=...`
 - `/api/camera-frame?camera_id=...`
 - `/api/latest-events`
 - `/api/reid-handoffs`
@@ -103,6 +104,8 @@ Supported geometry types:
 - `/artifact?path=...`
 
 ## Supervisor Demo Command
+
+The recommended supervisor demo pair is `b1`. The live camera grid uses `/api/video-stream` MJPEG from the full dataset videos. `/api/calibration/preview` remains calibration-only.
 
 ```cmd
 cd /d "<repo-root>"
