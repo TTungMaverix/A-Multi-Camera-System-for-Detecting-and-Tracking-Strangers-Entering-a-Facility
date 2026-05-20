@@ -5,228 +5,460 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Live Stranger Demo</title>
   <style>
-    :root {
-      --bg: #f3efe6;
-      --card: #fffaf0;
-      --ink: #1b2a1f;
-      --accent: #0d6b4c;
-      --accent-2: #c65c2d;
-      --muted: #6b766f;
-      --line: #d9d0bf;
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #080b10; overflow: hidden; }
+
     body {
-      margin: 0;
       font-family: "Segoe UI", Tahoma, sans-serif;
-      background: radial-gradient(circle at top, #fff7df 0%, var(--bg) 55%);
-      color: var(--ink);
+      color: #d6e2f1;
     }
-    .shell {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    .hero {
-      display: grid;
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .hero h1 {
-      margin: 0;
-      font-size: clamp(28px, 4vw, 42px);
-      letter-spacing: 0.02em;
-    }
-    .hero p {
-      margin: 0;
-      color: var(--muted);
-      max-width: 840px;
-    }
-    .hero a {
-      color: var(--accent);
-      font-weight: 700;
+
+    a {
+      color: inherit;
       text-decoration: none;
     }
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 12px;
-      margin-bottom: 22px;
+
+    img {
+      display: block;
     }
-    .metric {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px 16px;
-      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.06);
+
+    #app-root {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+      width: 100vw;
+      gap: 0;
+      background: #080b10;
     }
-    .metric .label {
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-    }
-    .metric .value {
-      font-size: 28px;
-      font-weight: 700;
-      margin-top: 6px;
-    }
-    .event-grid,
-    .timeline-grid,
-    .appearance-grid {
-      display: grid;
-      gap: 16px;
-    }
-    .event-grid {
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    }
-    .timeline-grid {
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      margin-top: 24px;
-    }
-    .appearance-grid {
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    }
-    .event-card {
-      display: grid;
-      grid-template-columns: 120px 1fr;
-      gap: 14px;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 14px;
-      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
-      cursor: pointer;
-    }
-    .event-card img,
-    .timeline-card img,
-    .appearance-card img {
-      object-fit: cover;
-      background: #d5d0c2;
-    }
-    .event-card img {
-      width: 120px;
-      height: 120px;
-      border-radius: 12px;
-    }
-    .event-card.pending {
-      border-style: dashed;
-      background: rgba(255, 255, 255, 0.75);
-    }
-    .event-info,
-    .timeline-card,
-    .timeline-detail {
-      display: grid;
-      gap: 10px;
-    }
-    .event-info {
-      align-content: start;
-      gap: 6px;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 9px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      width: fit-content;
-    }
-    .pill.unknown {
-      background: rgba(198, 92, 45, 0.14);
-      color: var(--accent-2);
-    }
-    .pill.known {
-      background: rgba(13, 107, 76, 0.12);
-      color: var(--accent);
-    }
-    .pill.pending {
-      background: rgba(107, 118, 111, 0.18);
-      color: #4d5550;
-      border: 1px dashed #8f9992;
-    }
-    .meta {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.4;
-    }
-    .empty {
-      padding: 28px;
-      border: 1px dashed var(--line);
-      border-radius: 16px;
-      color: var(--muted);
-      background: rgba(255,255,255,0.55);
-    }
-    .timeline-card,
-    .timeline-detail,
-    .appearance-card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-      box-shadow: 0 12px 32px rgba(25, 33, 27, 0.07);
-    }
-    .timeline-card {
-      cursor: pointer;
-    }
-    .timeline-card.active {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px rgba(13, 107, 76, 0.18) inset, 0 12px 32px rgba(25, 33, 27, 0.07);
-    }
-    .timeline-card .hero-shot {
-      display: grid;
-      grid-template-columns: 96px 1fr;
-      gap: 12px;
-      align-items: center;
-    }
-    .timeline-card img {
-      width: 96px;
-      height: 96px;
-      border-radius: 12px;
-    }
-    .timeline-steps {
-      display: grid;
+
+    #camera-section {
+      flex: 5;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 6px 10px 10px;
       gap: 8px;
+      min-width: 0;
     }
-    .timeline-step {
-      border-left: 3px solid var(--accent);
-      padding-left: 10px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .detail-metrics {
+
+    #camera-grid {
+      flex: 1;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 8px;
+      min-height: 0;
     }
-    .appearance-card {
-      display: grid;
-      grid-template-columns: 72px 1fr;
+
+    .cam-cell {
+      background: #0d1117;
+      border: 1px solid #1c2535;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .cam-cell.cam-active {
+      border-color: #2563a8;
+      box-shadow: inset 0 0 0 1px rgba(96, 174, 230, 0.14);
+    }
+
+    .cam-cell.cam-inactive {
+      opacity: 0.6;
+    }
+
+    .cam-cell video,
+    .cam-cell canvas,
+    .cam-cell img.cam-feed {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      position: absolute;
+      inset: 0;
+      background: #05070b;
+    }
+
+    .cam-label {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      font-size: 10px;
+      font-family: monospace;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      color: #4a7aab;
+      background: rgba(8, 11, 16, 0.7);
+      padding: 2px 7px;
+      border-radius: 2px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .cam-cell.cam-active .cam-label { color: #60aee6; }
+
+    .cam-status-dot {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #1c3a5a;
+      z-index: 10;
+    }
+
+    .cam-cell.cam-active .cam-status-dot {
+      background: #22d3ee;
+      animation: blink 1.4s infinite;
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .cam-standby-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      color: #1a2535;
+      font-family: monospace;
+      font-size: 11px;
+      text-align: center;
+      background:
+        linear-gradient(180deg, rgba(6, 9, 14, 0.38) 0%, rgba(6, 9, 14, 0.64) 100%),
+        repeating-linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.02) 0,
+          rgba(255, 255, 255, 0.02) 1px,
+          transparent 1px,
+          transparent 4px
+        );
+      transition: opacity 0.16s ease;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .cam-cell.cam-has-feed .cam-standby-overlay {
+      opacity: 0;
+    }
+
+    .cam-meta {
+      position: absolute;
+      bottom: 6px;
+      left: 8px;
+      right: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 9px;
+      font-family: monospace;
+      color: #2a4a6a;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .cam-meta-left,
+    .cam-meta-right {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .cam-meta-right {
+      text-align: right;
+    }
+
+    .cam-cell.cam-active .cam-meta { color: #3a7ab5; }
+
+    #status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2px;
       gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .status-text {
+      font-size: 9px;
+      font-family: monospace;
+      color: #1a3050;
+      letter-spacing: 0.1em;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #info-sidebar {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 10px 10px 4px;
+      gap: 5px;
+      min-width: 180px;
+      max-width: 260px;
+    }
+
+    #sidebar-tabs {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-tab {
+      background: #0d1117;
+      border: 1px solid #1c2535;
+      border-radius: 3px;
+      padding: 9px 10px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 10px;
+      font-weight: 500;
+      color: #3a5a7a;
+      letter-spacing: 0.04em;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      user-select: none;
+    }
+
+    .sidebar-tab:hover {
+      background: #111928;
+      border-color: #1e3a5a;
+      color: #4a7aab;
+    }
+
+    .sidebar-tab.tab-selected {
+      background: #0f1f38;
+      border-color: #2563a8;
+      color: #60aee6;
+    }
+
+    #sidebar-panel {
+      flex: 1;
+      background: #080b10;
+      border: 1px solid #0d1220;
+      border-radius: 3px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      min-height: 0;
+    }
+
+    #sidebar-panel.panel-has-content {
+      border-color: #111928;
+    }
+
+    .panel-content {
       padding: 10px;
     }
-    .appearance-card img {
-      width: 72px;
-      height: 72px;
-      border-radius: 10px;
+
+    .panel-header {
+      font-family: monospace;
+      font-size: 9px;
+      color: #3a5a7a;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #111928;
+    }
+
+    .panel-empty {
+      padding: 4px 0;
+      color: #1e3a5a;
+      font-family: monospace;
+      font-size: 10px;
+      line-height: 1.6;
+    }
+
+    .event-row {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #0e1520;
+      font-family: monospace;
+      align-items: start;
+    }
+
+    .event-row.no-thumb {
+      grid-template-columns: 1fr;
+    }
+
+    .panel-thumb {
+      width: 48px;
+      height: 48px;
+      border-radius: 3px;
+      border: 1px solid #111928;
+      object-fit: cover;
+      background: #05080d;
+    }
+
+    .thumb-pair {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .thumb-pair .panel-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 2px;
+    }
+
+    .thumb-arrow {
+      font-size: 8px;
+      color: #33506f;
+      letter-spacing: 0.04em;
+    }
+
+    .event-copy {
+      min-width: 0;
+    }
+
+    .event-id {
+      font-size: 9px;
+      color: #22d3ee;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .event-cam {
+      font-size: 8px;
+      color: #3a6a9a;
+      margin-bottom: 1px;
+      line-height: 1.5;
+    }
+
+    .event-time {
+      font-size: 8px;
+      color: #1e3a5a;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .event-note {
+      font-size: 8px;
+      color: #284564;
+      line-height: 1.5;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .sidebar-link {
+      font-size: 8px;
+      color: #3f6f9f;
+      line-height: 1.5;
+      margin-top: 4px;
+      display: inline-block;
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <section class="hero">
-      <h1>Realtime Stranger Event Demo</h1>
-      <p>This page reads real event and timeline artifacts from the current run directory. It is for debugging and defense presentation: latest event cards show the current decision state, and the Unknown timeline below reconstructs the cross-camera history from real resolved events.</p>
-      <p><a href="/calibration.html">Open manual calibration tool</a></p>
-    </section>
-    <section class="summary" id="summary"></section>
-    <section class="event-grid" id="events"></section>
-    <section class="timeline-grid" id="timeline"></section>
-    <section class="timeline-detail" id="timelineDetail"></section>
-  </main>
+  <div id="app-root">
+    <div id="camera-section">
+      <div id="camera-grid">
+        <div class="cam-cell cam-inactive" id="cam-1" data-camera-id="C1">
+          <img class="cam-feed" alt="Camera 1 feed">
+          <div class="cam-label">CAMERA 1</div>
+          <div class="cam-status-dot"></div>
+          <div class="cam-standby-overlay">
+            <div>C1</div>
+            <div>STANDBY</div>
+          </div>
+          <div class="cam-meta">
+            <span class="cam-meta-left">NO EVENT</span>
+            <span class="cam-meta-right">WAITING</span>
+          </div>
+        </div>
+        <div class="cam-cell cam-inactive" id="cam-2" data-camera-id="C2">
+          <img class="cam-feed" alt="Camera 2 feed">
+          <div class="cam-label">CAMERA 2</div>
+          <div class="cam-status-dot"></div>
+          <div class="cam-standby-overlay">
+            <div>C2</div>
+            <div>STANDBY</div>
+          </div>
+          <div class="cam-meta">
+            <span class="cam-meta-left">NO EVENT</span>
+            <span class="cam-meta-right">WAITING</span>
+          </div>
+        </div>
+        <div class="cam-cell cam-inactive" id="cam-3" data-camera-id="C3">
+          <img class="cam-feed" alt="Camera 3 feed">
+          <div class="cam-label">CAMERA 3</div>
+          <div class="cam-status-dot"></div>
+          <div class="cam-standby-overlay">
+            <div>C3</div>
+            <div>STANDBY</div>
+          </div>
+          <div class="cam-meta">
+            <span class="cam-meta-left">NO EVENT</span>
+            <span class="cam-meta-right">WAITING</span>
+          </div>
+        </div>
+        <div class="cam-cell cam-inactive" id="cam-4" data-camera-id="C4">
+          <img class="cam-feed" alt="Camera 4 feed">
+          <div class="cam-label">CAMERA 4</div>
+          <div class="cam-status-dot"></div>
+          <div class="cam-standby-overlay">
+            <div>C4</div>
+            <div>STANDBY</div>
+          </div>
+          <div class="cam-meta">
+            <span class="cam-meta-left">NO EVENT</span>
+            <span class="cam-meta-right">WAITING</span>
+          </div>
+        </div>
+      </div>
+      <div id="status-bar">
+        <div class="status-text" id="status-left">LIVE DEMO UI READY</div>
+        <div class="status-text" id="status-right">REFRESH 1.5S</div>
+      </div>
+    </div>
+
+    <div id="info-sidebar">
+      <div id="sidebar-tabs">
+        <div class="sidebar-tab" data-panel="entry">Latest ENTRY_IN events</div>
+        <div class="sidebar-tab" data-panel="reid">Cross-camera Re-ID evidence</div>
+        <div class="sidebar-tab" data-panel="timeline">Unknown identity timeline</div>
+      </div>
+      <div id="sidebar-panel"></div>
+    </div>
+  </div>
+
   <script>
+    const CAMERA_LAYOUT = [
+      { domId: "cam-1", cameraId: "C1", label: "CAMERA 1" },
+      { domId: "cam-2", cameraId: "C2", label: "CAMERA 2" },
+      { domId: "cam-3", cameraId: "C3", label: "CAMERA 3" },
+      { domId: "cam-4", cameraId: "C4", label: "CAMERA 4" },
+    ];
+
     const browserState = {
-      selectedIdentityId: "",
+      activeTab: null,
+      latestEvents: [],
       timelines: [],
+      summary: {},
+      previewFrameIndex: 0,
     };
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;",
+      }[ch]));
+    }
 
     async function fetchJson(url) {
       const response = await fetch(url, { cache: "no-store" });
@@ -236,172 +468,335 @@
       return response.json();
     }
 
-    function metric(label, value) {
-      return `<article class="metric"><div class="label">${label}</div><div class="value">${value}</div></article>`;
+    function toDisplayText(value, fallback = "N/A") {
+      if (value === null || value === undefined || value === "") {
+        return fallback;
+      }
+      return String(value);
     }
 
-    function renderSummary(summary) {
-      const root = document.getElementById("summary");
+    function formatRelativeSec(value) {
+      if (value === null || value === undefined || value === "") {
+        return "--";
+      }
+      const numeric = Number(value);
+      if (!Number.isNaN(numeric)) {
+        return numeric.toFixed(1);
+      }
+      return String(value);
+    }
+
+    function renderThumb(url, alt, extraClass = "") {
+      if (!url) {
+        return "";
+      }
+      const className = ["panel-thumb", extraClass].filter(Boolean).join(" ");
+      return `<img class="${escapeHtml(className)}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}">`;
+    }
+
+    function latestEventForCamera(cameraId) {
+      const events = browserState.latestEvents.filter((event) => (event.camera_id || event.camera) === cameraId);
+      return events.length ? events[events.length - 1] : null;
+    }
+
+    function resolveActiveCameraId() {
+      if (!browserState.latestEvents.length) {
+        return "";
+      }
+      const latest = browserState.latestEvents[browserState.latestEvents.length - 1] || {};
+      return latest.camera_id || latest.camera || "";
+    }
+
+    function updateCameraFeeds() {
+      browserState.previewFrameIndex += 4;
+      CAMERA_LAYOUT.forEach((camera, index) => {
+        const cell = document.getElementById(camera.domId);
+        if (!cell) {
+          return;
+        }
+        const feed = cell.querySelector(".cam-feed");
+        if (!feed) {
+          return;
+        }
+        const frameOffset = browserState.previewFrameIndex + (index * 12);
+        feed.src = `/api/calibration/preview?camera_id=${encodeURIComponent(camera.cameraId)}&overlay=0&frame_idx=${frameOffset}&t=${Date.now()}`;
+      });
+    }
+
+    function setActiveCamera(activeCameraId) {
+      document.querySelectorAll(".cam-cell").forEach((cell) => {
+        const isActive = !!activeCameraId && cell.dataset.cameraId === activeCameraId;
+        cell.classList.remove("cam-active", "cam-inactive");
+        cell.classList.add(isActive ? "cam-active" : "cam-inactive");
+      });
+    }
+
+    function renderCameraGrid() {
+      const activeCameraId = resolveActiveCameraId();
+      setActiveCamera(activeCameraId);
+
+      CAMERA_LAYOUT.forEach((camera) => {
+        const cell = document.getElementById(camera.domId);
+        if (!cell) {
+          return;
+        }
+        const metaLeft = cell.querySelector(".cam-meta-left");
+        const metaRight = cell.querySelector(".cam-meta-right");
+        const latestEvent = latestEventForCamera(camera.cameraId);
+        const eventCount = browserState.latestEvents.filter((event) => (event.camera_id || event.camera) === camera.cameraId).length;
+
+        if (!latestEvent) {
+          metaLeft.textContent = "NO EVENT";
+          metaRight.textContent = "WAITING";
+          return;
+        }
+
+        const identityText = latestEvent.identity_label || latestEvent.identity_id || latestEvent.track_label || "ENTRY";
+        const modeText = latestEvent.direction || latestEvent.ui_identity_state || latestEvent.identity_type || "ENTRY_IN";
+        const timeText = latestEvent.timestamp || `${formatRelativeSec(latestEvent.relative_sec)}s`;
+        metaLeft.textContent = `${identityText} · ${modeText}`;
+        metaRight.textContent = `${camera.cameraId} · ${timeText} · ${eventCount}`;
+      });
+    }
+
+    function renderStatusBar() {
+      const summary = browserState.summary || {};
       const workerCount = Object.keys(summary.worker_summaries || {}).length;
-      root.innerHTML = [
-        metric("Live Events", summary.live_event_count || 0),
-        metric("Unknown", summary.unknown_event_count || 0),
-        metric("Known", summary.known_event_count || 0),
-        metric("Pending", summary.pending_event_count || 0),
-        metric("Body Fallback", summary.body_fallback_used_count || 0),
-        metric("Avg Latency", `${summary.avg_latency_sec || 0}s`),
-        metric("Dropped Frames", summary.dropped_frames_total || 0),
-        metric("Workers", workerCount),
-      ].join("");
+      const activeCameraId = resolveActiveCameraId() || "NONE";
+      document.getElementById("status-left").textContent = [
+        `LIVE ${summary.live_event_count || 0}`,
+        `UNKNOWN ${summary.unknown_event_count || 0}`,
+        `KNOWN ${summary.known_event_count || 0}`,
+        `PENDING ${summary.pending_event_count || 0}`,
+      ].join(" · ");
+      document.getElementById("status-right").textContent = [
+        `ACTIVE ${activeCameraId}`,
+        `WORKERS ${workerCount}`,
+        `REFRESH 1.5S`,
+      ].join(" · ");
     }
 
-    function selectIdentity(identityId) {
-      if (!identityId) return;
-      browserState.selectedIdentityId = identityId;
-      renderTimeline(browserState.timelines);
-      renderTimelineDetail(browserState.timelines);
-    }
-
-    function renderEvents(events) {
-      const root = document.getElementById("events");
-      if (!events.length) {
-        root.innerHTML = `<div class="empty">No live events yet. Run the benchmark or live pipeline first.</div>`;
-        return;
-      }
-      root.innerHTML = events.slice().reverse().map((event) => {
-        const badgeClass = event.identity_type === "known" ? "known" : (event.identity_type === "pending" ? "pending" : "unknown");
-        const cardClass = event.identity_type === "pending" ? "event-card pending" : "event-card";
-        const label = event.identity_type === "pending"
-          ? (event.identity_label || "Analyzing...")
-          : `${event.identity_type?.toUpperCase() || "UNKNOWN"} ${event.identity_id || ""}`.trim();
-        const imageHtml = event.snapshot_url
-          ? `<img src="${event.snapshot_url}" alt="snapshot">`
-          : `<img alt="no snapshot">`;
-        return `
-          <article class="${cardClass}" data-identity-id="${event.identity_id || ""}">
-            ${imageHtml}
-            <div class="event-info">
-              <div class="pill ${badgeClass}">${label}</div>
-              <strong>${event.camera_id} - ${event.direction || "N/A"}</strong>
-              <div class="meta">zone=${event.zone_id || "-"} - subzone=${event.subzone_id || "-"}</div>
-              <div class="meta">primary=${event.modality_primary || "-"} - secondary=${event.modality_secondary || "-"}</div>
-              <div class="meta">body_fallback=${String(!!event.body_fallback_used)} - latency=${event.latency_sec || 0}s</div>
-              <div class="meta">reason=${event.decision_reason || event.reason_code || "-"}</div>
-            </div>
-          </article>
-        `;
-      }).join("");
-      [...root.querySelectorAll("[data-identity-id]")].forEach((node) => {
-        node.addEventListener("click", () => selectIdentity(node.dataset.identityId || ""));
+    function buildReidEvidence(timelines) {
+      const rows = [];
+      (timelines || []).forEach((identity) => {
+        const appearances = Array.isArray(identity.appearances) ? identity.appearances : [];
+        for (let index = 1; index < appearances.length; index += 1) {
+          const previous = appearances[index - 1] || {};
+          const current = appearances[index] || {};
+          rows.push({
+            global_id: identity.identity_label || identity.identity_id || "UNKNOWN",
+            transition: `${toDisplayText(previous.camera_id, "?")} -> ${toDisplayText(current.camera_id, "?")}`,
+            time_window: `${formatRelativeSec(previous.relative_sec)}s -> ${formatRelativeSec(current.relative_sec)}s`,
+            reason: current.decision_reason || current.reason_code || current.modality_primary_used || "N/A",
+            score: current.final_score ?? current.body_score ?? current.face_score ?? "N/A",
+            previous_snapshot_url: previous.head_snapshot_url || previous.snapshot_url || "",
+            current_snapshot_url: current.head_snapshot_url || current.snapshot_url || "",
+          });
+        }
       });
+      return rows.reverse();
     }
 
-    function renderTimeline(identities) {
-      const root = document.getElementById("timeline");
-      if (!identities.length) {
-        root.innerHTML = `<div class="empty">No Unknown timeline available yet.</div>`;
-        return;
+    function getCurrentPanelData(panelKey) {
+      if (panelKey === "entry") {
+        return browserState.latestEvents.slice().reverse();
       }
-      if (!browserState.selectedIdentityId) {
-        browserState.selectedIdentityId = identities[0].identity_id || "";
+      if (panelKey === "reid") {
+        return buildReidEvidence(browserState.timelines);
       }
-      root.innerHTML = identities.map((identity) => {
-        const heroShot = identity.representative_snapshot_url
-          ? `<img src="${identity.representative_snapshot_url}" alt="identity snapshot">`
-          : `<img alt="no snapshot">`;
-        const steps = (identity.appearances || []).map((appearance) => `
-          <div class="timeline-step">
-            <strong>${appearance.camera_id}</strong> @ ${appearance.relative_sec || 0}s<br>
-            zone=${appearance.zone_id || "-"} - subzone=${appearance.subzone_id || "-"} - primary=${appearance.modality_primary_used || "-"}
+      if (panelKey === "timeline") {
+        return browserState.timelines.slice();
+      }
+      return [];
+    }
+
+    function renderEntryPanel(data) {
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+            <div class="panel-empty">No live events yet.</div>
           </div>
-        `).join("");
-        const activeClass = browserState.selectedIdentityId === identity.identity_id ? "active" : "";
-        return `
-          <article class="timeline-card ${activeClass}" data-identity-id="${identity.identity_id || ""}">
-            <div class="hero-shot">
-              ${heroShot}
-              <div>
-                <div class="pill unknown">${identity.identity_label || identity.identity_id}</div>
-                <strong>${identity.first_seen_camera} @ ${identity.first_seen_relative_sec || 0}s</strong>
-                <div class="meta">appearances=${identity.appearance_count || 0} - cameras=${(identity.camera_sequence || []).join(" -> ")}</div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+          ${data.map((event) => {
+            const thumb = renderThumb(event.head_snapshot_url || event.snapshot_url, "entry snapshot");
+            const rowClass = thumb ? "event-row" : "event-row no-thumb";
+            return `
+              <div class="${rowClass}">
+                ${thumb}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(event.identity_label || event.identity_id || event.track_label || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(toDisplayText(event.camera_id || event.camera, "-"))} · ${escapeHtml(toDisplayText(event.direction, "ENTRY_IN"))}</div>
+                  <div class="event-time">${escapeHtml(toDisplayText(event.timestamp || `${formatRelativeSec(event.relative_sec)}s`, "--"))}</div>
+                  <div class="event-note">${escapeHtml(`zone=${toDisplayText(event.zone_id, "-")} · subzone=${toDisplayText(event.subzone_id, "-")} · reason=${toDisplayText(event.decision_reason || event.reason_code, "N/A")}`)}</div>
+                </div>
               </div>
-            </div>
-            <div class="timeline-steps">${steps}</div>
-          </article>
-        `;
-      }).join("");
-      [...root.querySelectorAll("[data-identity-id]")].forEach((node) => {
-        node.addEventListener("click", () => selectIdentity(node.dataset.identityId || ""));
-      });
-    }
-
-    function renderTimelineDetail(identities) {
-      const root = document.getElementById("timelineDetail");
-      if (!identities.length) {
-        root.innerHTML = `<div class="empty">No identity detail available yet.</div>`;
-        return;
-      }
-      const selected = identities.find((item) => item.identity_id === browserState.selectedIdentityId) || identities[0];
-      if (!selected) {
-        root.innerHTML = `<div class="empty">No selected identity.</div>`;
-        return;
-      }
-      const camerasSeen = [...new Set((selected.appearances || []).map((item) => item.camera_id).filter(Boolean))];
-      const modalities = [...new Set((selected.appearances || []).map((item) => item.modality_primary_used).filter(Boolean))];
-      const appearancesHtml = (selected.appearances || []).map((appearance) => {
-        const imageHtml = appearance.snapshot_url
-          ? `<img src="${appearance.snapshot_url}" alt="appearance snapshot">`
-          : `<img alt="no snapshot">`;
-        return `
-          <article class="appearance-card">
-            ${imageHtml}
-            <div>
-              <strong>${appearance.camera_id} @ ${appearance.relative_sec || 0}s</strong>
-              <div class="meta">zone=${appearance.zone_id || "-"} - subzone=${appearance.subzone_id || "-"}</div>
-              <div class="meta">primary=${appearance.modality_primary_used || "-"} - state=${appearance.ui_identity_state || appearance.identity_status || "-"}</div>
-              <div class="meta">reason=${appearance.decision_reason || appearance.reason_code || "-"}</div>
-            </div>
-          </article>
-        `;
-      }).join("");
-      root.innerHTML = `
-        <div class="hero" style="margin-bottom:0;">
-          <h1 style="font-size:24px;">${selected.identity_label || selected.identity_id}</h1>
-          <p>Appearance history is generated from real resolved events. Pending identities are intentionally not finalized here until the backend resolves them.</p>
+            `;
+          }).join("")}
         </div>
-        <div class="detail-metrics">
-          ${metric("First Seen", `${selected.first_seen_camera || "-"} @ ${selected.first_seen_relative_sec || 0}s`)}
-          ${metric("Last Seen", `${selected.last_seen_camera || "-"} @ ${selected.last_seen_relative_sec || 0}s`)}
-          ${metric("Appearances", selected.appearance_count || 0)}
-          ${metric("Cameras", camerasSeen.join(" -> ") || "-")}
-          ${metric("Modalities", modalities.join(", ") || "-")}
-        </div>
-        <div class="appearance-grid">${appearancesHtml || `<div class="empty">No appearance detail.</div>`}</div>
       `;
     }
 
+    function renderReidPanel(data) {
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
+            <div class="panel-empty">No cross-camera reuse sequence available in the current run.</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
+          ${data.map((row) => {
+            const pairHtml = row.previous_snapshot_url || row.current_snapshot_url
+              ? `
+                <div class="thumb-pair">
+                  ${renderThumb(row.previous_snapshot_url, "previous appearance")}
+                  <span class="thumb-arrow">→</span>
+                  ${renderThumb(row.current_snapshot_url, "current appearance")}
+                </div>
+              `
+              : "";
+            const rowClass = pairHtml ? "event-row" : "event-row no-thumb";
+            return `
+              <div class="${rowClass}">
+                ${pairHtml}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(row.global_id)}</div>
+                  <div class="event-cam">${escapeHtml(row.transition)}</div>
+                  <div class="event-time">${escapeHtml(row.time_window)}</div>
+                  <div class="event-note">${escapeHtml(`score=${toDisplayText(row.score, "N/A")} · ${toDisplayText(row.reason, "N/A")}`)}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function renderTimelinePanel(data) {
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
+            <div class="panel-empty">No Unknown timeline available yet.</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
+          ${data.map((identity) => {
+            const thumb = renderThumb(identity.representative_head_snapshot_url || identity.representative_snapshot_url, "timeline snapshot");
+            const rowClass = thumb ? "event-row" : "event-row no-thumb";
+            const cameraSequence = Array.isArray(identity.camera_sequence) && identity.camera_sequence.length
+              ? identity.camera_sequence.join(" -> ")
+              : toDisplayText(identity.first_seen_camera, "-");
+            return `
+              <div class="${rowClass}">
+                ${thumb}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(identity.identity_label || identity.identity_id || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(cameraSequence)}</div>
+                  <div class="event-time">${escapeHtml(`${toDisplayText(identity.appearance_count, 0)} sightings · first ${toDisplayText(identity.first_seen_camera, "-")} @ ${formatRelativeSec(identity.first_seen_relative_sec)}s`)}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    const PANEL_CONTENT = {
+      entry: renderEntryPanel,
+      reid: renderReidPanel,
+      timeline: renderTimelinePanel,
+    };
+
+    function renderSidebarPanel() {
+      const panel = document.getElementById("sidebar-panel");
+      if (!browserState.activeTab) {
+        panel.innerHTML = "";
+        panel.classList.remove("panel-has-content");
+        return;
+      }
+      const data = getCurrentPanelData(browserState.activeTab);
+      panel.innerHTML = PANEL_CONTENT[browserState.activeTab](Array.isArray(data) ? data : []);
+      panel.classList.add("panel-has-content");
+    }
+
+    function initSidebarTabs() {
+      const tabs = document.querySelectorAll(".sidebar-tab");
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const panelKey = tab.dataset.panel;
+          if (browserState.activeTab === panelKey) {
+            browserState.activeTab = null;
+            tabs.forEach((item) => item.classList.remove("tab-selected"));
+            renderSidebarPanel();
+            return;
+          }
+          browserState.activeTab = panelKey;
+          tabs.forEach((item) => item.classList.toggle("tab-selected", item === tab));
+          renderSidebarPanel();
+        });
+      });
+    }
+
+    function initCameraFeedHandlers() {
+      CAMERA_LAYOUT.forEach((camera) => {
+        const cell = document.getElementById(camera.domId);
+        if (!cell) {
+          return;
+        }
+        const feed = cell.querySelector(".cam-feed");
+        feed.addEventListener("load", () => {
+          cell.classList.add("cam-has-feed");
+        });
+        feed.addEventListener("error", () => {
+          cell.classList.remove("cam-has-feed");
+        });
+      });
+    }
+
     async function refresh() {
+      updateCameraFeeds();
       try {
         const [summary, latest, timeline] = await Promise.all([
           fetchJson("/api/summary"),
           fetchJson("/api/latest-events"),
           fetchJson("/api/timeline"),
         ]);
-        browserState.timelines = timeline.identities || [];
-        if (browserState.selectedIdentityId && !browserState.timelines.some((item) => item.identity_id === browserState.selectedIdentityId)) {
-          browserState.selectedIdentityId = "";
-        }
-        renderSummary(summary);
-        renderEvents(latest.events || []);
-        renderTimeline(browserState.timelines);
-        renderTimelineDetail(browserState.timelines);
+        browserState.summary = summary || {};
+        browserState.latestEvents = Array.isArray(latest.events) ? latest.events : [];
+        browserState.timelines = Array.isArray(timeline.identities) ? timeline.identities : [];
+        renderStatusBar();
+        renderCameraGrid();
+        renderSidebarPanel();
       } catch (error) {
-        document.getElementById("events").innerHTML = `<div class="empty">Failed to load live data: ${error.message}</div>`;
-        document.getElementById("timeline").innerHTML = "";
-        document.getElementById("timelineDetail").innerHTML = "";
+        document.getElementById("status-left").textContent = "LIVE DATA LOAD FAILED";
+        document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");
+        renderCameraGrid();
+        if (browserState.activeTab) {
+          document.getElementById("sidebar-panel").innerHTML = `
+            <div class="panel-content">
+              <div class="panel-header">${escapeHtml(browserState.activeTab.toUpperCase())}</div>
+              <div class="panel-empty">${escapeHtml(`Failed to load live data: ${error.message}`)}</div>
+            </div>
+          `;
+          document.getElementById("sidebar-panel").classList.add("panel-has-content");
+        }
       }
     }
 
+    initSidebarTabs();
+    initCameraFeedHandlers();
     refresh();
     setInterval(refresh, 1500);
   </script>
