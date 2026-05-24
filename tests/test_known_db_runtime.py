@@ -33,6 +33,19 @@ def test_discover_known_face_rows_canonicalizes_known_ids(tmp_path):
     assert any(row["view_label"] == "side_1" for row in rows if row["person_id"] == "known_001")
 
 
+def test_discover_known_face_rows_prefers_parent_folder_id_over_mislabeled_filename(tmp_path):
+    known_root = tmp_path / "Known ID"
+    _touch(known_root / "known_055" / "known_054_front_face.jpg")
+    _touch(known_root / "known_055" / "known_054_side_1.png")
+
+    rows, summary = discover_known_face_rows(known_root)
+
+    assert summary["person_count"] == 1
+    assert {row["person_id"] for row in rows} == {"known_055"}
+    assert all(row["source_folder"] == "known_055" for row in rows)
+    assert {row["view_label"] for row in rows} == {"front_face", "side_1"}
+
+
 def test_ensure_known_db_manifest_rows_accepts_simple_manifest(tmp_path):
     project_root = tmp_path
     known_root = tmp_path / "Known ID"

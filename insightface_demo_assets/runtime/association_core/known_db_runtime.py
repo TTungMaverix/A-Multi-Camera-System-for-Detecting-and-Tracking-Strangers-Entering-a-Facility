@@ -94,8 +94,14 @@ def _write_manifest_rows(path: Path, rows, fieldnames):
 
 
 def _canonical_known_id_from_path(path: Path):
-    search_targets = [path.name, path.stem, *reversed(path.parts)]
-    for value in search_targets:
+    # Prefer the nearest parent folder so a mislabeled filename inside a
+    # canonical directory (for example known_055/known_054_front_face.jpg)
+    # still stays grouped under known_055.
+    for parent in [path.parent, *path.parents]:
+        match = KNOWN_ID_PATTERN.search(str(parent.name))
+        if match:
+            return match.group(1).lower()
+    for value in [path.stem, path.name]:
         match = KNOWN_ID_PATTERN.search(str(value))
         if match:
             return match.group(1).lower()
@@ -107,7 +113,10 @@ def _normalize_view_label(value: str, canonical_id: str):
     if not raw:
         return ""
     lowered = raw.lower()
-    if canonical_id and lowered.startswith(canonical_id):
+    known_prefix_match = KNOWN_ID_PATTERN.match(lowered)
+    if known_prefix_match:
+        lowered = lowered[len(known_prefix_match.group(1)) :]
+    elif canonical_id and lowered.startswith(canonical_id):
         lowered = lowered[len(canonical_id) :]
     lowered = re.sub(r"^[\/_\-\s]+", "", lowered)
     lowered = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
