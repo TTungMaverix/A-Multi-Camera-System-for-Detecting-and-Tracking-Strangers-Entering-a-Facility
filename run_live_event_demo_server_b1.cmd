@@ -2,10 +2,16 @@
 setlocal
 cd /d "%~dp0"
 
-if "%DATASET_ROOT%"=="" set "DATASET_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset"
-if "%KNOWN_DB_ROOT%"=="" set "KNOWN_DB_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID"
+if "%RUNTIME_PYTHON%"=="" set "RUNTIME_PYTHON=C:\Users\Admin\AppData\Local\Temp\ifd_venv\Scripts\python.exe"
+if "%DATASET_ROOT%"=="" set "DATASET_ROOT=C:\Users\Admin\AppData\Local\Temp\ifd_dataset"
+if "%KNOWN_DB_ROOT%"=="" set "KNOWN_DB_ROOT=C:\Users\Admin\AppData\Local\Temp\ifd_known"
 
-"D:\ĐỒ ÁN TỐT NGHIỆP\.venv_insightface_demo\Scripts\python.exe" ^
+if not exist "%RUNTIME_PYTHON%" (
+  echo RUNTIME_PYTHON_MISSING=%RUNTIME_PYTHON%
+  exit /b 1
+)
+
+"%RUNTIME_PYTHON%" ^
   "insightface_demo_assets\runtime\run_live_event_demo_server.py" ^
   --project-root "." ^
   --dataset-root "%DATASET_ROOT%" ^
