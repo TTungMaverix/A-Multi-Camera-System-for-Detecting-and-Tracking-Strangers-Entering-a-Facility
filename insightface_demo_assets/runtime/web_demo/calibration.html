@@ -414,6 +414,7 @@
   <script>
     const state = {
       calibration: null,
+      cameraConfig: [],
       currentCameraId: "",
       previewImage: null,
       draftPoints: [],
@@ -444,6 +445,23 @@
 
     function cameraCfg() {
       return (state.calibration?.cameras || {})[state.currentCameraId] || null;
+    }
+
+    function cameraConfigMeta(cameraId) {
+      return (state.cameraConfig || []).find((item) => item.camera_id === cameraId) || null;
+    }
+
+    function hydrateSourceControls() {
+      const meta = cameraConfigMeta(state.currentCameraId);
+      const sourceInput = document.getElementById("sourceInput");
+      const sourceType = document.getElementById("sourceType");
+      if (!meta) {
+        sourceInput.value = "";
+        sourceType.value = "file";
+        return;
+      }
+      sourceInput.value = meta.preview_source || "";
+      sourceType.value = meta.preview_source_type || "file";
     }
 
     function shapeTypePreset(shapeType) {
@@ -635,9 +653,16 @@
         state.currentCameraId = Object.keys(cameras)[0] || "";
       }
       select.value = state.currentCameraId;
+      hydrateSourceControls();
       populateParentZoneOptions();
       refreshShapeList();
       updateCameraSummary();
+    }
+
+    async function loadCameraConfig() {
+      const payload = await fetchJson("/api/camera-config");
+      state.cameraConfig = payload.cameras || [];
+      hydrateSourceControls();
     }
 
     function refreshShapeList() {
@@ -934,6 +959,7 @@
       state.shapePresets = payload.shape_presets || {};
       populateShapeTypeOptions();
       populateCameraList();
+      await loadCameraConfig();
       populateKindOptions();
       hydrateControlsFromSelection();
       renderCanvas();
@@ -951,6 +977,7 @@
       state.selectedShapeType = "";
       state.selectedShapeId = "";
       state.draftPoints = [];
+      hydrateSourceControls();
       populateParentZoneOptions();
       hydrateControlsFromSelection();
       refreshShapeList();

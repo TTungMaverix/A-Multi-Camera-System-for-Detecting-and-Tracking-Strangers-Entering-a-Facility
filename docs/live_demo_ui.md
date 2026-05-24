@@ -14,6 +14,8 @@ Server:
 Wrappers:
 
 - `run_live_event_demo_server_b1.cmd`
+- `run_live_event_demo_server_d1.cmd`
+- `run_live_event_demo_server_d2.cmd`
 - `run_live_event_demo_server.ps1` (legacy)
 
 Static pages:
@@ -84,6 +86,15 @@ Supported geometry types:
 - zone polygon
 - subzone polygon
 
+For new clips such as `d1` / `d2`, the intended sequence is:
+
+1. start the matching `d1` or `d2` wrapper
+2. open `/calibration.html`
+3. click ROI and IN direction manually
+4. save the config
+5. derive `C3` from `C1` and `C4` from `C2`
+6. run overlay preview validation before any longer runtime/eval pass
+
 ## Endpoints
 
 - `/`
@@ -143,3 +154,4 @@ This UI is still a thesis tool:
 - it depends on artifacts already written by the pipeline
 - if backend association is wrong, the UI will expose that wrongness rather than hide it
 - if the server still decodes preview frames from source clips internally, that cost remains server-side; this phase only ensures the client refreshes the active camera tile
+- new pairs such as `d1` / `d2` must not be used for a final demo until manual calibration is saved and direction runtime validation is run

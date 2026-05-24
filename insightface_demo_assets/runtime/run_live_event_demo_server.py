@@ -684,10 +684,14 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def _load_calibration(self, required=False):
+        camera_ids = None
+        if not required:
+            camera_ids = list(self.demo_state.sequence if self.demo_state else DEFAULT_CAMERA_SEQUENCE)
         calibration, runtime = load_scene_calibration(
             config_path=str(self.scene_calibration_path),
             base_dir=self.project_root,
             required=required,
+            camera_ids=camera_ids,
         )
         return calibration, runtime
 

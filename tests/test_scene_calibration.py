@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from derive_logical_camera_calibration import derive_logical_cameras
 from offline_pipeline.direction_logic import evaluate_direction
 from scene_calibration import (
     apply_scene_calibration_to_transition_map,
@@ -151,3 +152,45 @@ def test_direction_logic_requires_history_and_momentum():
     strong_result = evaluate_direction(strong_points, line, in_side_point, spatial_history=[], config=config)
     assert weak_result["decision"] == "NONE"
     assert strong_result["decision"] == "IN"
+
+
+def test_derive_logical_cameras_copies_geometry_and_renames_ids():
+    calibration = _sample_calibration_payload()["scene_calibration"]
+    calibration["cameras"]["C1"] = calibration["cameras"].pop("C5")
+    calibration["cameras"]["C1"]["camera_id"] = "C1"
+    calibration["cameras"]["C1"]["default_zone_id"] = "c1_entry_main"
+    calibration["cameras"]["C1"]["default_subzone_id"] = "c1_inner_exit"
+    calibration["cameras"]["C1"]["entry_zones"] = ["c1_entry_main"]
+    calibration["cameras"]["C1"]["exit_zones"] = ["c1_entry_main"]
+    calibration["cameras"]["C1"]["zones"][0]["zone_id"] = "c1_entry_main"
+    calibration["cameras"]["C1"]["subzones"][0]["subzone_id"] = "c1_outer_entry"
+    calibration["cameras"]["C1"]["subzones"][0]["parent_zone_id"] = "c1_entry_main"
+    calibration["cameras"]["C1"]["subzones"][0]["allowed_transitions"] = ["C1_to_C2_physical"]
+    calibration["cameras"]["C1"]["subzones"][1]["subzone_id"] = "c1_inner_exit"
+    calibration["cameras"]["C1"]["subzones"][1]["parent_zone_id"] = "c1_entry_main"
+    calibration["cameras"]["C2"] = calibration["cameras"]["C1"]
+    calibration["cameras"]["C2"] = {
+        **calibration["cameras"]["C2"],
+        "camera_id": "C2",
+        "default_zone_id": "c2_inside_main",
+        "default_subzone_id": "c2_door_arrival",
+        "entry_zones": ["c2_inside_main"],
+        "exit_zones": ["c2_inside_main"],
+        "zones": [{**calibration["cameras"]["C1"]["zones"][0], "zone_id": "c2_inside_main"}],
+        "subzones": [
+            {
+                **calibration["cameras"]["C1"]["subzones"][0],
+                "subzone_id": "c2_door_arrival",
+                "parent_zone_id": "c2_inside_main",
+                "allowed_transitions": ["C1_to_C2_physical"],
+            }
+        ],
+    }
+    derived = derive_logical_cameras(calibration)
+    assert derived["cameras"]["C3"]["camera_id"] == "C3"
+    assert derived["cameras"]["C3"]["processing_roi"] == derived["cameras"]["C1"]["processing_roi"]
+    assert derived["cameras"]["C3"]["entry_line"] == derived["cameras"]["C1"]["entry_line"]
+    assert derived["cameras"]["C3"]["default_zone_id"] == "c3_entry_main"
+    assert derived["cameras"]["C3"]["subzones"][0]["allowed_transitions"] == ["C3_to_C4_physical"]
+    assert derived["cameras"]["C4"]["camera_id"] == "C4"
+    assert derived["cameras"]["C4"]["processing_roi"] == derived["cameras"]["C2"]["processing_roi"]

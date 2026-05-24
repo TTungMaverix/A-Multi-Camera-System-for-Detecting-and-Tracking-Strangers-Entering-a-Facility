@@ -75,6 +75,82 @@ The calibration UI is the only preview-oriented exception:
 - it may open in preview mode and let you draw/save calibration
 - runtime ingestion still requires a valid saved config
 
+## Manual Click Workflow For New Clips
+
+Current canonical tool:
+
+- `insightface_demo_assets/runtime/web_demo/calibration.html`
+
+The calibration page is served by:
+
+- `insightface_demo_assets/runtime/run_live_event_demo_server.py`
+
+Recommended commands for the new clips:
+
+```cmd
+cd /d "<repo-root>"
+set "DATASET_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset"
+set "KNOWN_DB_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID"
+run_live_event_demo_server_d1.cmd
+```
+
+```cmd
+cd /d "<repo-root>"
+set "DATASET_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset"
+set "KNOWN_DB_ROOT=D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset\Known ID"
+run_live_event_demo_server_d2.cmd
+```
+
+Then open:
+
+- `http://127.0.0.1:8765/calibration.html`
+
+Manual rules:
+
+- click ROI polygon points by hand
+- click entry line point 1, point 2, then the IN-side anchor
+- do not click the IN-side anchor on the OUT side
+- do not include irrelevant border/background in the ROI
+- save only after C1 and C2 geometry is visually correct
+
+Key shortcuts in the calibration page:
+
+- `Load Preview`
+- `Load With Overlay`
+- `Undo Last Point`
+- `Commit Draft`
+- `Save Config`
+- `Reload Config`
+- `Reset Camera`
+
+After C1 and C2 are saved, derive logical replay cameras:
+
+```cmd
+cd /d "<repo-root>"
+"D:\ĐỒ ÁN TỐT NGHIỆP\.venv_insightface_demo\Scripts\python.exe" ^
+  "insightface_demo_assets\runtime\derive_logical_camera_calibration.py" ^
+  --config "insightface_demo_assets\runtime\config\manual_scene_calibration.d1.yaml"
+```
+
+```cmd
+cd /d "<repo-root>"
+"D:\ĐỒ ÁN TỐT NGHIỆP\.venv_insightface_demo\Scripts\python.exe" ^
+  "insightface_demo_assets\runtime\derive_logical_camera_calibration.py" ^
+  --config "insightface_demo_assets\runtime\config\manual_scene_calibration.d2.yaml"
+```
+
+Optional overlay validation after manual save:
+
+```cmd
+cd /d "<repo-root>"
+"D:\ĐỒ ÁN TỐT NGHIỆP\.venv_insightface_demo\Scripts\python.exe" ^
+  "insightface_demo_assets\runtime\run_calibration_overlay_preview.py" ^
+  --scene-calibration-config "insightface_demo_assets\runtime\config\manual_scene_calibration.d2.yaml" ^
+  --dataset-root "D:\ĐỒ ÁN TỐT NGHIỆP\New Dataset" ^
+  --demo-pair-id d2 ^
+  --output-dir "outputs\evaluations\manual_calibration_d2"
+```
+
 For the current local clips, the correct workflow is:
 
 1. reuse the same source-camera calibration for `a1`, `a2`, `a3`, `b1`
