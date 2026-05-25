@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import mimetypes
 import os
@@ -12,6 +13,11 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import cv2
 import numpy as np
 
+from association_core.known_db_runtime import (
+    DEFAULT_KNOWN_FACE_EMBEDDINGS_CSV,
+    DEFAULT_KNOWN_FACE_EMBEDDINGS_PKL,
+    load_known_face_embeddings,
+)
 from calibration_editor import SHAPE_TYPE_PRESETS, build_shape_catalog
 from scene_calibration import (
     build_blank_camera_calibration,
@@ -48,6 +54,49 @@ def load_json_file(path: Path, fallback):
     if not path.exists():
         return fallback
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_jsonl_file(path: Path):
+    if not path.exists():
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            item = line.strip()
+            if item:
+                rows.append(json.loads(item))
+    return rows
+
+
+def load_csv_rows(path: Path):
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _coerce_float(value, fallback=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
+def _coerce_int(value, fallback=0):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def _parse_camera_segment_sec(value):
+    text = str(value or "").strip().lower()
+    if text in {"", "auto", "full"}:
+        return None
+    numeric = float(text)
+    if numeric <= 0:
+        return None
+    return numeric
 
 
 def artifact_url(path_value: str) -> str:
@@ -206,6 +255,423 @@ def load_live_summary(output_root: Path):
     return {}
 
 
+def load_resolved_event_rows(output_root: Path):
+    rows = load_csv_rows(output_root / "events" / "resolved_events.csv")
+    return {str(row.get("event_id") or ""): row for row in rows if row.get("event_id")}
+
+
+def load_association_decisions(output_root: Path):
+    return load_jsonl_file(output_root / "association_logs" / "association_decisions.jsonl")
+
+
+def load_face_resolution_summary(output_root: Path):
+    return load_json_file(output_root / "summaries" / "face_resolution_summary.json", {})
+
+
+def load_face_body_usage_summary(output_root: Path):
+    return load_json_file(output_root / "summaries" / "face_body_usage_summary.json", {})
+
+
+def load_association_summary(output_root: Path):
+    return load_json_file(output_root / "association_logs" / "association_summary.json", {})
+
+
+def load_offline_pipeline_summary(output_root: Path):
+    return load_json_file(output_root / "summaries" / "offline_pipeline_summary.json", {})
+
+
+def load_known_db_summary(project_root: Path):
+    embeddings_pkl = resolve_path(project_root, DEFAULT_KNOWN_FACE_EMBEDDINGS_PKL)
+    embeddings_csv = resolve_path(project_root, DEFAULT_KNOWN_FACE_EMBEDDINGS_CSV)
+    try:
+        _gallery, summary = load_known_face_embeddings(
+            project_root,
+            embeddings_pkl=embeddings_pkl,
+            embeddings_csv=embeddings_csv,
+        )
+        return {
+            **summary,
+            "source_path": summary.get("source_path", "") or str(embeddings_pkl if embeddings_pkl.exists() else embeddings_csv),
+        }
+    except Exception as exc:
+        return {
+            "source_path": "",
+            "source_format": "",
+            "identity_count": 0,
+            "embedding_count": 0,
+            "embedding_dimension": 0,
+            "sample_first_10_person_ids": [],
+            "error": str(exc),
+        }
+
+
+def _probe_video_metadata(video_path):
+    metadata = {
+        "path": str(video_path or ""),
+        "opened": False,
+        "width": 0,
+        "height": 0,
+        "fps": 0.0,
+        "frame_count": 0,
+        "duration_sec": 0.0,
+    }
+    path_text = str(video_path or "")
+    if not path_text or not os.path.exists(path_text):
+        return metadata
+    capture = cv2.VideoCapture(path_text)
+    if not capture or not capture.isOpened():
+        if capture is not None:
+            capture.release()
+        return metadata
+    metadata["opened"] = True
+    metadata["width"] = _coerce_int(capture.get(cv2.CAP_PROP_FRAME_WIDTH), 0)
+    metadata["height"] = _coerce_int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT), 0)
+    metadata["fps"] = _coerce_float(capture.get(cv2.CAP_PROP_FPS), 0.0)
+    metadata["frame_count"] = _coerce_int(capture.get(cv2.CAP_PROP_FRAME_COUNT), 0)
+    capture.release()
+    if metadata["fps"] > 0 and metadata["frame_count"] > 0:
+        metadata["duration_sec"] = round(metadata["frame_count"] / metadata["fps"], 3)
+    return metadata
+
+
+def inspect_output_root(output_root: Path):
+    required_paths = {
+        "latest_events_json": output_root / "events" / "latest_events.json",
+        "resolved_events_csv": output_root / "events" / "resolved_events.csv",
+        "timeline_json": output_root / "timelines" / "unknown_identity_timeline.json",
+        "face_resolution_summary_json": output_root / "summaries" / "face_resolution_summary.json",
+        "face_body_usage_summary_json": output_root / "summaries" / "face_body_usage_summary.json",
+        "handoff_summary_json": output_root / "summaries" / "cross_camera_handoff_summary.json",
+        "association_summary_json": output_root / "association_logs" / "association_summary.json",
+        "association_decisions_jsonl": output_root / "association_logs" / "association_decisions.jsonl",
+        "offline_pipeline_summary_json": output_root / "summaries" / "offline_pipeline_summary.json",
+    }
+    present = {key: path.exists() for key, path in required_paths.items()}
+    artifacts_found = any(present.values())
+    return {
+        "output_root": str(output_root),
+        "exists": output_root.exists(),
+        "artifacts_found": artifacts_found,
+        "present": present,
+    }
+
+
+def inspect_calibration_config(scene_calibration_path: Path, demo_state=None):
+    status = {
+        "path": str(scene_calibration_path),
+        "exists": scene_calibration_path.exists(),
+        "valid": False,
+        "camera_ids": [],
+        "errors": [],
+        "warnings": [],
+        "frame_size_matches": True,
+        "frame_size_mismatches": [],
+    }
+    if not scene_calibration_path.exists():
+        status["errors"].append("calibration_config_missing")
+        return status
+    calibration, runtime_info = load_scene_calibration(
+        config_path=str(scene_calibration_path),
+        base_dir=scene_calibration_path.parent,
+        required=False,
+        camera_ids=list(DEFAULT_CAMERA_SEQUENCE),
+    )
+    cameras = calibration.get("cameras", {}) or {}
+    status["camera_ids"] = sorted(cameras.keys())
+    status["errors"].extend(list(runtime_info.get("errors", [])))
+    status["warnings"].extend(list(runtime_info.get("warnings", [])))
+    for camera_id in DEFAULT_CAMERA_SEQUENCE:
+        camera_cfg = cameras.get(camera_id, {}) or {}
+        role = str(camera_cfg.get("role", "") or "").strip().lower()
+        roi = ((camera_cfg.get("processing_roi") or {}).get("polygon") or [])
+        entry_line = camera_cfg.get("entry_line", {}) or {}
+        if camera_id not in cameras:
+            status["errors"].append(f"{camera_id}: missing_camera_config")
+            continue
+        if role != "entry":
+            status["errors"].append(f"{camera_id}: role must be 'entry'")
+        if len(roi) < 3:
+            status["errors"].append(f"{camera_id}: processing_roi.polygon must contain at least 3 points")
+        if len(entry_line.get("points", []) or []) != 2:
+            status["errors"].append(f"{camera_id}: entry_line.points must contain exactly 2 points")
+        if len(entry_line.get("in_side_point", []) or []) != 2:
+            status["errors"].append(f"{camera_id}: entry_line.in_side_point must contain exactly 2 coordinates")
+        if not str(camera_cfg.get("anchor_point_mode", "") or "").strip():
+            status["errors"].append(f"{camera_id}: anchor_point_mode is required")
+        metadata = demo_state.video_metadata_for_camera(camera_id) if demo_state else {}
+        if metadata and metadata.get("opened"):
+            frame_ref = camera_cfg.get("frame_size_ref", {}) or {}
+            width_matches = _coerce_int(frame_ref.get("width"), 0) == _coerce_int(metadata.get("width"), 0)
+            height_matches = _coerce_int(frame_ref.get("height"), 0) == _coerce_int(metadata.get("height"), 0)
+            if not (width_matches and height_matches):
+                status["frame_size_matches"] = False
+                status["frame_size_mismatches"].append(
+                    {
+                        "camera_id": camera_id,
+                        "frame_size_ref": {
+                            "width": _coerce_int(frame_ref.get("width"), 0),
+                            "height": _coerce_int(frame_ref.get("height"), 0),
+                        },
+                        "video_size": {
+                            "width": _coerce_int(metadata.get("width"), 0),
+                            "height": _coerce_int(metadata.get("height"), 0),
+                        },
+                    }
+                )
+    c1_cfg = cameras.get("C1", {}) or {}
+    c2_cfg = cameras.get("C2", {}) or {}
+    c3_cfg = cameras.get("C3", {}) or {}
+    c4_cfg = cameras.get("C4", {}) or {}
+    if c3_cfg and c1_cfg and (
+        c3_cfg.get("processing_roi") != c1_cfg.get("processing_roi")
+        or c3_cfg.get("entry_line") != c1_cfg.get("entry_line")
+    ):
+        status["errors"].append("C3 geometry must equal C1 geometry")
+    if c4_cfg and c2_cfg and (
+        c4_cfg.get("processing_roi") != c2_cfg.get("processing_roi")
+        or c4_cfg.get("entry_line") != c2_cfg.get("entry_line")
+    ):
+        status["errors"].append("C4 geometry must equal C2 geometry")
+    status["valid"] = status["exists"] and not status["errors"] and status["frame_size_matches"]
+    return status
+
+
+def _story_tag_for_event(event, resolved_row):
+    identity_type = str(event.get("identity_type") or resolved_row.get("identity_status") or "").strip().lower()
+    if identity_type == "known":
+        return "KNOWN"
+    if identity_type == "unknown":
+        return "UNKNOWN"
+    if identity_type == "pending":
+        return "PENDING"
+    return identity_type.upper() or "EVENT"
+
+
+def _build_entry_story(output_root: Path, events, resolved_rows_by_id):
+    story = []
+    for event in list(events or [])[::-1]:
+        resolved_row = resolved_rows_by_id.get(str(event.get("event_id") or ""), {}) or {}
+        matched_known_id = str(resolved_row.get("matched_known_id", "") or "").strip()
+        matched_known_score = str(resolved_row.get("matched_known_score", "") or "").strip()
+        unknown_global_id = str(resolved_row.get("unknown_global_id", "") or event.get("identity_id", "")).strip()
+        face_status = str(resolved_row.get("face_embedding_status", "") or "").strip()
+        modality_primary = str(
+            resolved_row.get("modality_primary_used", "") or event.get("modality_primary", "") or ""
+        ).strip()
+        note_parts = [
+            f"event={event.get('event_id', '')}",
+            f"zone={event.get('zone_id', '-')}",
+            f"subzone={event.get('subzone_id', '-')}",
+        ]
+        if matched_known_id:
+            score_text = f" @ {matched_known_score}" if matched_known_score not in {"", "0", "0.0"} else ""
+            note_parts.append(f"known={matched_known_id}{score_text}")
+        elif unknown_global_id:
+            note_parts.append(f"unknown={unknown_global_id}")
+        if modality_primary:
+            note_parts.append(f"modality={modality_primary}")
+        if face_status:
+            note_parts.append(f"face={face_status}")
+        reason_text = resolved_row.get("decision_reason") or resolved_row.get("reason_code") or event.get("decision_reason") or event.get("reason_code") or ""
+        if reason_text:
+            note_parts.append(f"reason={reason_text}")
+        story.append(
+            {
+                "event_id": event.get("event_id", ""),
+                "snapshot_url": event.get("head_snapshot_url") or event.get("snapshot_url") or "",
+                "line1": event.get("identity_label") or matched_known_id or unknown_global_id or event.get("identity_id") or "UNKNOWN",
+                "line2": f"{event.get('camera_id', '-')} · {str(event.get('direction', 'ENTRY_IN') or 'ENTRY_IN').upper()}",
+                "line3": f"t = {_coerce_float(event.get('relative_sec'), 0.0):.1f}s",
+                "tag": _story_tag_for_event(event, resolved_row),
+                "note": " · ".join(part for part in note_parts if part),
+            }
+        )
+    return story
+
+
+def _build_reid_story(output_root: Path, handoffs):
+    decisions = load_association_decisions(output_root)
+    rows = []
+    for decision in decisions:
+        candidates = list(decision.get("candidate_evaluations", []) or [])
+        if not candidates:
+            continue
+        for candidate in candidates:
+            source_camera = str(candidate.get("source_camera_id") or decision.get("source_camera_id") or "").strip()
+            target_camera = str(candidate.get("target_camera_id") or decision.get("target_camera_id") or "").strip()
+            if not source_camera and not target_camera and not candidate.get("relation_type"):
+                continue
+            decision_value = str(decision.get("decision") or "").strip().lower()
+            accepted = decision_value in {"unknown_reuse", "known_accept"}
+            score_value = candidate.get("appearance_primary")
+            if score_value in ("", None):
+                score_value = candidate.get("body_score")
+            if score_value in ("", None):
+                score_value = candidate.get("face_score")
+            line2_parts = []
+            if score_value not in ("", None):
+                line2_parts.append(f"score={_coerce_float(score_value, 0.0):.3f}")
+            observed_delta = candidate.get("observed_delta_sec") or decision.get("time_delta")
+            if observed_delta not in ("", None):
+                line2_parts.append(f"Δt={_coerce_float(observed_delta, 0.0):.1f}s")
+            relation_type = candidate.get("relation_type") or decision.get("relation_type") or ""
+            if relation_type:
+                line2_parts.append(f"relation={relation_type}")
+            rows.append(
+                {
+                    "id": candidate.get("candidate_unknown_global_id") or decision.get("gallery_id_before") or "UNKNOWN",
+                    "line1": f"{source_camera or '?'} → {target_camera or decision.get('camera_id', '?')}",
+                    "line2": " | ".join(line2_parts) if line2_parts else "No score details recorded.",
+                    "outcome": "✓ REUSED" if accepted else "✗ NEW UNKNOWN",
+                    "color": "green" if accepted else "red",
+                    "reason": candidate.get("acceptance_reason")
+                    or candidate.get("rejection_reason")
+                    or candidate.get("candidate_reason")
+                    or decision.get("reason_code")
+                    or "",
+                    "previous_snapshot_url": "",
+                    "current_snapshot_url": "",
+                }
+            )
+    if rows:
+        return rows
+    fallback_rows = []
+    for handoff in handoffs:
+        score_value = handoff.get("score")
+        delta_text = handoff.get("observed_delta_sec")
+        line2 = []
+        if score_value not in ("", None):
+            line2.append(f"score={_coerce_float(score_value, 0.0):.3f}")
+        if delta_text not in ("", None):
+            line2.append(f"Δt={_coerce_float(delta_text, 0.0):.1f}s")
+        fallback_rows.append(
+            {
+                "id": handoff.get("global_id") or handoff.get("identity_id") or "UNKNOWN",
+                "line1": handoff.get("transition") or handoff.get("camera_path") or handoff.get("path") or "N/A",
+                "line2": " | ".join(line2) if line2 else "Observed in timeline only.",
+                "outcome": "✓ OBSERVED",
+                "color": "green",
+                "reason": handoff.get("reason") or handoff.get("method") or "",
+                "previous_snapshot_url": handoff.get("previous_snapshot_url", ""),
+                "current_snapshot_url": handoff.get("current_snapshot_url", ""),
+            }
+        )
+    return fallback_rows
+
+
+def _build_identity_journey_story(timeline_rows):
+    story = []
+    for identity in timeline_rows:
+        story.append(
+            {
+                "id": identity.get("identity_label") or identity.get("identity_id") or "UNKNOWN",
+                "cam_path": " → ".join(identity.get("camera_sequence", []) or [])
+                or str(identity.get("first_seen_camera") or "-"),
+                "first_seen": f"t = {_coerce_float(identity.get('first_seen_relative_sec'), 0.0):.1f}s",
+                "last_seen": f"t = {_coerce_float(identity.get('last_seen_relative_sec'), 0.0):.1f}s",
+                "count": _coerce_int(identity.get("appearance_count"), 0),
+                "snapshot_url": identity.get("representative_head_snapshot_url")
+                or identity.get("representative_snapshot_url")
+                or "",
+                "status": identity.get("identity_status", ""),
+            }
+        )
+    return story
+
+
+def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_path: Path, demo_state=None, known_db_summary=None):
+    known_db_summary = dict(known_db_summary or {})
+    output_status = inspect_output_root(output_root)
+    calibration_status = inspect_calibration_config(scene_calibration_path, demo_state=demo_state)
+    warnings = []
+    if not calibration_status.get("exists"):
+        warnings.append(f"MANUAL_CALIBRATION_REQUIRED_FOR_{str(demo_pair_id or '').upper() or 'PAIR'}")
+    elif not calibration_status.get("valid"):
+        warnings.append(f"INVALID_CALIBRATION_FOR_{str(demo_pair_id or '').upper() or 'PAIR'}")
+    if not output_status.get("artifacts_found"):
+        warnings.append("MISSING_DEMO_ARTIFACTS_FOR_PAIR")
+
+    events = load_latest_events(output_root) if output_status.get("artifacts_found") else []
+    timeline_rows = load_identity_timeline(output_root) if output_status.get("artifacts_found") else []
+    handoffs = load_reid_handoffs(output_root) if output_status.get("artifacts_found") else []
+    resolved_rows = load_resolved_event_rows(output_root) if output_status.get("artifacts_found") else {}
+    face_resolution_summary = load_face_resolution_summary(output_root) if output_status.get("artifacts_found") else {}
+    face_body_usage_summary = load_face_body_usage_summary(output_root) if output_status.get("artifacts_found") else {}
+    association_summary = load_association_summary(output_root) if output_status.get("artifacts_found") else {}
+    offline_pipeline_summary = load_offline_pipeline_summary(output_root) if output_status.get("artifacts_found") else {}
+
+    face_metrics = face_body_usage_summary.get("metrics", face_body_usage_summary) if isinstance(face_body_usage_summary, dict) else {}
+    mode_b = face_resolution_summary.get("mode_b_true_assoc", {}) if isinstance(face_resolution_summary, dict) else {}
+    known_db_runtime = face_resolution_summary.get("known_db_runtime", {}) if isinstance(face_resolution_summary, dict) else {}
+    association_metrics = association_summary.get("metrics", association_summary) if isinstance(association_summary, dict) else {}
+    timings_sec = offline_pipeline_summary.get("timings_sec", {}) if isinstance(offline_pipeline_summary, dict) else {}
+
+    diagnostics = {
+        "demo_pair_id": demo_pair_id,
+        "output_root": str(output_root),
+        "artifacts_found": bool(output_status.get("artifacts_found")),
+        "artifacts_present": output_status.get("present", {}),
+        "calibration_config_path": str(scene_calibration_path),
+        "calibration_valid": bool(calibration_status.get("valid")),
+        "calibration_errors": list(calibration_status.get("errors", [])),
+        "calibration_warnings": list(calibration_status.get("warnings", [])),
+        "known_db_identity_count": _coerce_int(
+            known_db_runtime.get("identities_loaded", known_db_summary.get("identity_count", 0)),
+            0,
+        ),
+        "known_db_embedding_count": _coerce_int(
+            known_db_runtime.get("embedding_count", known_db_summary.get("embedding_count", 0)),
+            0,
+        ),
+        "known_db_embedding_dimension": known_db_runtime.get(
+            "embedding_dimension",
+            known_db_summary.get("embedding_dimension", 0),
+        ),
+        "face_candidate_count": _coerce_int(face_metrics.get("face_candidate_count", "KEY_NOT_FOUND"), 0)
+        if "face_candidate_count" in face_metrics
+        else "KEY_NOT_FOUND",
+        "face_embedding_created_count": _coerce_int(face_metrics.get("face_embedding_created_count", "KEY_NOT_FOUND"), 0)
+        if "face_embedding_created_count" in face_metrics
+        else "KEY_NOT_FOUND",
+        "known_match_success_count": _coerce_int(face_metrics.get("known_face_match_success_count", "KEY_NOT_FOUND"), 0)
+        if "known_face_match_success_count" in face_metrics
+        else "KEY_NOT_FOUND",
+        "unknown_created_count": _coerce_int(mode_b.get("new_unknown_count", association_metrics.get("new_unknown_count", "KEY_NOT_FOUND")), 0)
+        if ("new_unknown_count" in mode_b or "new_unknown_count" in association_metrics)
+        else "KEY_NOT_FOUND",
+        "unknown_reuse_count": _coerce_int(mode_b.get("unknown_reuse_count", association_metrics.get("unknown_reuse_count", "KEY_NOT_FOUND")), 0)
+        if ("unknown_reuse_count" in mode_b or "unknown_reuse_count" in association_metrics)
+        else "KEY_NOT_FOUND",
+        "event_count": len(events),
+        "timeline_identity_count": len(timeline_rows),
+        "handoff_count": len(handoffs),
+        "processing_summary": {
+            "known_event_count": mode_b.get("known_event_count", "KEY_NOT_FOUND"),
+            "unknown_event_count": mode_b.get("unknown_event_count", "KEY_NOT_FOUND"),
+            "pending_count": mode_b.get("pending_count", association_metrics.get("pending_count", "KEY_NOT_FOUND")),
+            "body_fallback_used_count": mode_b.get(
+                "body_fallback_used_count",
+                face_metrics.get("body_fallback_used_count", "KEY_NOT_FOUND"),
+            ),
+            "face_unusable_event_count": mode_b.get(
+                "face_unusable_event_count",
+                face_metrics.get("face_unusable_event_count", "KEY_NOT_FOUND"),
+            ),
+            "total_pipeline_sec": timings_sec.get("total_pipeline_sec", "KEY_NOT_FOUND"),
+        },
+        "warnings": warnings,
+    }
+
+    return {
+        "entry_events": _build_entry_story(output_root, events, resolved_rows),
+        "reid_evidence": _build_reid_story(output_root, handoffs),
+        "identity_journey": _build_identity_journey_story(timeline_rows),
+        "system_status": diagnostics,
+        "diagnostics": diagnostics,
+        "warnings": warnings,
+    }
+
+
 def resolve_preview_source(project_root: Path, camera_cfg, *, source_type_override="", source_override=""):
     source_type = source_type_override or camera_cfg.get("preview_source_type", "file")
     source_value = source_override or camera_cfg.get("preview_source", "")
@@ -262,6 +728,19 @@ def _camera_folder_for_id(camera_id: str):
     if normalized in {"C2", "C4"}:
         return "Camera 2"
     return None
+
+
+def _default_camera_description(camera_id: str):
+    normalized = (camera_id or "").upper()
+    if normalized == "C1":
+        return "Logical stream backed by physical Camera 1."
+    if normalized == "C2":
+        return "Logical stream backed by physical Camera 2."
+    if normalized == "C3":
+        return "Logical replay of C1."
+    if normalized == "C4":
+        return "Logical replay of C2."
+    return ""
 
 
 def _candidate_clip_paths(base_path: Path, pair_id: str):
@@ -547,12 +1026,12 @@ class DemoPlaybackState:
         self._lock = threading.Lock()
         self.presentation_mode = presentation_mode or "sequential"
         self.sequence = [item.strip().upper() for item in (camera_sequence or list(DEFAULT_CAMERA_SEQUENCE)) if item.strip()]
-        self.camera_segment_sec = max(1.0, float(camera_segment_sec or 12.0))
+        self.camera_segment_sec = None if camera_segment_sec is None else max(1.0, float(camera_segment_sec))
         self.gap_seconds = max(0.0, float(gap_seconds or 0.0))
         self.stream_target_fps = max(1.0, float(stream_target_fps or 15.0))
         self.dataset_root = Path(dataset_root).resolve() if dataset_root else None
         self.demo_pair_id = demo_pair_id or ""
-        self.demo_start_monotonic = time.monotonic()
+        self.demo_start_monotonic = None
         self.video_sources = _resolve_clip_video_sources(self.demo_pair_id, self.dataset_root)
         self.video_paths = {
             camera_id: str(item.get("path")) if item.get("path") else None
@@ -562,6 +1041,14 @@ class DemoPlaybackState:
             camera_id: str(item.get("source_note", "MISSING") or "MISSING")
             for camera_id, item in self.video_sources.items()
         }
+        self.video_metadata = {
+            camera_id: _probe_video_metadata(video_path)
+            for camera_id, video_path in self.video_paths.items()
+        }
+        self.segment_durations_sec = {
+            camera_id: self._resolve_segment_duration(camera_id)
+            for camera_id in self.sequence
+        }
         self._streamers = {
             camera_id: VideoStreamer(camera_id, video_path, target_fps=self.stream_target_fps)
             for camera_id, video_path in self.video_paths.items()
@@ -569,16 +1056,30 @@ class DemoPlaybackState:
         }
         self._active_stream_camera = None
 
-    def _elapsed(self):
+    def _resolve_segment_duration(self, camera_id):
+        if self.camera_segment_sec is not None:
+            return float(self.camera_segment_sec)
+        metadata = self.video_metadata.get((camera_id or "").upper(), {})
+        duration_sec = _coerce_float(metadata.get("duration_sec"), 0.0)
+        return max(1.0, duration_sec) if duration_sec > 0 else 12.0
+
+    def _ensure_started(self):
         with self._lock:
-            return max(0.0, time.monotonic() - self.demo_start_monotonic)
+            if self.demo_start_monotonic is None:
+                self.demo_start_monotonic = time.monotonic()
+            return self.demo_start_monotonic
+
+    def _elapsed(self):
+        demo_start = self._ensure_started()
+        return max(0.0, time.monotonic() - demo_start)
 
     def current_state(self):
         elapsed = self._elapsed()
         timeline_cursor = 0.0
         for index, camera_id in enumerate(self.sequence):
             segment_start = timeline_cursor
-            segment_end = segment_start + self.camera_segment_sec
+            segment_duration = self.segment_duration_for_camera(camera_id)
+            segment_end = segment_start + segment_duration
             if elapsed < segment_end:
                 return {
                     "phase": "cam_playing",
@@ -588,7 +1089,8 @@ class DemoPlaybackState:
                     "phase_elapsed_sec": elapsed - segment_start,
                     "demo_time_sec": elapsed,
                     "gap_seconds": self.gap_seconds,
-                    "camera_segment_sec": self.camera_segment_sec,
+                    "camera_segment_sec": segment_duration,
+                    "configured_camera_segment_sec": self.camera_segment_sec if self.camera_segment_sec is not None else "auto",
                     "stream_target_fps": self.stream_target_fps,
                     "presentation_mode": self.presentation_mode,
                     "demo_pair_id": self.demo_pair_id,
@@ -606,7 +1108,8 @@ class DemoPlaybackState:
                         "phase_elapsed_sec": elapsed - gap_start,
                         "demo_time_sec": elapsed,
                         "gap_seconds": self.gap_seconds,
-                        "camera_segment_sec": self.camera_segment_sec,
+                        "camera_segment_sec": segment_duration,
+                        "configured_camera_segment_sec": self.camera_segment_sec if self.camera_segment_sec is not None else "auto",
                         "stream_target_fps": self.stream_target_fps,
                         "presentation_mode": self.presentation_mode,
                         "demo_pair_id": self.demo_pair_id,
@@ -620,7 +1123,8 @@ class DemoPlaybackState:
             "phase_elapsed_sec": max(0.0, elapsed - timeline_cursor),
             "demo_time_sec": elapsed,
             "gap_seconds": self.gap_seconds,
-            "camera_segment_sec": self.camera_segment_sec,
+            "camera_segment_sec": self.segment_duration_for_camera(self.sequence[-1]) if self.sequence else 0.0,
+            "configured_camera_segment_sec": self.camera_segment_sec if self.camera_segment_sec is not None else "auto",
             "stream_target_fps": self.stream_target_fps,
             "presentation_mode": self.presentation_mode,
             "demo_pair_id": self.demo_pair_id,
@@ -645,6 +1149,12 @@ class DemoPlaybackState:
 
     def video_source_note_for_camera(self, camera_id):
         return self.video_source_notes.get((camera_id or "").upper(), "MISSING")
+
+    def video_metadata_for_camera(self, camera_id):
+        return dict(self.video_metadata.get((camera_id or "").upper(), {}))
+
+    def segment_duration_for_camera(self, camera_id):
+        return float(self.segment_durations_sec.get((camera_id or "").upper(), self.camera_segment_sec or 12.0))
 
     def streamer_for_camera(self, camera_id):
         return self._streamers.get((camera_id or "").upper())
@@ -680,6 +1190,7 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         output_root=None,
         scene_calibration_path=None,
         demo_state=None,
+        known_db_summary=None,
         **kwargs,
     ):
         self.web_root = web_root
@@ -687,6 +1198,7 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
         self.output_root = output_root
         self.scene_calibration_path = scene_calibration_path
         self.demo_state = demo_state
+        self.known_db_summary = dict(known_db_summary or {})
         super().__init__(*args, directory=str(web_root), **kwargs)
 
     def _send_json(self, payload, status=200):
@@ -743,6 +1255,29 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             required=required,
             camera_ids=camera_ids,
         )
+        calibration.setdefault("cameras", {})
+        for camera_id in (camera_ids or list((calibration.get("cameras", {}) or {}).keys())):
+            camera_cfg = dict((calibration.get("cameras", {}) or {}).get(camera_id, {}) or {})
+            metadata = self.demo_state.video_metadata_for_camera(camera_id) if self.demo_state else {}
+            camera_cfg.setdefault("camera_id", camera_id)
+            if not str(camera_cfg.get("role", "") or "").strip():
+                camera_cfg["role"] = "entry"
+            if not str(camera_cfg.get("description", "") or "").strip():
+                camera_cfg["description"] = _default_camera_description(camera_id)
+            if not str(camera_cfg.get("preview_source", "") or "").strip() and self.demo_state:
+                camera_cfg["preview_source"] = self.demo_state.video_path_for_camera(camera_id) or ""
+            if not str(camera_cfg.get("preview_source_type", "") or "").strip():
+                camera_cfg["preview_source_type"] = "file"
+            frame_size_ref = dict(camera_cfg.get("frame_size_ref", {}) or {})
+            if metadata and metadata.get("opened"):
+                width_matches = _coerce_int(frame_size_ref.get("width"), 0) == _coerce_int(metadata.get("width"), 0)
+                height_matches = _coerce_int(frame_size_ref.get("height"), 0) == _coerce_int(metadata.get("height"), 0)
+                if _coerce_int(frame_size_ref.get("width"), 0) <= 0 or not width_matches:
+                    frame_size_ref["width"] = _coerce_int(metadata.get("width"), 0)
+                if _coerce_int(frame_size_ref.get("height"), 0) <= 0 or not height_matches:
+                    frame_size_ref["height"] = _coerce_int(metadata.get("height"), 0)
+            camera_cfg["frame_size_ref"] = frame_size_ref
+            calibration["cameras"][camera_id] = camera_cfg
         return calibration, runtime
 
     def _preview_source_for_camera(self, camera_id, camera_cfg, query):
@@ -912,6 +1447,16 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
                     "preview_source": (override or {}).get("source_value", camera_cfg.get("preview_source", "")),
                     "video_path": self.demo_state.video_path_for_camera(camera_id) if self.demo_state else "",
                     "video_source_note": self.demo_state.video_source_note_for_camera(camera_id) if self.demo_state else "MISSING",
+                    "video_duration_sec": (
+                        (self.demo_state.video_metadata_for_camera(camera_id) or {}).get("duration_sec", 0.0)
+                        if self.demo_state
+                        else 0.0
+                    ),
+                    "camera_segment_sec": (
+                        self.demo_state.segment_duration_for_camera(camera_id)
+                        if self.demo_state
+                        else 0.0
+                    ),
                     "frame_size_ref": camera_cfg.get("frame_size_ref", []),
                 }
             )
@@ -927,6 +1472,15 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             "scene_calibration_config": str(self.scene_calibration_path),
             "cameras": cameras,
         }
+
+    def _demo_story_payload(self):
+        return build_demo_story(
+            self.output_root,
+            self.demo_state.demo_pair_id if self.demo_state else "",
+            Path(self.scene_calibration_path) if self.scene_calibration_path else Path(""),
+            demo_state=self.demo_state,
+            known_db_summary=self.known_db_summary,
+        )
 
     def _calibration_state_payload(self):
         calibration, runtime = self._load_calibration(required=False)
@@ -963,6 +1517,8 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
             return self._send_json({"identities": load_identity_timeline(self.output_root)})
         if parsed.path == "/api/reid-handoffs":
             return self._send_json({"handoffs": load_reid_handoffs(self.output_root)})
+        if parsed.path == "/api/demo-story":
+            return self._send_json(self._demo_story_payload())
         if parsed.path == "/api/camera-state":
             return self._send_json(self.demo_state.current_state() if self.demo_state else {})
         if parsed.path == "/api/camera-config":
@@ -1047,7 +1603,11 @@ def parse_args():
     parser.add_argument("--demo-pair-id", default="")
     parser.add_argument("--presentation-mode", default="sequential")
     parser.add_argument("--camera-sequence", default="C1,C2,C3,C4")
-    parser.add_argument("--camera-segment-sec", type=float, default=12.0)
+    parser.add_argument(
+        "--camera-segment-sec",
+        default="12",
+        help="Per-camera active duration in seconds. Use 'auto' or 0 for full clip duration.",
+    )
     parser.add_argument("--travel-gap-sec", type=float, default=8.0)
     parser.add_argument("--stream-target-fps", type=float, default=15.0)
     return parser.parse_args()
@@ -1061,15 +1621,17 @@ def main():
     web_root = Path(__file__).resolve().parent / "web_demo"
     scene_calibration_path = resolve_path(project_root, args.scene_calibration_config)
     camera_sequence = [item.strip().upper() for item in args.camera_sequence.split(",") if item.strip()]
+    camera_segment_sec = _parse_camera_segment_sec(args.camera_segment_sec)
     demo_state = DemoPlaybackState(
         presentation_mode=args.presentation_mode,
         camera_sequence=camera_sequence or list(DEFAULT_CAMERA_SEQUENCE),
-        camera_segment_sec=args.camera_segment_sec,
+        camera_segment_sec=camera_segment_sec,
         gap_seconds=args.travel_gap_sec,
         stream_target_fps=args.stream_target_fps,
         dataset_root=dataset_root,
         demo_pair_id=args.demo_pair_id,
     )
+    known_db_summary = load_known_db_summary(project_root)
 
     def handler(*handler_args, **handler_kwargs):
         return LiveDemoRequestHandler(
@@ -1079,6 +1641,7 @@ def main():
             output_root=output_root,
             scene_calibration_path=scene_calibration_path,
             demo_state=demo_state,
+            known_db_summary=known_db_summary,
             **handler_kwargs,
         )
 
@@ -1089,12 +1652,31 @@ def main():
     print(f"DEMO_PAIR_ID={args.demo_pair_id}")
     print(f"PRESENTATION_MODE={args.presentation_mode}")
     print(f"CAMERA_SEQUENCE={','.join(camera_sequence or DEFAULT_CAMERA_SEQUENCE)}")
-    print(f"CAMERA_SEGMENT_SEC={args.camera_segment_sec}")
+    print(f"CAMERA_SEGMENT_SEC={'auto' if camera_segment_sec is None else camera_segment_sec}")
     print(f"TRAVEL_GAP_SEC={args.travel_gap_sec}")
     print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
+    print(
+        "KNOWN_DB_RUNTIME="
+        + json.dumps(
+            {
+                "identity_count": known_db_summary.get("identity_count", 0),
+                "embedding_count": known_db_summary.get("embedding_count", 0),
+                "embedding_dimension": known_db_summary.get("embedding_dimension", 0),
+            },
+            ensure_ascii=False,
+        )
+    )
     if dataset_root:
         print(f"DATASET_ROOT={dataset_root}")
     _print_video_path_resolution(demo_state.video_paths, dataset_root, source_notes=demo_state.video_source_notes)
+    print("=== CAMERA SEGMENT DURATIONS ===")
+    for camera_id in (camera_sequence or DEFAULT_CAMERA_SEQUENCE):
+        metadata = demo_state.video_metadata_for_camera(camera_id)
+        print(
+            f"  {camera_id}: segment_sec={demo_state.segment_duration_for_camera(camera_id)} "
+            f"| source_duration_sec={metadata.get('duration_sec', 0.0)}"
+        )
+    print("===============================")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

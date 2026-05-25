@@ -21,5 +21,5 @@ if not exist "%RUNTIME_PYTHON%" (
   --stream-target-fps 15 ^
   --presentation-mode sequential ^
   --camera-sequence C1,C2,C3,C4 ^
-  --camera-segment-sec 12 ^
+  --camera-segment-sec auto ^
   --travel-gap-sec 8

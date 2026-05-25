@@ -286,6 +286,34 @@
       line-height: 1.6;
     }
 
+    .diag-card {
+      margin-bottom: 10px;
+      padding: 8px;
+      border: 1px solid #111928;
+      background: #0b1119;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+
+    .diag-title {
+      font-size: 9px;
+      color: #4a7aab;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+
+    .diag-line {
+      font-size: 9px;
+      color: #84a7c8;
+      line-height: 1.6;
+    }
+
+    .diag-warning {
+      font-size: 9px;
+      color: #f4b266;
+      line-height: 1.6;
+    }
+
     .event-row {
       display: grid;
       grid-template-columns: 48px 1fr;
@@ -454,6 +482,13 @@
       latestEvents: [],
       timelines: [],
       reidHandoffs: [],
+      demoStory: {
+        entry_events: [],
+        reid_evidence: [],
+        identity_journey: [],
+        diagnostics: {},
+        warnings: [],
+      },
       cameraState: null,
     };
 
@@ -503,6 +538,73 @@
       }
       const className = ["panel-thumb", extraClass].filter(Boolean).join(" ");
       return `<img class="${escapeHtml(className)}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}">`;
+    }
+
+    function getStoryPayload() {
+      return browserState.demoStory || {};
+    }
+
+    function getStoryDiagnostics() {
+      const payload = getStoryPayload();
+      return payload.diagnostics || payload.system_status || {};
+    }
+
+    function getPanelDataFromStory(panelKey) {
+      const payload = getStoryPayload();
+      if (panelKey === "entry") {
+        return Array.isArray(payload.entry_events) ? payload.entry_events.slice() : [];
+      }
+      if (panelKey === "reid") {
+        return Array.isArray(payload.reid_evidence) ? payload.reid_evidence.slice() : [];
+      }
+      if (panelKey === "timeline") {
+        return Array.isArray(payload.identity_journey) ? payload.identity_journey.slice() : [];
+      }
+      return [];
+    }
+
+    function panelEmptyMessage(panelKey, diagnostics) {
+      const warnings = Array.isArray(diagnostics?.warnings) ? diagnostics.warnings : [];
+      const pairId = diagnostics?.demo_pair_id || "this pair";
+      if (warnings.includes("MISSING_DEMO_ARTIFACTS_FOR_PAIR")) {
+        return `No pipeline artifacts found for ${pairId}. Run artifact generation first.`;
+      }
+      if (warnings.some((item) => String(item).startsWith("MANUAL_CALIBRATION_REQUIRED_FOR_"))) {
+        return `Calibration missing for ${pairId}. Save manual calibration before running the pipeline.`;
+      }
+      if (warnings.some((item) => String(item).startsWith("INVALID_CALIBRATION_FOR_"))) {
+        return `Calibration is invalid for ${pairId}. Fix calibration before trusting pipeline output.`;
+      }
+      if (panelKey === "entry") {
+        return "No ENTRY_IN events detected in this run.";
+      }
+      if (panelKey === "reid") {
+        return "No cross-camera Re-ID events in this run.";
+      }
+      if (panelKey === "timeline") {
+        return "No unknown identities tracked yet.";
+      }
+      return "No data available.";
+    }
+
+    function renderDiagnosticsCard(diagnostics) {
+      if (!diagnostics || !Object.keys(diagnostics).length) {
+        return "";
+      }
+      const warnings = Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [];
+      const lines = [
+        `PAIR ${escapeHtml(toDisplayText(diagnostics.demo_pair_id, "-"))} · ARTIFACTS ${diagnostics.artifacts_found ? "YES" : "NO"} · CALIB ${diagnostics.calibration_valid ? "YES" : "NO"}`,
+        `KNOWN_DB ${escapeHtml(toDisplayText(diagnostics.known_db_identity_count, "KEY_NOT_FOUND"))} IDs · ${escapeHtml(toDisplayText(diagnostics.known_db_embedding_count, "KEY_NOT_FOUND"))} embeddings`,
+        `FACE_CAND ${escapeHtml(toDisplayText(diagnostics.face_candidate_count, "KEY_NOT_FOUND"))} · FACE_EMB ${escapeHtml(toDisplayText(diagnostics.face_embedding_created_count, "KEY_NOT_FOUND"))} · KNOWN_MATCH ${escapeHtml(toDisplayText(diagnostics.known_match_success_count, "KEY_NOT_FOUND"))}`,
+        `EVENTS ${escapeHtml(toDisplayText(diagnostics.event_count, 0))} · TIMELINE ${escapeHtml(toDisplayText(diagnostics.timeline_identity_count, 0))} · HANDOFFS ${escapeHtml(toDisplayText(diagnostics.handoff_count, 0))}`,
+      ];
+      return `
+        <div class="diag-card">
+          <div class="diag-title">SYSTEM STATUS</div>
+          ${lines.map((line) => `<div class="diag-line">${line}</div>`).join("")}
+          ${warnings.map((warning) => `<div class="diag-warning">${escapeHtml(String(warning))}</div>`).join("")}
+        </div>
+      `;
     }
 
     function getCameraCell(cameraId) {
@@ -671,23 +773,16 @@
     }
 
     function getCachedPanelData(panelKey) {
-      if (panelKey === "entry") {
-        return browserState.latestEvents.slice().reverse();
-      }
-      if (panelKey === "reid") {
-        return browserState.reidHandoffs.length ? browserState.reidHandoffs.slice() : buildReidEvidenceFromTimeline(browserState.timelines);
-      }
-      if (panelKey === "timeline") {
-        return browserState.timelines.slice();
-      }
-      return [];
+      return getPanelDataFromStory(panelKey);
     }
 
-    function renderEntryPanel(data, messageText = "") {
+    function renderEntryPanel(data, diagnostics, messageText = "") {
+      const diagnosticsHtml = renderDiagnosticsCard(diagnostics);
       const emptyHtml = `
         <div class="panel-content">
           <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
-          <div class="panel-empty">${escapeHtml(messageText || "Waiting for pipeline data...")}</div>
+          ${diagnosticsHtml}
+          <div class="panel-empty">${escapeHtml(messageText || panelEmptyMessage("entry", diagnostics))}</div>
         </div>
       `;
       if (!data.length) {
@@ -696,6 +791,7 @@
       return `
         <div class="panel-content">
           <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+          ${diagnosticsHtml}
           ${data.map((event) => {
             const thumb = renderThumb(event.head_snapshot_url || event.snapshot_url, "entry snapshot");
             const rowClass = thumb ? "event-row" : "event-row no-thumb";
@@ -703,7 +799,7 @@
               <div class="${rowClass}">
                 ${thumb}
                 <div class="event-copy">
-                  <div class="event-id">${escapeHtml(event.identity_label || event.identity_id || event.track_label || "UNKNOWN")}</div>
+                  <div class="event-id">${escapeHtml(event.line1 || "UNKNOWN")}</div>
                   <div class="event-cam">${escapeHtml(toDisplayText(event.camera_id || event.camera, "-"))} · ${escapeHtml(toDisplayText(event.direction, "ENTRY_IN"))}</div>
                   <div class="event-time">${escapeHtml(toDisplayText(event.timestamp || `${formatRelativeSec(event.relative_sec)}s`, "--"))}</div>
                   <div class="event-note">${escapeHtml(`zone=${toDisplayText(event.zone_id, "-")} · subzone=${toDisplayText(event.subzone_id, "-")} · reason=${toDisplayText(event.decision_reason || event.reason_code, "N/A")}`)}</div>
@@ -952,6 +1048,257 @@
         updateCameraFeeds(null);
         syncCameraVisualState();
         document.getElementById("status-left").textContent = "CAMERA STATE LOAD FAILED";
+        document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");
+      }
+    }
+
+    function renderDiagnosticsCard(diagnostics) {
+      if (!diagnostics || !Object.keys(diagnostics).length) {
+        return "";
+      }
+      const warnings = Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [];
+      const processing = diagnostics.processing_summary || {};
+      const outputRootTail = String(diagnostics.output_root || "")
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .slice(-4)
+        .join("\\");
+      const lines = [
+        `PAIR ${toDisplayText(diagnostics.demo_pair_id, "-")} | ARTIFACTS ${diagnostics.artifacts_found ? "YES" : "NO"} | CALIB ${diagnostics.calibration_valid ? "YES" : "NO"}`,
+        `KNOWN_DB ${toDisplayText(diagnostics.known_db_identity_count, "KEY_NOT_FOUND")} IDs | ${toDisplayText(diagnostics.known_db_embedding_count, "KEY_NOT_FOUND")} embeddings | DIM ${toDisplayText(diagnostics.known_db_embedding_dimension, "KEY_NOT_FOUND")}`,
+        `FACE_CAND ${toDisplayText(diagnostics.face_candidate_count, "KEY_NOT_FOUND")} | FACE_EMB ${toDisplayText(diagnostics.face_embedding_created_count, "KEY_NOT_FOUND")} | KNOWN_MATCH ${toDisplayText(diagnostics.known_match_success_count, "KEY_NOT_FOUND")}`,
+        `EVENTS ${toDisplayText(diagnostics.event_count, 0)} | TIMELINE ${toDisplayText(diagnostics.timeline_identity_count, 0)} | HANDOFFS ${toDisplayText(diagnostics.handoff_count, 0)}`,
+        `KNOWN_EVT ${toDisplayText(processing.known_event_count, "KEY_NOT_FOUND")} | UNKNOWN_EVT ${toDisplayText(processing.unknown_event_count, "KEY_NOT_FOUND")} | BODY_FALLBACK ${toDisplayText(processing.body_fallback_used_count, "KEY_NOT_FOUND")} | PIPELINE_SEC ${toDisplayText(processing.total_pipeline_sec, "KEY_NOT_FOUND")}`,
+      ];
+      if (outputRootTail) {
+        lines.push(`OUT ${outputRootTail}`);
+      }
+      return `
+        <div class="diag-card">
+          <div class="diag-title">SYSTEM STATUS</div>
+          ${lines.map((line) => `<div class="diag-line">${escapeHtml(line)}</div>`).join("")}
+          ${warnings.map((warning) => `<div class="diag-warning">${escapeHtml(String(warning))}</div>`).join("")}
+        </div>
+      `;
+    }
+
+    function renderEntryPanel(data, diagnostics, messageText = "") {
+      const diagnosticsHtml = renderDiagnosticsCard(diagnostics);
+      const emptyText = messageText || panelEmptyMessage("entry", diagnostics);
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+            ${diagnosticsHtml}
+            <div class="panel-empty">${escapeHtml(emptyText)}</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">LATEST ENTRY_IN EVENTS</div>
+          ${diagnosticsHtml}
+          ${data.map((event) => {
+            const thumb = renderThumb(event.snapshot_url || event.head_snapshot_url, "entry snapshot");
+            const rowClass = thumb ? "event-row" : "event-row no-thumb";
+            const tagText = event.tag ? ` | ${String(event.tag).toUpperCase()}` : "";
+            return `
+              <div class="${rowClass}">
+                ${thumb}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(event.line1 || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(`${toDisplayText(event.line2, "N/A")}${tagText}`)}</div>
+                  <div class="event-time">${escapeHtml(toDisplayText(event.line3, "--"))}</div>
+                  <div class="event-note">${escapeHtml(toDisplayText(event.note, "No decision note recorded."))}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function renderReidPanel(data, diagnostics, messageText = "") {
+      const diagnosticsHtml = renderDiagnosticsCard(diagnostics);
+      const emptyText = messageText || panelEmptyMessage("reid", diagnostics);
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
+            ${diagnosticsHtml}
+            <div class="panel-empty">${escapeHtml(emptyText)}</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">CROSS-CAMERA RE-ID EVIDENCE</div>
+          ${diagnosticsHtml}
+          ${data.map((row) => {
+            const pairHtml = row.previous_snapshot_url || row.current_snapshot_url
+              ? `
+                <div class="thumb-pair">
+                  ${renderThumb(row.previous_snapshot_url, "previous appearance")}
+                  <span class="thumb-arrow">-&gt;</span>
+                  ${renderThumb(row.current_snapshot_url, "current appearance")}
+                </div>
+              `
+              : "";
+            const rowClass = pairHtml ? "event-row" : "event-row no-thumb";
+            return `
+              <div class="${rowClass}">
+                ${pairHtml}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(row.id || row.global_id || row.identity_id || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(toDisplayText(row.line1 || row.transition || row.camera_path || row.path, "N/A"))}</div>
+                  <div class="event-time">${escapeHtml(toDisplayText(row.line2, "No score details recorded."))}</div>
+                  <div class="event-note">${escapeHtml(`${toDisplayText(row.outcome, "N/A")} | ${toDisplayText(row.reason, "No merge reason recorded.")}`)}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function renderTimelinePanel(data, diagnostics, messageText = "") {
+      const diagnosticsHtml = renderDiagnosticsCard(diagnostics);
+      const emptyText = messageText || panelEmptyMessage("timeline", diagnostics);
+      if (!data.length) {
+        return `
+          <div class="panel-content">
+            <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
+            ${diagnosticsHtml}
+            <div class="panel-empty">${escapeHtml(emptyText)}</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="panel-content">
+          <div class="panel-header">UNKNOWN IDENTITY TIMELINE</div>
+          ${diagnosticsHtml}
+          ${data.map((identity) => {
+            const thumb = renderThumb(identity.snapshot_url || identity.representative_head_snapshot_url || identity.representative_snapshot_url, "timeline snapshot");
+            const rowClass = thumb ? "event-row" : "event-row no-thumb";
+            return `
+              <div class="${rowClass}">
+                ${thumb}
+                <div class="event-copy">
+                  <div class="event-id">${escapeHtml(identity.id || identity.identity_label || identity.identity_id || "UNKNOWN")}</div>
+                  <div class="event-cam">${escapeHtml(toDisplayText(identity.cam_path, "N/A"))}</div>
+                  <div class="event-time">${escapeHtml(`${toDisplayText(identity.count, 0)} sightings | ${toDisplayText(identity.first_seen, "--")}`)}</div>
+                  <div class="event-note">${escapeHtml(`last ${toDisplayText(identity.last_seen, "--")} | status=${toDisplayText(identity.status, "unknown")}`)}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function renderPanel(panelKey, data, messageText = "") {
+      const panel = document.getElementById("sidebar-panel");
+      if (!panelKey) {
+        panel.innerHTML = "";
+        panel.classList.remove("panel-has-content");
+        return;
+      }
+      panel.innerHTML = PANEL_RENDERERS[panelKey](Array.isArray(data) ? data : [], getStoryDiagnostics(), messageText);
+      panel.classList.add("panel-has-content");
+    }
+
+    function shouldRetryPanel(panelKey, diagnostics) {
+      if (!browserState.activeTab || browserState.activeTab !== panelKey || !getCurrentActiveCamera()) {
+        return false;
+      }
+      const warnings = Array.isArray(diagnostics?.warnings) ? diagnostics.warnings : [];
+      if (warnings.includes("MISSING_DEMO_ARTIFACTS_FOR_PAIR")) {
+        return false;
+      }
+      if (warnings.some((item) => String(item).startsWith("MANUAL_CALIBRATION_REQUIRED_FOR_"))) {
+        return false;
+      }
+      if (warnings.some((item) => String(item).startsWith("INVALID_CALIBRATION_FOR_"))) {
+        return false;
+      }
+      return true;
+    }
+
+    async function fetchPanelData(panelKey) {
+      const payload = await fetchJson("/api/demo-story");
+      browserState.demoStory = payload && typeof payload === "object"
+        ? payload
+        : { entry_events: [], reid_evidence: [], identity_journey: [], diagnostics: {}, warnings: [] };
+      const panelData = getPanelDataFromStory(panelKey);
+      if (panelKey === "reid" && !panelData.length && browserState.timelines.length) {
+        browserState.reidHandoffs = buildReidEvidenceFromTimeline(browserState.timelines);
+      }
+      return panelData;
+    }
+
+    async function openPanel(panelKey, fromRetry = false) {
+      const requestNonce = ++panelRequestNonce;
+      clearPanelRetry();
+      renderPanel(panelKey, [], fromRetry ? "Refreshing diagnostics..." : "Refreshing panel...");
+      try {
+        const data = await fetchPanelData(panelKey);
+        if (requestNonce !== panelRequestNonce || browserState.activeTab !== panelKey) {
+          return;
+        }
+        const diagnostics = getStoryDiagnostics();
+        if (!data.length) {
+          renderPanel(panelKey, [], panelEmptyMessage(panelKey, diagnostics));
+          if (shouldRetryPanel(panelKey, diagnostics)) {
+            schedulePanelRetry(panelKey);
+          }
+          return;
+        }
+        renderPanel(panelKey, data);
+      } catch (error) {
+        if (requestNonce !== panelRequestNonce || browserState.activeTab !== panelKey) {
+          return;
+        }
+        renderPanel(panelKey, [], `Failed to load panel data: ${error.message}`);
+        if (shouldRetryPanel(panelKey, getStoryDiagnostics())) {
+          schedulePanelRetry(panelKey);
+        }
+      }
+    }
+
+    async function refreshLiveData() {
+      try {
+        const [summary, latest, timeline, demoStory] = await Promise.all([
+          fetchJson("/api/summary"),
+          fetchJson("/api/latest-events"),
+          fetchJson("/api/timeline"),
+          fetchJson("/api/demo-story"),
+        ]);
+        browserState.summary = summary || {};
+        browserState.latestEvents = Array.isArray(latest.events) ? latest.events : [];
+        browserState.timelines = Array.isArray(timeline.identities) ? timeline.identities : [];
+        browserState.demoStory = demoStory && typeof demoStory === "object"
+          ? demoStory
+          : { entry_events: [], reid_evidence: [], identity_journey: [], diagnostics: {}, warnings: [] };
+        browserState.reidHandoffs = Array.isArray(browserState.demoStory.reid_evidence) && browserState.demoStory.reid_evidence.length
+          ? browserState.demoStory.reid_evidence.slice()
+          : buildReidEvidenceFromTimeline(browserState.timelines);
+        renderStatusBar();
+        renderCameraMeta();
+        if (browserState.activeTab) {
+          const cachedData = getCachedPanelData(browserState.activeTab);
+          const diagnostics = getStoryDiagnostics();
+          clearPanelRetry();
+          renderPanel(
+            browserState.activeTab,
+            cachedData,
+            cachedData.length ? "" : panelEmptyMessage(browserState.activeTab, diagnostics),
+          );
+          if (!cachedData.length && shouldRetryPanel(browserState.activeTab, diagnostics)) {
+            schedulePanelRetry(browserState.activeTab);
+          }
+        }
+      } catch (error) {
+        document.getElementById("status-left").textContent = "LIVE DATA LOAD FAILED";
         document.getElementById("status-right").textContent = String(error.message || "UNKNOWN ERROR");
       }
     }

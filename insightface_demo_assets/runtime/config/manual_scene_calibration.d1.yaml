@@ -31,13 +31,13 @@
     "cameras": {
       "C1": {
         "camera_id": "C1",
-        "role": "",
+        "role": "entry",
         "description": "",
         "preview_source": "",
         "preview_source_type": "file",
         "frame_size_ref": {
-          "width": 1920,
-          "height": 1080
+          "width": 1400,
+          "height": 720
         },
         "anchor_point_mode": "bottom_center",
         "processing_roi": {
@@ -89,13 +89,13 @@
       },
       "C2": {
         "camera_id": "C2",
-        "role": "",
+        "role": "entry",
         "description": "",
         "preview_source": "",
         "preview_source_type": "file",
         "frame_size_ref": {
-          "width": 1920,
-          "height": 1080
+          "width": 1284,
+          "height": 720
         },
         "anchor_point_mode": "bottom_center",
         "processing_roi": {
@@ -151,13 +151,13 @@
       },
       "C3": {
         "camera_id": "C3",
-        "role": "",
+        "role": "entry",
         "description": "Logical replay of C1.",
         "preview_source": "",
         "preview_source_type": "file",
         "frame_size_ref": {
-          "width": 1920,
-          "height": 1080
+          "width": 1400,
+          "height": 720
         },
         "anchor_point_mode": "bottom_center",
         "processing_roi": {
@@ -209,13 +209,13 @@
       },
       "C4": {
         "camera_id": "C4",
-        "role": "",
+        "role": "entry",
         "description": "Logical replay of C2.",
         "preview_source": "",
         "preview_source_type": "file",
         "frame_size_ref": {
-          "width": 1920,
-          "height": 1080
+          "width": 1284,
+          "height": 720
         },
         "anchor_point_mode": "bottom_center",
         "processing_roi": {

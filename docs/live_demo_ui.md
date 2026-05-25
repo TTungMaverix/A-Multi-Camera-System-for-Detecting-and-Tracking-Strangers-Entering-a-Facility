@@ -120,6 +120,32 @@ Special source note for the current dataset:
 - `/api/calibration/reset`
 - `/artifact?path=...`
 
+## d1 / d2 Artifact Generation
+
+The `d1` / `d2` UI sidebar now depends on the pair-specific offline artifacts under:
+
+- `outputs/evaluations/d1_demo_artifacts/offline_runs/d1`
+- `outputs/evaluations/d2_demo_artifacts/offline_runs/d2`
+
+Generate them before opening the live demo if the sidebar diagnostics reports missing artifacts:
+
+```cmd
+cd /d "<repo-root>"
+set "RUNTIME_PYTHON=C:\Users\Admin\AppData\Local\Temp\ifd_venv\Scripts\python.exe"
+set "DATASET_ROOT=C:\Users\Admin\AppData\Local\Temp\ifd_dataset"
+set "KNOWN_DB_ROOT=C:\Users\Admin\AppData\Local\Temp\ifd_known"
+"%RUNTIME_PYTHON%" ^
+  "insightface_demo_assets\runtime\run_pair_demo_artifacts.py" ^
+  --project-root "." ^
+  --pair-id d1 ^
+  --dataset-root "%DATASET_ROOT%" ^
+  --scene-calibration-config "insightface_demo_assets\runtime\config\manual_scene_calibration.d1.yaml" ^
+  --output-root "outputs\evaluations\d1_demo_artifacts\offline_runs\d1" ^
+  --known-db-root "%KNOWN_DB_ROOT%"
+```
+
+Use the same command for `d2` with `--pair-id d2`, the `d2` calibration file, and the `d2` output root.
+
 ## Supervisor Demo Command
 
 The recommended supervisor demo pair is `b1`. The live camera grid uses `/api/video-stream` MJPEG from the full dataset videos. `/api/calibration/preview` remains calibration-only.
@@ -148,7 +174,9 @@ Reason:
 
 - playback is sequential: `C1 -> gap -> C2 -> gap -> C3 -> gap -> C4`
 - default segment length in the `b1` wrapper: `12` seconds
+- segment length in the `d1` / `d2` wrappers: `auto` (full source clip duration from video metadata)
 - default travel gap in the `b1` wrapper: `8` seconds
+- default travel gap in the `d1` / `d2` wrappers: `8` seconds
 - UI only refreshes the active camera feed
 - inactive camera tiles stay visible at equal size and switch to standby
 
