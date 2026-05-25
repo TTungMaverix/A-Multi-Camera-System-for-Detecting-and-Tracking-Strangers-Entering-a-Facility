@@ -1,0 +1,274 @@
+{
+  "scene_calibration": {
+    "version": 1,
+    "coordinate_space": "normalized",
+    "processing": {
+      "require_manual_calibration": true,
+      "roi_mask_enabled": true,
+      "mask_outside_polygon": true,
+      "preview_overlay_enabled": true,
+      "preview_interval_sec": 1
+    },
+    "direction_filter": {
+      "history_window": 6,
+      "minimum_points": 4,
+      "minimum_inward_motion_px": 18,
+      "minimum_inside_ratio": 0.55,
+      "require_zone_transition": false,
+      "allow_line_cross_only_when_history_short": false,
+      "inward_zone_types": [
+        "exit",
+        "interior",
+        "overlap",
+        "transit"
+      ],
+      "outward_zone_types": [
+        "entry",
+        "outer",
+        "approach"
+      ]
+    },
+    "cameras": {
+      "C1": {
+        "camera_id": "C1",
+        "role": "",
+        "description": "",
+        "preview_source": "",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.5908460471567267,
+              0.3459557127479625
+            ],
+            [
+              0.9070735090152566,
+              0.3115100722743349
+            ],
+            [
+              0.9944521497919556,
+              0.6362832538828234
+            ],
+            [
+              0.9875173370319001,
+              0.9832000615100722
+            ],
+            [
+              0.6560332871012483,
+              0.9659772412732585
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.6823855755894591,
+              0.7494617868675996
+            ],
+            [
+              0.9292649098474342,
+              0.6338228509918499
+            ]
+          ],
+          "in_side_point": [
+            0.8848821081830791,
+            0.857719514070429
+          ]
+        },
+        "default_zone_id": "",
+        "default_subzone_id": "",
+        "entry_zones": [],
+        "exit_zones": [],
+        "zones": [],
+        "subzones": []
+      },
+      "C2": {
+        "camera_id": "C2",
+        "role": "",
+        "description": "",
+        "preview_source": "",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.17614424410540916,
+              0.352106719975396
+            ],
+            [
+              0.6920943134535368,
+              0.12574965400584345
+            ],
+            [
+              0.8599167822468793,
+              0.20694294940796557
+            ],
+            [
+              0.8169209431345353,
+              0.43330001537751806
+            ],
+            [
+              0.29958391123439665,
+              0.8368060894971552
+            ],
+            [
+              0.1914008321775312,
+              0.6473550668922036
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.1900138696255201,
+              0.5526295555897278
+            ],
+            [
+              0.7170596393897365,
+              0.27460402890973395
+            ]
+          ],
+          "in_side_point": [
+            0.5201109570041609,
+            0.5083423035522067
+          ]
+        },
+        "default_zone_id": "",
+        "default_subzone_id": "",
+        "entry_zones": [],
+        "exit_zones": [],
+        "zones": [],
+        "subzones": []
+      },
+      "C3": {
+        "camera_id": "C3",
+        "role": "",
+        "description": "Logical replay of C1.",
+        "preview_source": "",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.5908460471567267,
+              0.3459557127479625
+            ],
+            [
+              0.9070735090152566,
+              0.3115100722743349
+            ],
+            [
+              0.9944521497919556,
+              0.6362832538828234
+            ],
+            [
+              0.9875173370319001,
+              0.9832000615100722
+            ],
+            [
+              0.6560332871012483,
+              0.9659772412732585
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.6823855755894591,
+              0.7494617868675996
+            ],
+            [
+              0.9292649098474342,
+              0.6338228509918499
+            ]
+          ],
+          "in_side_point": [
+            0.8848821081830791,
+            0.857719514070429
+          ]
+        },
+        "default_zone_id": "",
+        "default_subzone_id": "",
+        "entry_zones": [],
+        "exit_zones": [],
+        "zones": [],
+        "subzones": []
+      },
+      "C4": {
+        "camera_id": "C4",
+        "role": "",
+        "description": "Logical replay of C2.",
+        "preview_source": "",
+        "preview_source_type": "file",
+        "frame_size_ref": {
+          "width": 1920,
+          "height": 1080
+        },
+        "anchor_point_mode": "bottom_center",
+        "processing_roi": {
+          "polygon": [
+            [
+              0.17614424410540916,
+              0.352106719975396
+            ],
+            [
+              0.6920943134535368,
+              0.12574965400584345
+            ],
+            [
+              0.8599167822468793,
+              0.20694294940796557
+            ],
+            [
+              0.8169209431345353,
+              0.43330001537751806
+            ],
+            [
+              0.29958391123439665,
+              0.8368060894971552
+            ],
+            [
+              0.1914008321775312,
+              0.6473550668922036
+            ]
+          ]
+        },
+        "entry_line": {
+          "points": [
+            [
+              0.1900138696255201,
+              0.5526295555897278
+            ],
+            [
+              0.7170596393897365,
+              0.27460402890973395
+            ]
+          ],
+          "in_side_point": [
+            0.5201109570041609,
+            0.5083423035522067
+          ]
+        },
+        "default_zone_id": "",
+        "default_subzone_id": "",
+        "entry_zones": [],
+        "exit_zones": [],
+        "zones": [],
+        "subzones": []
+      }
+    }
+  }
+}
