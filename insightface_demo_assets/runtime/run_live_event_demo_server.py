@@ -273,24 +273,52 @@ def _candidate_clip_paths(base_path: Path, pair_id: str):
     return direct_paths + nested_paths
 
 
-def _resolve_single_camera_video_path(base_path: Path, pair_id: str):
+def _resolve_single_camera_video_source(base_path: Path, pair_id: str, *, camera_folder_name=""):
     for candidate in _candidate_clip_paths(base_path, pair_id):
         if candidate.exists():
-            return candidate.resolve()
-    return None
+            return {"path": candidate.resolve(), "source_note": "EXACT"}
+    normalized_pair_id = str(pair_id or "").strip().lower()
+    normalized_camera_folder = str(camera_folder_name or base_path.name or "").strip().lower()
+    if normalized_pair_id == "d1" and normalized_camera_folder == "camera 1":
+        for candidate in _candidate_clip_paths(base_path, "d"):
+            if candidate.exists():
+                return {"path": candidate.resolve(), "source_note": "ALIAS_D_TO_D1"}
+    return {"path": None, "source_note": "MISSING"}
+
+
+def _resolve_single_camera_video_path(base_path: Path, pair_id: str):
+    return _resolve_single_camera_video_source(base_path, pair_id, camera_folder_name=base_path.name).get("path")
+
+
+def _resolve_clip_video_sources(demo_pair_id: str, dataset_root: str | Path | None) -> dict:
+    if not dataset_root or not demo_pair_id:
+        return {
+            camera_id: {"path": None, "source_note": "MISSING"}
+            for camera_id in DEFAULT_CAMERA_SEQUENCE
+        }
+    dataset_root = Path(dataset_root).resolve()
+    camera_1_source = _resolve_single_camera_video_source(
+        dataset_root / "Camera 1",
+        demo_pair_id,
+        camera_folder_name="Camera 1",
+    )
+    camera_2_source = _resolve_single_camera_video_source(
+        dataset_root / "Camera 2",
+        demo_pair_id,
+        camera_folder_name="Camera 2",
+    )
+    return {
+        "C1": dict(camera_1_source),
+        "C2": dict(camera_2_source),
+        "C3": dict(camera_1_source),
+        "C4": dict(camera_2_source),
+    }
 
 
 def _resolve_clip_video_paths(demo_pair_id: str, dataset_root: str | Path | None) -> dict:
-    if not dataset_root or not demo_pair_id:
-        return {camera_id: None for camera_id in DEFAULT_CAMERA_SEQUENCE}
-    dataset_root = Path(dataset_root).resolve()
-    camera_1_path = _resolve_single_camera_video_path(dataset_root / "Camera 1", demo_pair_id)
-    camera_2_path = _resolve_single_camera_video_path(dataset_root / "Camera 2", demo_pair_id)
     return {
-        "C1": str(camera_1_path) if camera_1_path else None,
-        "C2": str(camera_2_path) if camera_2_path else None,
-        "C3": str(camera_1_path) if camera_1_path else None,
-        "C4": str(camera_2_path) if camera_2_path else None,
+        camera_id: str(item.get("path")) if item.get("path") else None
+        for camera_id, item in _resolve_clip_video_sources(demo_pair_id, dataset_root).items()
     }
 
 
@@ -300,7 +328,11 @@ def _camera_source_path(dataset_root: Path, pair_id: str, camera_id: str):
     camera_folder = _camera_folder_for_id(camera_id)
     if not camera_folder:
         return None
-    return _resolve_single_camera_video_path(dataset_root / camera_folder, pair_id)
+    return _resolve_single_camera_video_source(
+        dataset_root / camera_folder,
+        pair_id,
+        camera_folder_name=camera_folder,
+    ).get("path")
 
 
 def _list_directory_entries(path: Path, limit=40):
@@ -315,13 +347,20 @@ def _list_directory_entries(path: Path, limit=40):
     return entries
 
 
-def _print_video_path_resolution(video_paths: dict, dataset_root: Path | None):
+def _print_video_path_resolution(video_paths: dict, dataset_root: Path | None, source_notes=None):
+    source_notes = source_notes or {}
     print("=== VIDEO PATH RESOLUTION ===")
     for camera_id in DEFAULT_CAMERA_SEQUENCE:
         video_path = video_paths.get(camera_id)
         status = "FOUND" if (video_path and os.path.exists(video_path)) else "MISSING"
-        print(f"  {camera_id}: {video_path} [{status}]")
+        source_note = source_notes.get(camera_id, "MISSING")
+        if source_note and source_note != "MISSING":
+            print(f"  {camera_id}: {video_path} [{status}|{source_note}]")
+        else:
+            print(f"  {camera_id}: {video_path} [{status}]")
     print("=============================")
+    if source_notes.get("C1") == "ALIAS_D_TO_D1":
+        print(f"ALIAS_USED: d1 Camera 1 -> {video_paths.get('C1')}")
 
     missing_camera_1 = not video_paths.get("C1")
     missing_camera_2 = not video_paths.get("C2")
@@ -514,7 +553,15 @@ class DemoPlaybackState:
         self.dataset_root = Path(dataset_root).resolve() if dataset_root else None
         self.demo_pair_id = demo_pair_id or ""
         self.demo_start_monotonic = time.monotonic()
-        self.video_paths = _resolve_clip_video_paths(self.demo_pair_id, self.dataset_root)
+        self.video_sources = _resolve_clip_video_sources(self.demo_pair_id, self.dataset_root)
+        self.video_paths = {
+            camera_id: str(item.get("path")) if item.get("path") else None
+            for camera_id, item in self.video_sources.items()
+        }
+        self.video_source_notes = {
+            camera_id: str(item.get("source_note", "MISSING") or "MISSING")
+            for camera_id, item in self.video_sources.items()
+        }
         self._streamers = {
             camera_id: VideoStreamer(camera_id, video_path, target_fps=self.stream_target_fps)
             for camera_id, video_path in self.video_paths.items()
@@ -595,6 +642,9 @@ class DemoPlaybackState:
 
     def video_path_for_camera(self, camera_id):
         return self.video_paths.get((camera_id or "").upper())
+
+    def video_source_note_for_camera(self, camera_id):
+        return self.video_source_notes.get((camera_id or "").upper(), "MISSING")
 
     def streamer_for_camera(self, camera_id):
         return self._streamers.get((camera_id or "").upper())
@@ -861,6 +911,7 @@ class LiveDemoRequestHandler(SimpleHTTPRequestHandler):
                     "preview_source_type": (override or {}).get("source_type", camera_cfg.get("preview_source_type", "file")),
                     "preview_source": (override or {}).get("source_value", camera_cfg.get("preview_source", "")),
                     "video_path": self.demo_state.video_path_for_camera(camera_id) if self.demo_state else "",
+                    "video_source_note": self.demo_state.video_source_note_for_camera(camera_id) if self.demo_state else "MISSING",
                     "frame_size_ref": camera_cfg.get("frame_size_ref", []),
                 }
             )
@@ -1043,7 +1094,7 @@ def main():
     print(f"STREAM_TARGET_FPS={args.stream_target_fps}")
     if dataset_root:
         print(f"DATASET_ROOT={dataset_root}")
-    _print_video_path_resolution(demo_state.video_paths, dataset_root)
+    _print_video_path_resolution(demo_state.video_paths, dataset_root, source_notes=demo_state.video_source_notes)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

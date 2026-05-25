@@ -95,6 +95,12 @@ For new clips such as `d1` / `d2`, the intended sequence is:
 5. derive `C3` from `C1` and `C4` from `C2`
 6. run overlay preview validation before any longer runtime/eval pass
 
+Special source note for the current dataset:
+
+- `d1` on `Camera 1` may be stored as `d.mp4`
+- the demo/calibration server supports that explicit alias as `ALIAS_D_TO_D1`
+- unrelated pair fallback is still forbidden
+
 ## Endpoints
 
 - `/`

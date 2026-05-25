@@ -4,8 +4,21 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from run_live_event_demo_server import artifact_url, build_browser_event, is_within_root, load_identity_timeline, load_latest_events
-from run_live_event_demo_server import render_calibration_preview
+from run_live_event_demo_server import (
+    _resolve_clip_video_sources,
+    _resolve_single_camera_video_source,
+    artifact_url,
+    build_browser_event,
+    is_within_root,
+    load_identity_timeline,
+    load_latest_events,
+    render_calibration_preview,
+)
+
+
+def _touch(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
 
 
 def test_artifact_url_encodes_path():
@@ -69,8 +82,18 @@ def test_load_identity_timeline_adds_snapshot_urls(tmp_path):
             "representative_snapshot_path": r"D:\demo\body.png",
             "representative_head_snapshot_path": r"D:\demo\head.png",
             "appearances": [
-                {"camera_id": "C1", "relative_sec": 3.1, "best_body_crop": r"D:\demo\a.png", "best_head_crop": r"D:\demo\a_head.png"},
-                {"camera_id": "C2", "relative_sec": 9.1, "best_body_crop": r"D:\demo\b.png", "best_head_crop": r"D:\demo\b_head.png"},
+                {
+                    "camera_id": "C1",
+                    "relative_sec": 3.1,
+                    "best_body_crop": r"D:\demo\a.png",
+                    "best_head_crop": r"D:\demo\a_head.png",
+                },
+                {
+                    "camera_id": "C2",
+                    "relative_sec": 9.1,
+                    "best_body_crop": r"D:\demo\b.png",
+                    "best_head_crop": r"D:\demo\b_head.png",
+                },
             ],
         }
     ]
@@ -120,3 +143,58 @@ def test_render_calibration_preview_can_return_clean_or_overlay_frame(tmp_path):
     assert clean.shape == overlay.shape
     assert np.array_equal(clean, image)
     assert not np.array_equal(clean, overlay)
+
+
+def test_d1_camera_1_resolves_exact_before_alias(tmp_path):
+    camera_1 = tmp_path / "Camera 1"
+    _touch(camera_1 / "d1.mp4")
+    _touch(camera_1 / "d.mp4")
+    resolved = _resolve_single_camera_video_source(camera_1, "d1", camera_folder_name="Camera 1")
+    assert resolved["path"] == (camera_1 / "d1.mp4").resolve()
+    assert resolved["source_note"] == "EXACT"
+
+
+def test_d1_camera_1_uses_d_alias_when_exact_missing(tmp_path):
+    camera_1 = tmp_path / "Camera 1"
+    _touch(camera_1 / "d.mp4")
+    resolved = _resolve_single_camera_video_source(camera_1, "d1", camera_folder_name="Camera 1")
+    assert resolved["path"] == (camera_1 / "d.mp4").resolve()
+    assert resolved["source_note"] == "ALIAS_D_TO_D1"
+
+
+def test_d1_camera_2_does_not_use_d_alias(tmp_path):
+    camera_2 = tmp_path / "Camera 2"
+    _touch(camera_2 / "d.mp4")
+    resolved = _resolve_single_camera_video_source(camera_2, "d1", camera_folder_name="Camera 2")
+    assert resolved["path"] is None
+    assert resolved["source_note"] == "MISSING"
+
+
+def test_no_fallback_to_unrelated_pair(tmp_path):
+    camera_1 = tmp_path / "Camera 1"
+    _touch(camera_1 / "d2.mp4")
+    resolved = _resolve_single_camera_video_source(camera_1, "d1", camera_folder_name="Camera 1")
+    assert resolved["path"] is None
+    assert resolved["source_note"] == "MISSING"
+
+
+def test_d1_sources_map_logical_replays_and_notes(tmp_path):
+    _touch(tmp_path / "Camera 1" / "d.mp4")
+    _touch(tmp_path / "Camera 2" / "d1.mp4")
+    sources = _resolve_clip_video_sources("d1", tmp_path)
+    assert sources["C1"]["path"] == (tmp_path / "Camera 1" / "d.mp4").resolve()
+    assert sources["C1"]["source_note"] == "ALIAS_D_TO_D1"
+    assert sources["C2"]["path"] == (tmp_path / "Camera 2" / "d1.mp4").resolve()
+    assert sources["C2"]["source_note"] == "EXACT"
+    assert sources["C3"] == sources["C1"]
+    assert sources["C4"] == sources["C2"]
+
+
+def test_d2_sources_resolve_exact_only(tmp_path):
+    _touch(tmp_path / "Camera 1" / "d2.mp4")
+    _touch(tmp_path / "Camera 2" / "d2.mp4")
+    sources = _resolve_clip_video_sources("d2", tmp_path)
+    assert sources["C1"]["source_note"] == "EXACT"
+    assert sources["C2"]["source_note"] == "EXACT"
+    assert sources["C3"]["source_note"] == "EXACT"
+    assert sources["C4"]["source_note"] == "EXACT"

@@ -105,6 +105,12 @@ Then open:
 
 - `http://127.0.0.1:8765/calibration.html`
 
+Current dataset note for `d1`:
+
+- if `Camera 1\d1.mp4` is missing but `Camera 1\d.mp4` exists, the runtime now supports the explicit alias `ALIAS_D_TO_D1`
+- this alias is calibration/demo support only
+- dataset hygiene is still better if the raw file is eventually renamed to `d1.mp4`
+
 Manual rules:
 
 - click ROI polygon points by hand
