@@ -356,6 +356,28 @@ def inspect_output_root(output_root: Path):
     }
 
 
+def load_stage_audit_summary(output_root: Path, demo_pair_id: str):
+    pair_id = str(demo_pair_id or "").strip()
+    candidate_paths = []
+    if pair_id:
+        try:
+            candidate_paths.append(
+                output_root.parents[2] / f"{pair_id}_stage_audit" / f"{pair_id}_stage_audit_summary.json"
+            )
+        except IndexError:
+            pass
+        candidate_paths.append(output_root / f"{pair_id}_stage_audit_summary.json")
+    existing_path = next((path for path in candidate_paths if path.exists()), None)
+    summary_path = existing_path or (candidate_paths[0] if candidate_paths else None)
+    payload = load_json_file(existing_path, {}) if existing_path else {}
+    return {
+        "status": str(payload.get("primary_fail_stage") or "NOT_RUN") if existing_path else "NOT_RUN",
+        "summary_path": str(summary_path or ""),
+        "summary_exists": bool(existing_path),
+        "summary": payload if isinstance(payload, dict) else {},
+    }
+
+
 def inspect_calibration_config(scene_calibration_path: Path, demo_state=None):
     status = {
         "path": str(scene_calibration_path),
@@ -583,6 +605,19 @@ def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_pat
     known_db_summary = dict(known_db_summary or {})
     output_status = inspect_output_root(output_root)
     calibration_status = inspect_calibration_config(scene_calibration_path, demo_state=demo_state)
+    stage_audit = load_stage_audit_summary(output_root, demo_pair_id)
+    stage_audit_summary = stage_audit.get("summary", {}) if isinstance(stage_audit, dict) else {}
+    stage_audit_status = str(stage_audit.get("status") or "NOT_RUN")
+    stage_audit_tracking = (
+        (stage_audit_summary.get("tracking", {}) or {}) if isinstance(stage_audit_summary, dict) else {}
+    )
+    stage_audit_direction = {}
+    if isinstance(stage_audit_summary, dict):
+        stage_audit_direction = (
+            stage_audit_summary.get("direction_event_diagnosis")
+            or stage_audit_summary.get("direction")
+            or {}
+        )
     warnings = []
     if not calibration_status.get("exists"):
         warnings.append(f"MANUAL_CALIBRATION_REQUIRED_FOR_{str(demo_pair_id or '').upper() or 'PAIR'}")
@@ -605,6 +640,48 @@ def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_pat
     known_db_runtime = face_resolution_summary.get("known_db_runtime", {}) if isinstance(face_resolution_summary, dict) else {}
     association_metrics = association_summary.get("metrics", association_summary) if isinstance(association_summary, dict) else {}
     timings_sec = offline_pipeline_summary.get("timings_sec", {}) if isinstance(offline_pipeline_summary, dict) else {}
+    face_candidate_count = (
+        _coerce_int(face_metrics.get("face_candidate_count", "KEY_NOT_FOUND"), 0)
+        if "face_candidate_count" in face_metrics
+        else "KEY_NOT_FOUND"
+    )
+    face_embedding_created_count = (
+        _coerce_int(face_metrics.get("face_embedding_created_count", "KEY_NOT_FOUND"), 0)
+        if "face_embedding_created_count" in face_metrics
+        else "KEY_NOT_FOUND"
+    )
+    known_match_success_count = (
+        _coerce_int(face_metrics.get("known_face_match_success_count", "KEY_NOT_FOUND"), 0)
+        if "known_face_match_success_count" in face_metrics
+        else "KEY_NOT_FOUND"
+    )
+    face_processing_status = "NOT_RUN"
+    face_processing_message = ""
+    known_positive_status = "NOT_PROVEN"
+    if output_status.get("artifacts_found"):
+        if isinstance(face_candidate_count, int) and face_candidate_count > 0:
+            if isinstance(face_embedding_created_count, int) and face_embedding_created_count == 0:
+                face_processing_status = "FACE_EMBEDDING_NOT_CREATED"
+                face_processing_message = (
+                    "Known DB is loaded, but no probe face embedding was created; known-positive match remains NOT_PROVEN."
+                )
+            elif isinstance(known_match_success_count, int) and known_match_success_count == 0:
+                face_processing_status = "KNOWN_MATCH_NOT_OBSERVED"
+                face_processing_message = (
+                    "Known DB is loaded, but this run did not materialize a successful known-face match."
+                )
+            else:
+                face_processing_status = "OK"
+                known_positive_status = (
+                    "PROVEN" if isinstance(known_match_success_count, int) and known_match_success_count > 0 else "NOT_PROVEN"
+                )
+        elif isinstance(face_candidate_count, int) and face_candidate_count == 0:
+            face_processing_status = "NO_FACE_CANDIDATES"
+            face_processing_message = "No face candidates were materialized in this run."
+        else:
+            face_processing_message = "Face branch metrics were not recorded for this run."
+    if face_processing_message:
+        warnings.append(face_processing_status)
 
     diagnostics = {
         "demo_pair_id": demo_pair_id,
@@ -627,15 +704,12 @@ def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_pat
             "embedding_dimension",
             known_db_summary.get("embedding_dimension", 0),
         ),
-        "face_candidate_count": _coerce_int(face_metrics.get("face_candidate_count", "KEY_NOT_FOUND"), 0)
-        if "face_candidate_count" in face_metrics
-        else "KEY_NOT_FOUND",
-        "face_embedding_created_count": _coerce_int(face_metrics.get("face_embedding_created_count", "KEY_NOT_FOUND"), 0)
-        if "face_embedding_created_count" in face_metrics
-        else "KEY_NOT_FOUND",
-        "known_match_success_count": _coerce_int(face_metrics.get("known_face_match_success_count", "KEY_NOT_FOUND"), 0)
-        if "known_face_match_success_count" in face_metrics
-        else "KEY_NOT_FOUND",
+        "face_candidate_count": face_candidate_count,
+        "face_embedding_created_count": face_embedding_created_count,
+        "known_match_success_count": known_match_success_count,
+        "face_processing_status": face_processing_status,
+        "face_processing_message": face_processing_message,
+        "known_positive_status": known_positive_status,
         "unknown_created_count": _coerce_int(mode_b.get("new_unknown_count", association_metrics.get("new_unknown_count", "KEY_NOT_FOUND")), 0)
         if ("new_unknown_count" in mode_b or "new_unknown_count" in association_metrics)
         else "KEY_NOT_FOUND",
@@ -645,6 +719,19 @@ def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_pat
         "event_count": len(events),
         "timeline_identity_count": len(timeline_rows),
         "handoff_count": len(handoffs),
+        "stage_audit_status": stage_audit_status,
+        "stage_audit_summary_path": stage_audit.get("summary_path", ""),
+        "stage_audit_summary_exists": bool(stage_audit.get("summary_exists")),
+        "stage_audit_explanation": stage_audit_summary.get("user_explanation", "") if isinstance(stage_audit_summary, dict) else "",
+        "stage_audit_track_count": stage_audit_tracking.get("total_track_count", "KEY_NOT_FOUND"),
+        "stage_audit_direction_candidate_count": stage_audit_direction.get(
+            "direction_candidate_track_count",
+            stage_audit_tracking.get("direction_candidate_track_count", "KEY_NOT_FOUND"),
+        ),
+        "stage_audit_entry_in_count": stage_audit_direction.get(
+            "entry_in_track_count",
+            stage_audit_tracking.get("entry_in_track_count", "KEY_NOT_FOUND"),
+        ),
         "processing_summary": {
             "known_event_count": mode_b.get("known_event_count", "KEY_NOT_FOUND"),
             "unknown_event_count": mode_b.get("unknown_event_count", "KEY_NOT_FOUND"),
@@ -668,6 +755,7 @@ def build_demo_story(output_root: Path, demo_pair_id: str, scene_calibration_pat
         "identity_journey": _build_identity_journey_story(timeline_rows),
         "system_status": diagnostics,
         "diagnostics": diagnostics,
+        "stage_audit": stage_audit_summary if stage_audit.get("summary_exists") else {"status": "NOT_RUN"},
         "warnings": warnings,
     }
 

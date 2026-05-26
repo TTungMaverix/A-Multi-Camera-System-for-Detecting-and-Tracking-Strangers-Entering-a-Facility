@@ -281,6 +281,8 @@ def test_build_demo_story_reports_missing_artifacts_and_calibration(tmp_path):
     assert diagnostics["calibration_valid"] is False
     assert diagnostics["known_db_identity_count"] == 100
     assert diagnostics["known_db_embedding_count"] == 285
+    assert diagnostics["stage_audit_status"] == "NOT_RUN"
+    assert story["stage_audit"]["status"] == "NOT_RUN"
 
 
 def test_build_demo_story_uses_active_output_root_and_runtime_metrics(tmp_path):
@@ -388,7 +390,86 @@ def test_build_demo_story_uses_active_output_root_and_runtime_metrics(tmp_path):
     assert diagnostics["face_candidate_count"] == 2
     assert diagnostics["face_embedding_created_count"] == 2
     assert diagnostics["known_match_success_count"] == 1
+    assert diagnostics["face_processing_status"] == "OK"
+    assert diagnostics["known_positive_status"] == "PROVEN"
     assert diagnostics["handoff_count"] == 0
+    assert diagnostics["stage_audit_status"] == "NOT_RUN"
     assert len(story["entry_events"]) == 1
     assert len(story["reid_evidence"]) == 1
     assert len(story["identity_journey"]) == 1
+
+
+def test_build_demo_story_includes_pair_stage_audit_summary(tmp_path):
+    output_root = tmp_path / "outputs" / "evaluations" / "d2_demo_artifacts" / "offline_runs" / "d2"
+    _write_json(output_root / "events" / "latest_events.json", [])
+    _write_json(
+        output_root / "summaries" / "face_resolution_summary.json",
+        {"known_db_runtime": {"identities_loaded": 100, "embedding_count": 285, "embedding_dimension": 512}},
+    )
+    _write_json(output_root / "summaries" / "face_body_usage_summary.json", {"metrics": {"face_candidate_count": 0}})
+    _write_json(
+        tmp_path / "outputs" / "evaluations" / "d1_stage_audit" / "d1_stage_audit_summary.json",
+        {"primary_fail_stage": "CALIBRATION_INVALID", "user_explanation": "wrong pair"},
+    )
+    _write_json(
+        tmp_path / "outputs" / "evaluations" / "d2_stage_audit" / "d2_stage_audit_summary.json",
+        {
+            "primary_fail_stage": "DIRECTION_FILTER_REJECTED_ALL",
+            "user_explanation": "Direction filtering rejected all candidate tracks for d2.",
+            "tracking": {"total_track_count": 6},
+            "direction": {"direction_candidate_track_count": 6, "entry_in_track_count": 0},
+        },
+    )
+
+    story = build_demo_story(
+        output_root,
+        "d2",
+        tmp_path / "manual_scene_calibration.d2.yaml",
+        known_db_summary={"identity_count": 100, "embedding_count": 285, "embedding_dimension": 512},
+    )
+
+    diagnostics = story["diagnostics"]
+    assert diagnostics["stage_audit_status"] == "DIRECTION_FILTER_REJECTED_ALL"
+    assert diagnostics["stage_audit_summary_exists"] is True
+    assert diagnostics["stage_audit_track_count"] == 6
+    assert diagnostics["stage_audit_direction_candidate_count"] == 6
+    assert diagnostics["stage_audit_entry_in_count"] == 0
+    assert diagnostics["stage_audit_explanation"] == "Direction filtering rejected all candidate tracks for d2."
+    assert diagnostics["stage_audit_summary_path"].endswith("d2_stage_audit_summary.json")
+    assert story["stage_audit"]["primary_fail_stage"] == "DIRECTION_FILTER_REJECTED_ALL"
+
+
+def test_build_demo_story_flags_face_embedding_not_created(tmp_path):
+    output_root = tmp_path / "outputs" / "evaluations" / "d1_demo_artifacts" / "offline_runs" / "d1"
+    _write_json(output_root / "events" / "latest_events.json", [])
+    _write_json(
+        output_root / "summaries" / "face_resolution_summary.json",
+        {"known_db_runtime": {"identities_loaded": 100, "embedding_count": 285, "embedding_dimension": 512}},
+    )
+    _write_json(
+        output_root / "summaries" / "face_body_usage_summary.json",
+        {
+            "metrics": {
+                "face_candidate_count": 2,
+                "face_embedding_created_count": 0,
+                "known_face_match_success_count": 0,
+            }
+        },
+    )
+
+    story = build_demo_story(
+        output_root,
+        "d1",
+        tmp_path / "manual_scene_calibration.d1.yaml",
+        known_db_summary={"identity_count": 100, "embedding_count": 285, "embedding_dimension": 512},
+    )
+
+    diagnostics = story["diagnostics"]
+    assert diagnostics["known_db_identity_count"] == 100
+    assert diagnostics["known_db_embedding_count"] == 285
+    assert diagnostics["face_candidate_count"] == 2
+    assert diagnostics["face_embedding_created_count"] == 0
+    assert diagnostics["known_match_success_count"] == 0
+    assert diagnostics["face_processing_status"] == "FACE_EMBEDDING_NOT_CREATED"
+    assert diagnostics["known_positive_status"] == "NOT_PROVEN"
+    assert "no probe face embedding was created" in diagnostics["face_processing_message"].lower()

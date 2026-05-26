@@ -566,6 +566,8 @@
     function panelEmptyMessage(panelKey, diagnostics) {
       const warnings = Array.isArray(diagnostics?.warnings) ? diagnostics.warnings : [];
       const pairId = diagnostics?.demo_pair_id || "this pair";
+      const stageAuditStatus = toDisplayText(diagnostics?.stage_audit_status, "NOT_RUN");
+      const stageAuditExplanation = String(diagnostics?.stage_audit_explanation || "").trim();
       if (warnings.includes("MISSING_DEMO_ARTIFACTS_FOR_PAIR")) {
         return `No pipeline artifacts found for ${pairId}. Run artifact generation first.`;
       }
@@ -574,6 +576,13 @@
       }
       if (warnings.some((item) => String(item).startsWith("INVALID_CALIBRATION_FOR_"))) {
         return `Calibration is invalid for ${pairId}. Fix calibration before trusting pipeline output.`;
+      }
+      if (diagnostics?.artifacts_found && Number(diagnostics?.event_count || 0) === 0) {
+        if (stageAuditStatus !== "NOT_RUN") {
+          return stageAuditExplanation
+            || `No ENTRY_IN events were materialized for ${pairId}. Fail stage: ${stageAuditStatus}.`;
+        }
+        return `No ENTRY_IN events were materialized for ${pairId}. Run the pair stage audit to diagnose ROI, entry line, or direction filtering.`;
       }
       if (panelKey === "entry") {
         return "No ENTRY_IN events detected in this run.";
@@ -1058,6 +1067,10 @@
       }
       const warnings = Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [];
       const processing = diagnostics.processing_summary || {};
+      const stageAuditStatus = toDisplayText(diagnostics.stage_audit_status, "NOT_RUN");
+      const stageAuditExplanation = String(diagnostics.stage_audit_explanation || "").trim();
+      const faceProcessingStatus = toDisplayText(diagnostics.face_processing_status, "KEY_NOT_FOUND");
+      const faceProcessingMessage = String(diagnostics.face_processing_message || "").trim();
       const outputRootTail = String(diagnostics.output_root || "")
         .split(/[\\/]/)
         .filter(Boolean)
@@ -1068,6 +1081,7 @@
         `KNOWN_DB ${toDisplayText(diagnostics.known_db_identity_count, "KEY_NOT_FOUND")} IDs | ${toDisplayText(diagnostics.known_db_embedding_count, "KEY_NOT_FOUND")} embeddings | DIM ${toDisplayText(diagnostics.known_db_embedding_dimension, "KEY_NOT_FOUND")}`,
         `FACE_CAND ${toDisplayText(diagnostics.face_candidate_count, "KEY_NOT_FOUND")} | FACE_EMB ${toDisplayText(diagnostics.face_embedding_created_count, "KEY_NOT_FOUND")} | KNOWN_MATCH ${toDisplayText(diagnostics.known_match_success_count, "KEY_NOT_FOUND")}`,
         `EVENTS ${toDisplayText(diagnostics.event_count, 0)} | TIMELINE ${toDisplayText(diagnostics.timeline_identity_count, 0)} | HANDOFFS ${toDisplayText(diagnostics.handoff_count, 0)}`,
+        `STAGE_AUDIT ${stageAuditStatus} | TRACKS ${toDisplayText(diagnostics.stage_audit_track_count, "KEY_NOT_FOUND")} | DIR_CAND ${toDisplayText(diagnostics.stage_audit_direction_candidate_count, "KEY_NOT_FOUND")} | ENTRY_IN ${toDisplayText(diagnostics.stage_audit_entry_in_count, "KEY_NOT_FOUND")}`,
         `KNOWN_EVT ${toDisplayText(processing.known_event_count, "KEY_NOT_FOUND")} | UNKNOWN_EVT ${toDisplayText(processing.unknown_event_count, "KEY_NOT_FOUND")} | BODY_FALLBACK ${toDisplayText(processing.body_fallback_used_count, "KEY_NOT_FOUND")} | PIPELINE_SEC ${toDisplayText(processing.total_pipeline_sec, "KEY_NOT_FOUND")}`,
       ];
       if (outputRootTail) {
@@ -1077,6 +1091,8 @@
         <div class="diag-card">
           <div class="diag-title">SYSTEM STATUS</div>
           ${lines.map((line) => `<div class="diag-line">${escapeHtml(line)}</div>`).join("")}
+          ${stageAuditExplanation ? `<div class="diag-warning">${escapeHtml(stageAuditExplanation)}</div>` : ""}
+          ${faceProcessingMessage ? `<div class="diag-warning">${escapeHtml(`FACE ${faceProcessingStatus}: ${faceProcessingMessage}`)}</div>` : ""}
           ${warnings.map((warning) => `<div class="diag-warning">${escapeHtml(String(warning))}</div>`).join("")}
         </div>
       `;
@@ -1212,6 +1228,9 @@
         return false;
       }
       const warnings = Array.isArray(diagnostics?.warnings) ? diagnostics.warnings : [];
+      if (toDisplayText(diagnostics?.stage_audit_status, "NOT_RUN") !== "NOT_RUN") {
+        return false;
+      }
       if (warnings.includes("MISSING_DEMO_ARTIFACTS_FOR_PAIR")) {
         return false;
       }
